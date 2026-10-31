@@ -10,7 +10,7 @@ Based on **PRD v1.0** (`PRD.md`).
 
 ClientPulse is built as a **Modular Monolith** in Go with a decoupled background worker and a Next.js (TypeScript) agency dashboard, backed by PostgreSQL.
 
-- **Frontend:** Next.js 14 (App Router), TypeScript, Tailwind CSS, English & Persian (RTL) foundation (`apps/web`) running on Node.js 24 LTS (`node:24.22.1-alpine3.24`).
+- **Frontend:** Next.js 16 (App Router), React 19.2, TypeScript, Tailwind CSS, English & Persian (RTL) foundation (`apps/web`) running on Node.js 24 LTS (`node:24.22.2-alpine3.24`).
 - **Backend API:** Go 1.27+ modular REST API service (`services/api/cmd/api`) built on `golang:1.27.3-alpine3.24` and running on `alpine:3.24.3`.
 - **Worker:** Go 1.27+ background worker daemon for monitoring checks and report generation (`services/api/cmd/worker`) running on `alpine:3.24.3`.
 - **Database:** PostgreSQL 16.15 (`postgres:16.15-alpine3.24`) with versioned transactional migrations (`migrations/`).

@@ -96,7 +96,28 @@ export function HealthChecker({ locale }: HealthCheckerProps) {
   };
 
   useEffect(() => {
-    checkHealth();
+    let ignore = false;
+    const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8080";
+
+    Promise.all([
+      fetch(`${apiBase}/health/live`, { cache: "no-store" }).then(async (r) => (r.ok ? r.json() : { error: `HTTP ${r.status}` })).catch((err: unknown) => ({ error: err instanceof Error ? err.message : "Network error" })),
+      fetch(`${apiBase}/health/ready`, { cache: "no-store" }).then(async (r) => (r.ok ? r.json() : { error: `HTTP ${r.status}` })).catch((err: unknown) => ({ error: err instanceof Error ? err.message : "Network error" })),
+      fetch(`${apiBase}/health/worker`, { cache: "no-store" }).then(async (r) => (r.ok ? r.json() : { error: `HTTP ${r.status}` })).catch((err: unknown) => ({ error: err instanceof Error ? err.message : "Network error" })),
+    ]).then(([liveData, readyData, workerData]) => {
+      if (!ignore) {
+        setHealth({
+          live: liveData,
+          ready: readyData,
+          worker: workerData,
+          loading: false,
+          lastChecked: new Date().toLocaleTimeString(),
+        });
+      }
+    });
+
+    return () => {
+      ignore = true;
+    };
   }, []);
 
   const isLiveOk = health.live?.status === "ok";

@@ -22,7 +22,7 @@ graph TD
 ```text
 clientpulse/
 ├── apps/
-│   └── web/                     # Next.js 14+ (App Router), TypeScript, Tailwind CSS
+│   └── web/                     # Next.js 16+ (App Router), React 19.2, TypeScript, Tailwind CSS
 ├── services/
 │   └── api/                     # Go 1.27+ Modular Monolith (API & Worker)
 │       ├── cmd/
