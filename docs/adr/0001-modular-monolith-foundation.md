@@ -44,12 +44,14 @@ The project requires high reliability, multi-tenant security, clean architecture
   - PostgreSQL row-level locking with `SKIP LOCKED` scales effectively to hundreds of concurrent jobs without queue worker contention.
   - The job queue interface is abstracted so Redis (e.g., Asynq) can be introduced seamlessly if load testing indicates a database queue bottleneck in future phases.
 
-### 5. Migration Strategy: Versioned SQL Migrations
-- **Decision:** Employ a dedicated SQL migration runner executing versioned `.up.sql` and `.down.sql` scripts, tracking executed versions in `schema_migrations`.
-- **Rationale:**
-  - Eliminates uncontrolled runtime schema mutations.
-  - Explicit raw SQL migrations ensure database dialect features (extensions, partial indexes, constraints) are leveraged without ORM abstraction leakage.
-  - Repeatable, automated migrations across CI, local Docker, and production deployments.
+### 5. Migration Strategy: Versioned SQL Migrations with Connection-Scoped Advisory Locking
+- **Decision:** Employ a dedicated SQL migration runner executing versioned `.up.sql` and `.down.sql` scripts, tracking executed versions in `schema_migrations`, protected by connection-scoped PostgreSQL session advisory locking (`pg_advisory_lock(982347102)`).
+- **Locking Strategy Details:**
+  - Because `pgxpool` manages a dynamic pool of underlying database connections and PostgreSQL advisory locks are session-scoped (tied to a specific physical connection session), the migration runner explicitly calls `pool.Acquire(ctx)` to reserve a single dedicated connection (`*pgxpool.Conn`).
+  - Both `pg_advisory_lock` and `pg_advisory_unlock` are executed on that exact same acquired connection session.
+  - All transactional migration DDL/DML statements (`conn.Begin(ctx)`) are executed through that same acquired connection.
+  - Unlock and connection release are guaranteed via `defer` using a detached background context to ensure lock cleanup cannot be bypassed by client context cancellation or migration failure.
+  - Serializes concurrent migration attempts and prevents duplicate execution or partial schema state.
 
 ### 6. Observability: Structured JSON Logging & Semantic Health Checks
 - **Decision:** Go standard library `log/slog` outputting JSON with contextual Request ID injection. Standardized health endpoints:

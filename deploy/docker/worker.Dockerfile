@@ -1,5 +1,5 @@
 # Multi-stage Dockerfile for ClientPulse Worker service
-FROM golang:1.23.2-alpine3.20 AS builder
+FROM golang:1.23-alpine AS builder
 
 WORKDIR /src
 
@@ -13,7 +13,7 @@ COPY services/api/ ./
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o /bin/worker ./cmd/worker
 
 # Production Runner
-FROM alpine:3.20.3
+FROM alpine:3.20
 
 WORKDIR /app
 

@@ -14,25 +14,28 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// MigrationLockID is the unique PostgreSQL advisory lock ID for ClientPulse migrations.
+const MigrationLockID = 982347102
+
 // Migration represents a versioned migration pair.
 type Migration struct {
-	Version     int64
-	Name        string
-	UpFilePath  string
+	Version      int64
+	Name         string
+	UpFilePath   string
 	DownFilePath string
-	UpSQL       string
-	DownSQL     string
+	UpSQL        string
+	DownSQL      string
 }
 
 // MigrationStatus reports the status of a specific migration version.
 type MigrationStatus struct {
-	Version   int64     `json:"version"`
-	Name      string    `json:"name"`
-	Applied   bool      `json:"applied"`
+	Version   int64      `json:"version"`
+	Name      string     `json:"name"`
+	Applied   bool       `json:"applied"`
 	AppliedAt *time.Time `json:"applied_at,omitempty"`
 }
 
-// Engine executes versioned SQL migrations.
+// Engine executes versioned SQL migrations using PostgreSQL connection-scoped advisory locking.
 type Engine struct {
 	pool           *pgxpool.Pool
 	migrationsPath string
@@ -46,8 +49,18 @@ func New(pool *pgxpool.Pool, migrationsPath string) *Engine {
 	}
 }
 
-// EnsureTable creates the schema_migrations table if it doesn't already exist.
+// EnsureTable creates the schema_migrations table using the pool if it doesn't already exist.
 func (e *Engine) EnsureTable(ctx context.Context) error {
+	conn, err := e.pool.Acquire(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to acquire connection for EnsureTable: %w", err)
+	}
+	defer conn.Release()
+
+	return e.ensureTableOnConn(ctx, conn)
+}
+
+func (e *Engine) ensureTableOnConn(ctx context.Context, conn *pgxpool.Conn) error {
 	query := `
 		CREATE TABLE IF NOT EXISTS schema_migrations (
 			version BIGINT PRIMARY KEY,
@@ -55,7 +68,7 @@ func (e *Engine) EnsureTable(ctx context.Context) error {
 			applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		);
 	`
-	_, err := e.pool.Exec(ctx, query)
+	_, err := conn.Exec(ctx, query)
 	if err != nil {
 		return fmt.Errorf("failed to create schema_migrations table: %w", err)
 	}
@@ -69,7 +82,6 @@ func (e *Engine) LoadMigrations() ([]Migration, error) {
 		return nil, fmt.Errorf("failed to read migrations directory %s: %w", e.migrationsPath, err)
 	}
 
-	// Pattern: 000001_name.up.sql or 000001_name.down.sql
 	re := regexp.MustCompile(`^(\d+)_(.+)\.(up|down)\.sql$`)
 	migrationsMap := make(map[int64]*Migration)
 
@@ -127,13 +139,23 @@ func (e *Engine) LoadMigrations() ([]Migration, error) {
 	return list, nil
 }
 
-// GetApplied returns a map of applied versions and timestamps.
+// GetApplied returns a map of applied versions and timestamps using a dedicated connection.
 func (e *Engine) GetApplied(ctx context.Context) (map[int64]time.Time, error) {
-	if err := e.EnsureTable(ctx); err != nil {
+	conn, err := e.pool.Acquire(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to acquire connection for GetApplied: %w", err)
+	}
+	defer conn.Release()
+
+	return e.getAppliedOnConn(ctx, conn)
+}
+
+func (e *Engine) getAppliedOnConn(ctx context.Context, conn *pgxpool.Conn) (map[int64]time.Time, error) {
+	if err := e.ensureTableOnConn(ctx, conn); err != nil {
 		return nil, err
 	}
 
-	rows, err := e.pool.Query(ctx, "SELECT version, applied_at FROM schema_migrations ORDER BY version ASC")
+	rows, err := conn.Query(ctx, "SELECT version, applied_at FROM schema_migrations ORDER BY version ASC")
 	if err != nil {
 		return nil, fmt.Errorf("failed to query applied migrations: %w", err)
 	}
@@ -153,26 +175,37 @@ func (e *Engine) GetApplied(ctx context.Context) (map[int64]time.Time, error) {
 }
 
 // Up applies all pending migrations in sequential order.
+// Crucially, it acquires a single dedicated database connection from the pool,
+// acquires a session-level advisory lock on that exact connection, executes all
+// migrations on that same connection, and unlocks/releases in a guaranteed defer block.
 func (e *Engine) Up(ctx context.Context) (int, error) {
-	if err := e.EnsureTable(ctx); err != nil {
-		return 0, err
+	conn, err := e.pool.Acquire(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("failed to acquire connection for migration Up: %w", err)
 	}
+	defer conn.Release()
 
-	// Acquire advisory lock to prevent concurrent migration executions
-	const migrationLockID = 982347102
-	if _, err := e.pool.Exec(ctx, "SELECT pg_advisory_lock($1)", migrationLockID); err != nil {
+	// Acquire session-level advisory lock on this specific connection
+	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock($1)", MigrationLockID); err != nil {
 		return 0, fmt.Errorf("failed to acquire migration advisory lock: %w", err)
 	}
 	defer func() {
-		_, _ = e.pool.Exec(context.Background(), "SELECT pg_advisory_unlock($1)", migrationLockID)
+		// Use detached context with short timeout to ensure unlock completes even if ctx was cancelled
+		unlockCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_, _ = conn.Exec(unlockCtx, "SELECT pg_advisory_unlock($1)", MigrationLockID)
 	}()
+
+	if err := e.ensureTableOnConn(ctx, conn); err != nil {
+		return 0, err
+	}
 
 	migrations, err := e.LoadMigrations()
 	if err != nil {
 		return 0, err
 	}
 
-	applied, err := e.GetApplied(ctx)
+	applied, err := e.getAppliedOnConn(ctx, conn)
 	if err != nil {
 		return 0, err
 	}
@@ -187,8 +220,8 @@ func (e *Engine) Up(ctx context.Context) (int, error) {
 			return appliedCount, fmt.Errorf("migration %06d_%s has empty up SQL", m.Version, m.Name)
 		}
 
-		// Execute in transaction
-		tx, err := e.pool.Begin(ctx)
+		// Execute in transaction ON THIS SAME CONNECTION
+		tx, err := conn.Begin(ctx)
 		if err != nil {
 			return appliedCount, fmt.Errorf("failed to begin transaction for migration %d: %w", m.Version, err)
 		}
@@ -214,27 +247,34 @@ func (e *Engine) Up(ctx context.Context) (int, error) {
 	return appliedCount, nil
 }
 
-// Down rolls back the most recent applied migration.
+// Down rolls back the most recent applied migration using the same acquired connection session.
 func (e *Engine) Down(ctx context.Context) (int64, error) {
-	if err := e.EnsureTable(ctx); err != nil {
-		return 0, err
+	conn, err := e.pool.Acquire(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("failed to acquire connection for migration Down: %w", err)
 	}
+	defer conn.Release()
 
-	// Acquire advisory lock to prevent concurrent migration executions
-	const migrationLockID = 982347102
-	if _, err := e.pool.Exec(ctx, "SELECT pg_advisory_lock($1)", migrationLockID); err != nil {
+	// Acquire session-level advisory lock on this specific connection
+	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock($1)", MigrationLockID); err != nil {
 		return 0, fmt.Errorf("failed to acquire migration advisory lock: %w", err)
 	}
 	defer func() {
-		_, _ = e.pool.Exec(context.Background(), "SELECT pg_advisory_unlock($1)", migrationLockID)
+		unlockCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_, _ = conn.Exec(unlockCtx, "SELECT pg_advisory_unlock($1)", MigrationLockID)
 	}()
+
+	if err := e.ensureTableOnConn(ctx, conn); err != nil {
+		return 0, err
+	}
 
 	migrations, err := e.LoadMigrations()
 	if err != nil {
 		return 0, err
 	}
 
-	applied, err := e.GetApplied(ctx)
+	applied, err := e.getAppliedOnConn(ctx, conn)
 	if err != nil {
 		return 0, err
 	}
@@ -267,7 +307,8 @@ func (e *Engine) Down(ctx context.Context) (int64, error) {
 		return 0, fmt.Errorf("migration %06d_%s has empty down SQL", targetMigration.Version, targetMigration.Name)
 	}
 
-	tx, err := e.pool.Begin(ctx)
+	// Execute rollback in transaction ON THIS SAME CONNECTION
+	tx, err := conn.Begin(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("failed to begin transaction: %w", err)
 	}
@@ -292,12 +333,18 @@ func (e *Engine) Down(ctx context.Context) (int64, error) {
 
 // Status returns the list of all known migrations and whether they have been applied.
 func (e *Engine) Status(ctx context.Context) ([]MigrationStatus, error) {
+	conn, err := e.pool.Acquire(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to acquire connection for Status: %w", err)
+	}
+	defer conn.Release()
+
 	migrations, err := e.LoadMigrations()
 	if err != nil {
 		return nil, err
 	}
 
-	applied, err := e.GetApplied(ctx)
+	applied, err := e.getAppliedOnConn(ctx, conn)
 	if err != nil {
 		return nil, err
 	}

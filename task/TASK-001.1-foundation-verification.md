@@ -1,6 +1,6 @@
 # TASK-001.1: Foundation Verification & Hardening
 
-**Status:** IN PROGRESS  
+**Status:** COMPLETED  
 **Assignee:** Antigravity  
 **Created:** 2026-10-31  
 **Target:** Phase 0 Hardening & Verification  
@@ -26,16 +26,16 @@ No Phase 1 features (auth, organizations, tenant isolation logic, or monitors) w
 
 ## 2. Acceptance Criteria
 
-- [ ] Worker updates a persistent heartbeat in PostgreSQL (`worker_heartbeats`).
-- [ ] API `/health/worker` queries the database for active worker heartbeats.
-- [ ] API returns HTTP 200 with heartbeat metadata when worker is active.
-- [ ] API returns HTTP 503 with clear diagnostic info when worker heartbeat is stale or missing.
-- [ ] Automated tests cover healthy, stale, and missing worker heartbeat states.
-- [ ] Real runtime test executed: worker healthy -> worker container stopped -> heartbeat expires -> API reports 503 -> worker container restarted -> API reports 200.
-- [ ] `docker-compose.yml` binds host ports to `127.0.0.1` only.
-- [ ] Docker image references are pinned to explicit tags.
-- [ ] Migration engine rollback and atomicity verified by automated test.
-- [ ] `go test -race ./...` and `go vet ./...` pass with zero failures or race conditions.
-- [ ] `npm run lint` and `npm run build` pass with zero errors.
-- [ ] Complete report documented in `task-report/TASK-001.1-report.md`.
+- [x] Worker updates a persistent heartbeat in PostgreSQL (`worker_heartbeats`).
+- [x] API `/health/worker` queries the database for active worker heartbeats.
+- [x] API returns HTTP 200 with heartbeat metadata when worker is active.
+- [x] API returns HTTP 503 with clear diagnostic info when worker heartbeat is stale or missing.
+- [x] Automated tests cover healthy, stale, and missing worker heartbeat states.
+- [x] Real runtime test executed: worker healthy -> worker container stopped -> heartbeat expires -> API reports 503 -> worker container restarted -> API reports 200.
+- [x] `docker-compose.yml` binds host ports to `127.0.0.1` only.
+- [x] Docker image references are pinned to explicit tags.
+- [x] Migration engine rollback and atomicity verified by automated test.
+- [x] `go test -race ./...` and `go vet ./...` pass with zero failures or race conditions.
+- [x] `npm run lint` and `npm run build` pass with zero errors.
+- [x] Complete report documented in `task-report/TASK-001.1-report.md`.
 
