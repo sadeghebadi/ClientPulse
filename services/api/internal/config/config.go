@@ -51,10 +51,11 @@ type Config struct {
 	PaymentWebhookSecret string
 
 	// Worker & Monitoring
-	WorkerConcurrency            int
+	WorkerConcurrency             int
+	WorkerHeartbeatTimeoutSeconds int
 	MonitorDefaultIntervalSeconds int
 	MonitorDefaultTimeoutSeconds  int
-	CheckResultRetentionDays     int
+	CheckResultRetentionDays      int
 
 	// Admin Seed
 	PlatformAdminEmail    string
@@ -88,9 +89,10 @@ func Load() (*Config, error) {
 		S3Region:                     getEnv("S3_REGION", ""),
 		S3AccessKey:                  getEnv("S3_ACCESS_KEY", ""),
 		S3SecretKey:                  getEnv("S3_SECRET_KEY", ""),
-		PaymentProvider:              getEnv("PAYMENT_PROVIDER", "manual"),
-		PaymentWebhookSecret:         getEnv("PAYMENT_WEBHOOK_SECRET", ""),
-		WorkerConcurrency:            getEnvAsInt("WORKER_CONCURRENCY", 10),
+		PaymentProvider:               getEnv("PAYMENT_PROVIDER", "manual"),
+		PaymentWebhookSecret:          getEnv("PAYMENT_WEBHOOK_SECRET", ""),
+		WorkerConcurrency:             getEnvAsInt("WORKER_CONCURRENCY", 10),
+		WorkerHeartbeatTimeoutSeconds:  getEnvAsInt("WORKER_HEARTBEAT_TIMEOUT_SECONDS", 10),
 		MonitorDefaultIntervalSeconds: getEnvAsInt("MONITOR_DEFAULT_INTERVAL_SECONDS", 300),
 		MonitorDefaultTimeoutSeconds:  getEnvAsInt("MONITOR_DEFAULT_TIMEOUT_SECONDS", 10),
 		CheckResultRetentionDays:     getEnvAsInt("CHECK_RESULT_RETENTION_DAYS", 90),
@@ -129,6 +131,10 @@ func (c *Config) Validate() error {
 
 	if c.WorkerConcurrency <= 0 {
 		return fmt.Errorf("WORKER_CONCURRENCY must be greater than 0")
+	}
+
+	if c.WorkerHeartbeatTimeoutSeconds <= 0 {
+		return fmt.Errorf("WORKER_HEARTBEAT_TIMEOUT_SECONDS must be greater than 0")
 	}
 
 	if c.AppEnv == "production" {

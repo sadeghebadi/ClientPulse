@@ -154,6 +154,19 @@ func (e *Engine) GetApplied(ctx context.Context) (map[int64]time.Time, error) {
 
 // Up applies all pending migrations in sequential order.
 func (e *Engine) Up(ctx context.Context) (int, error) {
+	if err := e.EnsureTable(ctx); err != nil {
+		return 0, err
+	}
+
+	// Acquire advisory lock to prevent concurrent migration executions
+	const migrationLockID = 982347102
+	if _, err := e.pool.Exec(ctx, "SELECT pg_advisory_lock($1)", migrationLockID); err != nil {
+		return 0, fmt.Errorf("failed to acquire migration advisory lock: %w", err)
+	}
+	defer func() {
+		_, _ = e.pool.Exec(context.Background(), "SELECT pg_advisory_unlock($1)", migrationLockID)
+	}()
+
 	migrations, err := e.LoadMigrations()
 	if err != nil {
 		return 0, err
@@ -203,6 +216,19 @@ func (e *Engine) Up(ctx context.Context) (int, error) {
 
 // Down rolls back the most recent applied migration.
 func (e *Engine) Down(ctx context.Context) (int64, error) {
+	if err := e.EnsureTable(ctx); err != nil {
+		return 0, err
+	}
+
+	// Acquire advisory lock to prevent concurrent migration executions
+	const migrationLockID = 982347102
+	if _, err := e.pool.Exec(ctx, "SELECT pg_advisory_lock($1)", migrationLockID); err != nil {
+		return 0, fmt.Errorf("failed to acquire migration advisory lock: %w", err)
+	}
+	defer func() {
+		_, _ = e.pool.Exec(context.Background(), "SELECT pg_advisory_unlock($1)", migrationLockID)
+	}()
+
 	migrations, err := e.LoadMigrations()
 	if err != nil {
 		return 0, err

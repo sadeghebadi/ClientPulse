@@ -16,17 +16,23 @@ curl http://localhost:8080/health/live
 curl http://localhost:8080/health/ready
 ```
 
-## 2. Port Allocation
+## 2. Port Allocation & Security Binding
 
-To prevent port conflicts with host services (e.g. existing local PostgreSQL instances), ports can be configured via `.env`:
+All host ports are bound strictly to `127.0.0.1` in `docker-compose.yml` to prevent public interface exposure:
 
-| Service | Internal Port | Default Host Port | Config Variable |
+| Service | Internal Port | Host Port Binding | Config Variable |
 |---|---|---|---|
-| Web (Next.js) | 3000 | 3000 | `WEB_PORT` |
-| API Server | 8080 | 8080 | `API_PORT` |
-| PostgreSQL | 5432 | 5433 | `POSTGRES_PORT` |
-| Mailpit (SMTP) | 1025 | 1025 | `MAILPIT_SMTP_PORT` |
-| Mailpit (UI) | 8025 | 8025 | `MAILPIT_UI_PORT` |
+| Web (Next.js) | 3000 | `127.0.0.1:3000` | `WEB_PORT` |
+| API Server | 8080 | `127.0.0.1:8080` | `API_PORT` |
+| PostgreSQL | 5432 | `127.0.0.1:5433` | `POSTGRES_PORT` |
+| Mailpit (SMTP) | 1025 | `127.0.0.1:1025` | `MAILPIT_SMTP_PORT` |
+| Mailpit (UI) | 8025 | `127.0.0.1:8025` | `MAILPIT_UI_PORT` |
+
+## 2.1 Worker Heartbeat Monitoring
+
+- **Interval:** The worker daemon updates its heartbeat in PostgreSQL every 2 seconds.
+- **Expiration Threshold:** Configured via `WORKER_HEARTBEAT_TIMEOUT_SECONDS` (default: 10 seconds).
+- **Probing:** The API query checks `worker_heartbeats` for the latest active record. If `time.Since(last_heartbeat) > WORKER_HEARTBEAT_TIMEOUT_SECONDS`, the endpoint returns HTTP 503.
 
 ## 3. Database Migrations
 

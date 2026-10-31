@@ -63,5 +63,36 @@ Common error codes:
 
 ### Worker Health Probe
 `GET /health/worker`
-- Returns status and health statistics of the background worker daemon.
+- Queries persistent worker heartbeats stored in PostgreSQL (`worker_heartbeats`).
+- Returns HTTP 200 OK when an active worker heartbeat was recorded within `WORKER_HEARTBEAT_TIMEOUT_SECONDS` (default: 10s).
+- Returns HTTP 503 Service Unavailable when the worker heartbeat is stale, missing, or stopped.
+
+Healthy Response (200 OK):
+```json
+{
+  "status": "ok",
+  "service": "clientpulse-worker",
+  "worker_id": "worker-3e7deaa90cac-1",
+  "hostname": "3e7deaa90cac",
+  "last_heartbeat_at": "2026-10-31T15:43:46Z",
+  "age_seconds": 0.16,
+  "timeout_seconds": 10,
+  "timestamp": "2026-10-31T15:43:46Z"
+}
+```
+
+Unhealthy Response (503 Service Unavailable):
+```json
+{
+  "status": "unhealthy",
+  "service": "clientpulse-worker",
+  "worker_id": "worker-3e7deaa90cac-1",
+  "hostname": "3e7deaa90cac",
+  "last_heartbeat_at": "2026-10-31T15:27:56Z",
+  "age_seconds": 30.03,
+  "timeout_seconds": 10,
+  "timestamp": "2026-10-31T15:28:26Z",
+  "error": "worker heartbeat is stale"
+}
+```
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
@@ -9,6 +10,7 @@ import (
 
 	"clientpulse/services/api/internal/config"
 	"clientpulse/services/api/internal/database"
+	"clientpulse/services/api/internal/health"
 	"clientpulse/services/api/internal/logger"
 )
 
@@ -20,9 +22,23 @@ func main() {
 	}
 
 	log := logger.New(cfg.AppEnv, os.Stdout)
+
+	hostname, _ := os.Hostname()
+	if hostname == "" {
+		hostname = "worker-host"
+	}
+	pid := os.Getpid()
+	workerID := os.Getenv("WORKER_ID")
+	if workerID == "" {
+		workerID = fmt.Sprintf("worker-%s-%d", hostname, pid)
+	}
+
 	log.Info("initializing ClientPulse Worker service",
 		"env", cfg.AppEnv,
 		"version", "1.0.0",
+		"worker_id", workerID,
+		"hostname", hostname,
+		"pid", pid,
 		"concurrency", cfg.WorkerConcurrency,
 	)
 
@@ -40,6 +56,16 @@ func main() {
 	defer db.Close()
 	log.Info("worker database pool established")
 
+	// Set up worker heartbeat recorder
+	hbRecorder := health.NewPGWorkerHeartbeat(db.Pool)
+	regCtx, regCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	if err := hbRecorder.Register(regCtx, workerID, hostname, pid); err != nil {
+		log.Warn("initial worker heartbeat registration failed (migrations may be pending)", "error", err)
+	} else {
+		log.Info("worker heartbeat registered in database", "worker_id", workerID)
+	}
+	regCancel()
+
 	// Set up cancellation context for graceful shutdown
 	workerCtx, workerCancel := context.WithCancel(context.Background())
 	defer workerCancel()
@@ -47,11 +73,11 @@ func main() {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 
-	// Worker heartbeat loop
-	ticker := time.NewTicker(5 * time.Second)
+	// Worker heartbeat loop (heartbeat every 2 seconds, well within 10s timeout)
+	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 
-	log.Info("worker daemon started, waiting for jobs")
+	log.Info("worker daemon started, queue polling and heartbeat active")
 
 	running := true
 	for running {
@@ -61,17 +87,25 @@ func main() {
 			running = false
 			workerCancel()
 		case <-ticker.C:
-			// Foundation heartbeat: verify database connection
-			pingCtx, pingCancel := context.WithTimeout(workerCtx, 2*time.Second)
-			if err := db.Ping(pingCtx); err != nil {
-				log.Warn("worker database ping failed", "error", err)
+			// Refresh persistent worker heartbeat in database
+			hbCtx, hbCancel := context.WithTimeout(workerCtx, 2*time.Second)
+			if err := hbRecorder.Heartbeat(hbCtx, workerID); err != nil {
+				log.Warn("worker heartbeat refresh failed", "error", err)
 			} else {
-				log.Debug("worker active, queue polling ready")
+				log.Debug("worker heartbeat updated", "worker_id", workerID)
 			}
-			pingCancel()
+			hbCancel()
 		}
+	}
+
+	// Mark worker stopped in database upon graceful shutdown
+	stopCtx, stopCancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer stopCancel()
+	if err := hbRecorder.Stop(stopCtx, workerID); err != nil {
+		log.Warn("failed to mark worker stopped in database", "error", err)
+	} else {
+		log.Info("worker marked stopped in database")
 	}
 
 	log.Info("worker process gracefully stopped")
 }
-

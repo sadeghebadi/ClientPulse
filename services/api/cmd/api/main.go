@@ -43,11 +43,17 @@ func main() {
 		// We still start the server so /health/live works and /health/ready accurately reports 503
 	} else {
 		defer db.Close()
+	}
+
+	var workerChecker health.WorkerHeartbeatChecker
+	if db != nil && db.Pool != nil {
+		workerChecker = health.NewPGWorkerHeartbeat(db.Pool)
 		log.Info("database connection pool initialized")
 	}
 
-	// Initialize health handler
-	healthHdr := health.NewHandler(db, "1.0.0")
+	// Initialize health handler with persistent worker heartbeat checker
+	workerTimeout := time.Duration(cfg.WorkerHeartbeatTimeoutSeconds) * time.Second
+	healthHdr := health.NewHandler(db, workerChecker, workerTimeout, "1.0.0")
 
 	// Initialize HTTP server
 	srv := server.New(cfg, log, healthHdr)

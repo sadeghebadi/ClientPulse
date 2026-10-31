@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { CheckCircle2, AlertTriangle, RefreshCw, Server, Database } from "lucide-react";
+import { CheckCircle2, AlertTriangle, RefreshCw, Server, Database, Cpu } from "lucide-react";
 
 interface HealthStatus {
   live: {
@@ -18,6 +18,15 @@ interface HealthStatus {
     timestamp?: string;
     error?: string;
   } | null;
+  worker: {
+    status?: string;
+    service?: string;
+    worker_id?: string;
+    last_heartbeat_at?: string;
+    age_seconds?: number;
+    timeout_seconds?: number;
+    error?: string;
+  } | null;
   loading: boolean;
   lastChecked: string | null;
 }
@@ -31,6 +40,7 @@ export function HealthChecker({ locale }: HealthCheckerProps) {
   const [health, setHealth] = useState<HealthStatus>({
     live: null,
     ready: null,
+    worker: null,
     loading: true,
     lastChecked: null,
   });
@@ -41,6 +51,7 @@ export function HealthChecker({ locale }: HealthCheckerProps) {
 
     let liveData = null;
     let readyData = null;
+    let workerData = null;
 
     try {
       const liveRes = await fetch(`${apiBase}/health/live`, { cache: "no-store" });
@@ -64,9 +75,21 @@ export function HealthChecker({ locale }: HealthCheckerProps) {
       readyData = { error: err instanceof Error ? err.message : "Network error" };
     }
 
+    try {
+      const workerRes = await fetch(`${apiBase}/health/worker`, { cache: "no-store" });
+      if (workerRes.ok) {
+        workerData = await workerRes.json();
+      } else {
+        workerData = await workerRes.json().catch(() => ({ error: `HTTP ${workerRes.status}` }));
+      }
+    } catch (err: unknown) {
+      workerData = { error: err instanceof Error ? err.message : "Network error" };
+    }
+
     setHealth({
       live: liveData,
       ready: readyData,
+      worker: workerData,
       loading: false,
       lastChecked: new Date().toLocaleTimeString(),
     });
@@ -78,6 +101,7 @@ export function HealthChecker({ locale }: HealthCheckerProps) {
 
   const isLiveOk = health.live?.status === "ok";
   const isReadyOk = health.ready?.status === "ok" && health.ready?.database === "connected";
+  const isWorkerOk = health.worker?.status === "ok";
 
   return (
     <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 mb-8">
@@ -98,7 +122,7 @@ export function HealthChecker({ locale }: HealthCheckerProps) {
         </button>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {/* API Liveness */}
         <div className="p-4 rounded-lg bg-slate-50 border border-slate-200">
           <div className="flex items-center justify-between mb-2">
@@ -148,8 +172,32 @@ export function HealthChecker({ locale }: HealthCheckerProps) {
             )}
           </div>
         </div>
+
+        {/* Worker Daemon Health */}
+        <div className="p-4 rounded-lg bg-slate-50 border border-slate-200">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs font-semibold uppercase tracking-wider text-slate-500 flex items-center gap-1">
+              <Cpu className="w-3.5 h-3.5" /> Worker Probe (/health/worker)
+            </span>
+            {isWorkerOk ? (
+              <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-600">
+                <CheckCircle2 className="w-4 h-4" /> Alive & Active
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1 text-xs font-semibold text-rose-600">
+                <AlertTriangle className="w-4 h-4" /> {health.loading ? "Checking..." : "Unhealthy"}
+              </span>
+            )}
+          </div>
+          <div className="text-sm font-mono text-slate-700 space-y-1">
+            <p className="truncate">ID: {health.worker?.worker_id || "none"}</p>
+            <p>Age: {health.worker?.age_seconds !== undefined ? `${health.worker.age_seconds}s` : "n/a"}</p>
+            {health.worker?.error && (
+              <p className="text-xs text-rose-600 font-sans">Error: {health.worker.error}</p>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );
 }
-

@@ -3,6 +3,7 @@ package health
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"net/http"
 	"time"
 )
@@ -14,18 +15,25 @@ type Pinger interface {
 
 // Handler provides HTTP endpoints for liveness, readiness, and worker probes.
 type Handler struct {
-	db      Pinger
-	version string
+	db            Pinger
+	workerChecker WorkerHeartbeatChecker
+	workerTimeout time.Duration
+	version       string
 }
 
 // NewHandler constructs a new health handler.
-func NewHandler(db Pinger, version string) *Handler {
+func NewHandler(db Pinger, workerChecker WorkerHeartbeatChecker, workerTimeout time.Duration, version string) *Handler {
 	if version == "" {
 		version = "1.0.0"
 	}
+	if workerTimeout <= 0 {
+		workerTimeout = 10 * time.Second
+	}
 	return &Handler{
-		db:      db,
-		version: version,
+		db:            db,
+		workerChecker: workerChecker,
+		workerTimeout: workerTimeout,
+		version:       version,
 	}
 }
 
@@ -49,9 +57,15 @@ type ReadyResponse struct {
 
 // WorkerResponse defines the payload for worker status check.
 type WorkerResponse struct {
-	Status    string `json:"status"`
-	Service   string `json:"service"`
-	Timestamp string `json:"timestamp"`
+	Status          string   `json:"status"`
+	Service         string   `json:"service"`
+	WorkerID        string   `json:"worker_id,omitempty"`
+	Hostname        string   `json:"hostname,omitempty"`
+	LastHeartbeatAt string   `json:"last_heartbeat_at,omitempty"`
+	AgeSeconds      *float64 `json:"age_seconds,omitempty"`
+	TimeoutSeconds  int      `json:"timeout_seconds"`
+	Timestamp       string   `json:"timestamp"`
+	Error           string   `json:"error,omitempty"`
 }
 
 // Live handles GET /health/live.
@@ -96,13 +110,55 @@ func (h *Handler) Ready(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// Worker handles GET /health/worker.
+// Worker handles GET /health/worker by genuinely checking persistent worker heartbeats.
 func (h *Handler) Worker(w http.ResponseWriter, r *http.Request) {
+	timeoutSec := int(h.workerTimeout.Seconds())
 	resp := WorkerResponse{
-		Status:    "ok",
-		Service:   "clientpulse-worker",
-		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		Service:        "clientpulse-worker",
+		TimeoutSeconds: timeoutSec,
+		Timestamp:      time.Now().UTC().Format(time.RFC3339),
 	}
+
+	if h.workerChecker == nil {
+		resp.Status = "unhealthy"
+		resp.Error = "worker heartbeat checker not configured"
+		writeJSON(w, http.StatusServiceUnavailable, resp)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+
+	hb, err := h.workerChecker.GetLatestHeartbeat(ctx)
+	if err != nil {
+		resp.Status = "unhealthy"
+		resp.Error = "failed querying worker heartbeat: " + err.Error()
+		writeJSON(w, http.StatusServiceUnavailable, resp)
+		return
+	}
+
+	if hb == nil {
+		resp.Status = "unhealthy"
+		resp.Error = "no active worker heartbeats found in database"
+		writeJSON(w, http.StatusServiceUnavailable, resp)
+		return
+	}
+
+	age := time.Since(hb.LastHeartbeatAt)
+	ageSec := math.Round(age.Seconds()*100) / 100
+	resp.WorkerID = hb.WorkerID
+	resp.Hostname = hb.Hostname
+	resp.LastHeartbeatAt = hb.LastHeartbeatAt.UTC().Format(time.RFC3339)
+	resp.AgeSeconds = &ageSec
+
+	if age > h.workerTimeout {
+		resp.Status = "unhealthy"
+		resp.Error = "worker heartbeat is stale"
+		writeJSON(w, http.StatusServiceUnavailable, resp)
+		return
+	}
+
+	resp.Status = "ok"
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -111,4 +167,3 @@ func writeJSON(w http.ResponseWriter, code int, data interface{}) {
 	w.WriteHeader(code)
 	_ = json.NewEncoder(w).Encode(data)
 }
-

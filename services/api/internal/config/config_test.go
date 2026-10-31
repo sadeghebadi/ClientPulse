@@ -64,6 +64,13 @@ func TestConfigValidation(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name: "invalid worker heartbeat timeout",
+			mutate: func(c *Config) {
+				c.WorkerHeartbeatTimeoutSeconds = 0
+			},
+			wantErr: true,
+		},
+		{
 			name: "production with insecure secret",
 			mutate: func(c *Config) {
 				c.AppEnv = "production"
