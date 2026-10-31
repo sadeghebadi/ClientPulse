@@ -24,7 +24,7 @@ clientpulse/
 ├── apps/
 │   └── web/                     # Next.js 14+ (App Router), TypeScript, Tailwind CSS
 ├── services/
-│   └── api/                     # Go 1.23+ Modular Monolith (API & Worker)
+│   └── api/                     # Go 1.27+ Modular Monolith (API & Worker)
 │       ├── cmd/
 │       │   ├── api/             # HTTP API entrypoint
 │       │   ├── worker/          # Background worker entrypoint

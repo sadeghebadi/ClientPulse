@@ -1,5 +1,5 @@
 # Multi-stage Dockerfile for ClientPulse Next.js Web Frontend
-FROM node:22-alpine AS builder
+FROM node:24.22.1-alpine3.24 AS builder
 
 WORKDIR /app
 
@@ -10,7 +10,7 @@ COPY apps/web/ ./
 RUN npm run build
 
 # Production Runner
-FROM node:22-alpine AS runner
+FROM node:24.22.1-alpine3.24 AS runner
 
 WORKDIR /app
 

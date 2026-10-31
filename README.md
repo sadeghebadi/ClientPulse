@@ -10,11 +10,11 @@ Based on **PRD v1.0** (`PRD.md`).
 
 ClientPulse is built as a **Modular Monolith** in Go with a decoupled background worker and a Next.js (TypeScript) agency dashboard, backed by PostgreSQL.
 
-- **Frontend:** Next.js 14 (App Router), TypeScript, Tailwind CSS, English & Persian (RTL) foundation (`apps/web`).
-- **Backend API:** Go 1.23+ modular REST API service (`services/api/cmd/api`).
-- **Worker:** Go 1.23+ background worker daemon for monitoring checks and report generation (`services/api/cmd/worker`).
-- **Database:** PostgreSQL 16 with versioned transactional migrations (`migrations/`).
-- **Dev Mailer:** Mailpit for local email testing without external credentials.
+- **Frontend:** Next.js 14 (App Router), TypeScript, Tailwind CSS, English & Persian (RTL) foundation (`apps/web`) running on Node.js 24 LTS (`node:24.22.1-alpine3.24`).
+- **Backend API:** Go 1.27+ modular REST API service (`services/api/cmd/api`) built on `golang:1.27.3-alpine3.24` and running on `alpine:3.24.3`.
+- **Worker:** Go 1.27+ background worker daemon for monitoring checks and report generation (`services/api/cmd/worker`) running on `alpine:3.24.3`.
+- **Database:** PostgreSQL 16.15 (`postgres:16.15-alpine3.24`) with versioned transactional migrations (`migrations/`).
+- **Dev Mailer:** Mailpit for local email testing without external credentials (`axllent/mailpit:v1.33.0`).
 
 Full architectural details:
 - [Architecture Overview](docs/architecture.md)
@@ -28,8 +28,8 @@ Full architectural details:
 ## 2. Prerequisites
 
 - **Docker:** Engine 24+ and Docker Compose v2.20+
-- **Go:** 1.23+ (for local host builds and running unit tests)
-- **Node.js:** 20+ / 22+ and npm (for frontend development)
+- **Go:** 1.27+ (or Go 1.23+ with toolchain auto-switching for local host builds and tests)
+- **Node.js:** 24+ LTS (or Node 22+) and npm (for frontend development)
 - **curl:** for health endpoint verification
 
 ---
