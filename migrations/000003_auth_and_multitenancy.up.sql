@@ -109,17 +109,20 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 CREATE INDEX IF NOT EXISTS idx_audit_logs_org_created ON audit_logs (organization_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_actor ON audit_logs (actor_user_id, created_at DESC);
 
--- 8. Enable PostgreSQL Row-Level Security (RLS) on Tenant Tables
+-- 8. Runtime Application Role & Row-Level Security (RLS)
 DO $$
 BEGIN
     IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'clientpulse_app') THEN
-        CREATE ROLE clientpulse_app WITH LOGIN NOSUPERUSER NOBYPASSRLS;
-        GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO clientpulse_app;
-        GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO clientpulse_app;
-        ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO clientpulse_app;
-        GRANT clientpulse_app TO clientpulse;
+        CREATE ROLE clientpulse_app WITH LOGIN PASSWORD 'clientpulse_app_dev_password' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
     END IF;
 END $$;
+
+-- Standard table privileges for application runtime
+GRANT SELECT, INSERT, UPDATE, DELETE ON users, organizations, organization_memberships, sessions, password_reset_tokens, email_verification_tokens, worker_heartbeats, system_metadata TO clientpulse_app;
+-- Audit logs: append-only (SELECT & INSERT). UPDATE and DELETE are strictly disallowed.
+GRANT SELECT, INSERT ON audit_logs TO clientpulse_app;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO clientpulse_app;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO clientpulse_app;
 
 ALTER TABLE audit_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE audit_logs FORCE ROW LEVEL SECURITY;
@@ -127,14 +130,10 @@ ALTER TABLE audit_logs FORCE ROW LEVEL SECURITY;
 CREATE POLICY audit_logs_tenant_isolation ON audit_logs
     FOR ALL
     USING (
-        current_setting('app.bypass_rls', true) = 'on'
-        OR organization_id IS NULL
-        OR organization_id = NULLIF(current_setting('app.current_organization_id', true), '')::uuid
+        organization_id = NULLIF(current_setting('app.current_organization_id', true), '')::uuid
     )
     WITH CHECK (
-        current_setting('app.bypass_rls', true) = 'on'
-        OR organization_id IS NULL
-        OR organization_id = NULLIF(current_setting('app.current_organization_id', true), '')::uuid
+        organization_id = NULLIF(current_setting('app.current_organization_id', true), '')::uuid
     );
 
 ALTER TABLE organization_memberships ENABLE ROW LEVEL SECURITY;
@@ -143,11 +142,9 @@ ALTER TABLE organization_memberships FORCE ROW LEVEL SECURITY;
 CREATE POLICY org_memberships_tenant_isolation ON organization_memberships
     FOR ALL
     USING (
-        current_setting('app.bypass_rls', true) = 'on'
-        OR organization_id = NULLIF(current_setting('app.current_organization_id', true), '')::uuid
+        organization_id = NULLIF(current_setting('app.current_organization_id', true), '')::uuid
         OR user_id = NULLIF(current_setting('app.current_user_id', true), '')::uuid
     )
     WITH CHECK (
-        current_setting('app.bypass_rls', true) = 'on'
-        OR organization_id = NULLIF(current_setting('app.current_organization_id', true), '')::uuid
+        organization_id = NULLIF(current_setting('app.current_organization_id', true), '')::uuid
     );

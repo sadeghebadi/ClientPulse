@@ -45,11 +45,18 @@ func New(cfg *config.Config, log *slog.Logger, deps Dependencies) *Server {
 	// Build global middleware chain
 	var handler http.Handler = mux
 
-	// CSRF validation for mutating cookie-authenticated requests
-	handler = CSRFProtection(handler)
+	allowedOrigins := []string{cfg.AppBaseURL, "http://localhost:3000"}
+
+	// CSRF validation for mutating cookie-authenticated requests (runs after AuthMiddleware)
+	handler = CSRFProtection(cfg, allowedOrigins)(handler)
+
+	// Global session authentication so user context is available for CSRF validation and route handlers
+	if s.deps.AuthMiddleware != nil {
+		handler = s.deps.AuthMiddleware.Authenticate(handler)
+	}
 
 	// CORS handler
-	handler = CORS([]string{cfg.AppBaseURL, "http://localhost:3000"})(handler)
+	handler = CORS(allowedOrigins)(handler)
 	handler = SecurityHeaders(handler)
 	handler = RequestLogger(log)(handler)
 	handler = Recovery(log)(handler)
@@ -68,8 +75,12 @@ func New(cfg *config.Config, log *slog.Logger, deps Dependencies) *Server {
 
 func (s *Server) registerRoutes(mux *http.ServeMux) {
 	// Rate limiters for sensitive endpoints
+	signupLimiter := rate.NewLimiter(10, 1*time.Minute)
 	loginLimiter := rate.NewLimiter(10, 1*time.Minute)
-	recoveryLimiter := rate.NewLimiter(5, 1*time.Minute)
+	forgotPasswordLimiter := rate.NewLimiter(5, 1*time.Minute)
+	resetPasswordLimiter := rate.NewLimiter(10, 1*time.Minute)
+	verifyEmailLimiter := rate.NewLimiter(15, 1*time.Minute)
+	resendVerificationLimiter := rate.NewLimiter(5, 1*time.Minute)
 
 	// 1. Health and probe endpoints (public)
 	if s.deps.HealthHdr != nil {
@@ -96,11 +107,11 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	}
 
 	// 3. Public Authentication Routes
-	mux.Handle("POST /api/v1/auth/signup", http.HandlerFunc(s.deps.AuthHdr.Signup))
+	mux.Handle("POST /api/v1/auth/signup", RateLimit(signupLimiter, "signup")(http.HandlerFunc(s.deps.AuthHdr.Signup)))
 	mux.Handle("POST /api/v1/auth/login", RateLimit(loginLimiter, "login")(http.HandlerFunc(s.deps.AuthHdr.Login)))
-	mux.Handle("POST /api/v1/auth/forgot-password", RateLimit(recoveryLimiter, "forgot-password")(http.HandlerFunc(s.deps.AuthHdr.ForgotPassword)))
-	mux.Handle("POST /api/v1/auth/reset-password", http.HandlerFunc(s.deps.AuthHdr.ResetPassword))
-	mux.Handle("POST /api/v1/auth/verify-email", http.HandlerFunc(s.deps.AuthHdr.VerifyEmail))
+	mux.Handle("POST /api/v1/auth/forgot-password", RateLimit(forgotPasswordLimiter, "forgot-password")(http.HandlerFunc(s.deps.AuthHdr.ForgotPassword)))
+	mux.Handle("POST /api/v1/auth/reset-password", RateLimit(resetPasswordLimiter, "reset-password")(http.HandlerFunc(s.deps.AuthHdr.ResetPassword)))
+	mux.Handle("POST /api/v1/auth/verify-email", RateLimit(verifyEmailLimiter, "verify-email")(http.HandlerFunc(s.deps.AuthHdr.VerifyEmail)))
 
 	// Helper wrapper for authenticated routes
 	authed := func(h http.HandlerFunc) http.Handler {
@@ -110,7 +121,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	// 4. Authenticated User Routes
 	mux.Handle("POST /api/v1/auth/logout", authed(s.deps.AuthHdr.Logout))
 	mux.Handle("GET /api/v1/auth/me", authed(s.deps.AuthHdr.Me))
-	mux.Handle("POST /api/v1/auth/resend-verification", authed(s.deps.AuthHdr.ResendVerification))
+	mux.Handle("POST /api/v1/auth/resend-verification", RateLimit(resendVerificationLimiter, "resend-verification")(authed(s.deps.AuthHdr.ResendVerification)))
 	mux.Handle("POST /api/v1/auth/change-password", authed(s.deps.AuthHdr.ChangePassword))
 
 	// 5. Organization Management (User Scope)

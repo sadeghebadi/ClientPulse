@@ -8,7 +8,8 @@
 - **Date/Time:** ISO 8601 UTC format (e.g. `2026-10-31T14:00:00Z`).
 - **Correlation ID:** Every request receives or generates an `X-Request-ID` header, returned in responses and attached to structured log entries.
 - **Authentication:** HttpOnly, SameSite=Lax, Secure (prod) session cookies (`clientpulse_session`), or `Authorization: Bearer <token>`.
-- **CSRF Protection:** State-mutating requests (`POST`, `PUT`, `PATCH`, `DELETE`) authenticated via cookie must present the `X-CSRF-Token` header matching the `clientpulse_csrf` cookie value.
+- **CSRF Protection:** State-mutating requests (`POST`, `PUT`, `PATCH`, `DELETE`) authenticated via session cookie must present the `X-CSRF-Token` header matching the `clientpulse_csrf` cookie value. The token contains a cryptographic HMAC-SHA256 signature bound to the active session ID.
+- **Cross-Site & Origin Defense:** Mutating requests must have a whitelisted `Origin` (or `Referer`) matching `APP_BASE_URL` or `API_BASE_URL`, and must not specify `Sec-Fetch-Site: cross-site`.
 - **Tenant Context:** Tenant ID is resolved by backend middleware from verified memberships, or explicitly passed via `X-Organization-ID` header (validated on every request against memberships).
 
 ---
@@ -32,7 +33,7 @@ Common error codes:
 - `INVALID_REQUEST` / `VALIDATION_FAILED` (400)
 - `INVALID_CREDENTIALS` (401)
 - `UNAUTHORIZED` (401)
-- `FORBIDDEN` / `CSRF_VALIDATION_FAILED` (403)
+- `FORBIDDEN` / `CSRF_TOKEN_MISSING` / `CSRF_MISMATCH` / `CSRF_TOKEN_INVALID` / `CSRF_ORIGIN_INVALID` / `CSRF_CROSS_SITE_BLOCKED` (403)
 - `NOT_FOUND` (404)
 - `RATE_LIMIT_EXCEEDED` (429)
 - `INTERNAL_ERROR` (500)
@@ -64,6 +65,7 @@ Common error codes:
 
 ### Register User & Provision Agency
 `POST /api/v1/auth/signup`
+- **Rate Limit:** 10 requests / minute / IP.
 - **Body:**
 ```json
 {
@@ -103,11 +105,13 @@ Common error codes:
 
 ### Verify Email
 `POST /api/v1/auth/verify-email`
+- **Rate Limit:** 15 requests / minute / IP.
 - **Body:** `{"token": "raw-verification-token"}` (or `?token=...`).
-- Marks user's email as verified and invalidates token.
+- Atomically consumes verification token and marks user's email as verified.
 
 ### Resend Verification Email
 `POST /api/v1/auth/resend-verification`
+- **Rate Limit:** 5 requests / minute / IP.
 - Requires authentication. Generates a fresh verification token and dispatches email via Mailpit/SMTP.
 
 ### Forgot Password
@@ -118,8 +122,9 @@ Common error codes:
 
 ### Reset Password
 `POST /api/v1/auth/reset-password`
+- **Rate Limit:** 10 requests / minute / IP.
 - **Body:** `{"token": "raw-token", "password": "NewSecurePassword123!"}`.
-- Validates password strength (>= 12 chars), hashes with Argon2id, marks token used, and invalidates all active sessions.
+- Validates password strength (>= 12 chars), atomically consumes token, updates password hash using Argon2id, and invalidates all active sessions.
 
 ### Change Password
 `POST /api/v1/auth/change-password`
@@ -162,6 +167,8 @@ Common error codes:
 `POST /api/v1/organizations/current/members`
 - Requires `admin` or `owner` role. Admin cannot grant `owner` role.
 - **Body:** `{"email": "teammate@agency.com", "role": "member"}`.
+- Adds an existing registered user to the organization.
+- *Note:* True pending email invitation flows with token links (PRD FR-TEN-03) will be implemented in a subsequent phase.
 
 ### Update Member Role
 `PATCH /api/v1/organizations/current/members/{userID}`

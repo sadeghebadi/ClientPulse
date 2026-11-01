@@ -148,13 +148,13 @@ func (s *AuthService) Signup(ctx context.Context, req SignupRequest) (*AuthResul
 	hashedSessionToken := auth.HashToken(rawSessionToken, s.cfg.TokenHashPepper)
 
 	expiresAt := time.Now().Add(7 * 24 * time.Hour)
-	_, err = s.sessionRepo.CreateSession(ctx, user.ID, hashedSessionToken, req.IPAddress, req.UserAgent, expiresAt, &org.ID)
+	sess, err := s.sessionRepo.CreateSession(ctx, user.ID, hashedSessionToken, req.IPAddress, req.UserAgent, expiresAt, &org.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create session: %w", err)
 	}
 
-	// Generate CSRF token
-	rawCSRFToken, err := auth.GenerateSecureToken(32)
+	// Generate Session-bound Signed CSRF token
+	rawCSRFToken, err := auth.GenerateSessionCSRFToken(sess.ID, s.cfg.SessionSecret)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate csrf token: %w", err)
 	}
@@ -226,12 +226,12 @@ func (s *AuthService) Login(ctx context.Context, email, password, ip, userAgent 
 	hashedSessionToken := auth.HashToken(rawSessionToken, s.cfg.TokenHashPepper)
 
 	expiresAt := time.Now().Add(7 * 24 * time.Hour)
-	_, err = s.sessionRepo.CreateSession(ctx, user.ID, hashedSessionToken, ip, userAgent, expiresAt, activeOrgID)
+	sess, err := s.sessionRepo.CreateSession(ctx, user.ID, hashedSessionToken, ip, userAgent, expiresAt, activeOrgID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to store session: %w", err)
 	}
 
-	rawCSRFToken, err := auth.GenerateSecureToken(32)
+	rawCSRFToken, err := auth.GenerateSessionCSRFToken(sess.ID, s.cfg.SessionSecret)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate csrf token: %w", err)
 	}
@@ -326,11 +326,11 @@ func (s *AuthService) SendVerificationEmail(ctx context.Context, userID, email, 
 	return s.mailer.SendVerificationEmail(ctx, email, displayName, verifyURL)
 }
 
-// VerifyEmail processes an email verification token.
+// VerifyEmail processes an email verification token atomically.
 func (s *AuthService) VerifyEmail(ctx context.Context, rawToken string) error {
 	tokenHash := auth.HashToken(rawToken, s.cfg.TokenHashPepper)
 
-	rec, err := s.tokenRepo.GetValidEmailVerificationToken(ctx, tokenHash)
+	rec, err := s.tokenRepo.ConsumeEmailVerificationToken(ctx, tokenHash)
 	if err != nil {
 		return errors.New("invalid or expired verification link")
 	}
@@ -339,7 +339,6 @@ func (s *AuthService) VerifyEmail(ctx context.Context, rawToken string) error {
 		return err
 	}
 
-	_ = s.tokenRepo.MarkEmailVerificationTokenUsed(ctx, rec.ID)
 	return nil
 }
 
@@ -380,7 +379,8 @@ func (s *AuthService) ResetPassword(ctx context.Context, rawToken, newPassword s
 	}
 
 	tokenHash := auth.HashToken(rawToken, s.cfg.TokenHashPepper)
-	rec, err := s.tokenRepo.GetValidPasswordResetToken(ctx, tokenHash)
+	// Atomically consume token in single SQL statement to prevent concurrent replay
+	rec, err := s.tokenRepo.ConsumePasswordResetToken(ctx, tokenHash)
 	if err != nil {
 		return errors.New("invalid or expired password reset link")
 	}
@@ -393,9 +393,6 @@ func (s *AuthService) ResetPassword(ctx context.Context, rawToken, newPassword s
 	if err := s.userRepo.UpdatePassword(ctx, rec.UserID, passHash); err != nil {
 		return err
 	}
-
-	// Single-use enforcement
-	_ = s.tokenRepo.MarkPasswordResetTokenUsed(ctx, rec.ID)
 
 	// Invalidate all active sessions per PRD FR-AUTH-03
 	_ = s.sessionRepo.RevokeAllUserSessions(ctx, rec.UserID)

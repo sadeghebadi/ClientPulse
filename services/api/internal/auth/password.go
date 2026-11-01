@@ -6,7 +6,9 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"runtime"
 	"strings"
+	"time"
 
 	"golang.org/x/crypto/argon2"
 )
@@ -15,7 +17,30 @@ var (
 	ErrInvalidHash         = errors.New("the encoded hash is not in the correct format")
 	ErrIncompatibleVersion = errors.New("incompatible version of argon2")
 	ErrPasswordTooShort    = errors.New("password must be at least 12 characters long")
+	ErrCryptoBusy          = errors.New("cryptographic subsystem busy; please retry shortly")
 )
+
+// Bounded concurrency semaphore for Argon2 memory allocation protection.
+// Prevents memory exhaustion during login traffic spikes or credential stuffing.
+var (
+	argon2Sem = make(chan struct{}, maxInt(runtime.NumCPU()*2, 4))
+)
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func acquireArgon2Ticket(timeout time.Duration) (func(), error) {
+	select {
+	case argon2Sem <- struct{}{}:
+		return func() { <-argon2Sem }, nil
+	case <-time.After(timeout):
+		return nil, ErrCryptoBusy
+	}
+}
 
 // Argon2Params defines parameters for Argon2id hashing.
 type Argon2Params struct {
@@ -44,6 +69,12 @@ func HashPassword(password string, params *Argon2Params) (string, error) {
 	if params == nil {
 		params = DefaultArgon2Params
 	}
+
+	release, err := acquireArgon2Ticket(3 * time.Second)
+	if err != nil {
+		return "", err
+	}
+	defer release()
 
 	salt := make([]byte, params.SaltLength)
 	if _, err := rand.Read(salt); err != nil {
@@ -96,6 +127,12 @@ func VerifyPassword(password, encodedHash string) (bool, error) {
 		return false, ErrInvalidHash
 	}
 	params.KeyLength = uint32(len(expectedHash))
+
+	release, err := acquireArgon2Ticket(3 * time.Second)
+	if err != nil {
+		return false, err
+	}
+	defer release()
 
 	hash := argon2.IDKey([]byte(password), salt, params.Iterations, params.Memory, params.Parallelism, params.KeyLength)
 

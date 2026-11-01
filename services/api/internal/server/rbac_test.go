@@ -55,7 +55,7 @@ func setupTestServer(t *testing.T) (*Server, *service.AuthService, *service.OrgS
 	return srv, authService, orgService, sessionRepo, cleanup
 }
 
-func createTestUserAndSession(t *testing.T, authService *service.AuthService, displayName, prefix string) (*repository.User, string, string) {
+func createTestUserAndSession(t *testing.T, authService *service.AuthService, displayName, prefix string) (*repository.User, string, string, string) {
 	t.Helper()
 	randID, _ := auth.GenerateSecureToken(4)
 	email := fmt.Sprintf("%s-%s@example.com", prefix, randID)
@@ -71,7 +71,7 @@ func createTestUserAndSession(t *testing.T, authService *service.AuthService, di
 		t.Fatalf("failed to create test user: %v", err)
 	}
 
-	return res.User, res.Organization.ID, res.RawSession
+	return res.User, res.Organization.ID, res.RawSession, res.RawCSRF
 }
 
 func TestRBACPermissions(t *testing.T) {
@@ -81,10 +81,10 @@ func TestRBACPermissions(t *testing.T) {
 	ctx := context.Background()
 
 	// 1. Create Owner user and organization
-	ownerUser, orgID, ownerSession := createTestUserAndSession(t, authService, "Alice Owner", "owner")
+	ownerUser, orgID, ownerSession, ownerCSRF := createTestUserAndSession(t, authService, "Alice Owner", "owner")
 
 	// 2. Create Admin user
-	adminUser, _, adminSession := createTestUserAndSession(t, authService, "Bob Admin", "admin")
+	adminUser, _, adminSession, adminCSRF := createTestUserAndSession(t, authService, "Bob Admin", "admin")
 	// Add Bob as Admin to Alice's Org
 	_, err := orgService.AddMember(ctx, orgID, ownerUser.ID, service.AddMemberRequest{
 		Email: adminUser.Email,
@@ -95,7 +95,7 @@ func TestRBACPermissions(t *testing.T) {
 	}
 
 	// 3. Create Member user
-	memberUser, _, memberSession := createTestUserAndSession(t, authService, "Charlie Member", "member")
+	memberUser, _, memberSession, memberCSRF := createTestUserAndSession(t, authService, "Charlie Member", "member")
 	_, err = orgService.AddMember(ctx, orgID, ownerUser.ID, service.AddMemberRequest{
 		Email: memberUser.Email,
 		Role:  "member",
@@ -105,7 +105,7 @@ func TestRBACPermissions(t *testing.T) {
 	}
 
 	// Helper to execute request with session cookie and target org header
-	execReq := func(method, path, sessionToken, targetOrgID string, body interface{}) *httptest.ResponseRecorder {
+	execReq := func(method, path, sessionToken, csrfToken, targetOrgID string, body interface{}) *httptest.ResponseRecorder {
 		var reqBody []byte
 		if body != nil {
 			reqBody, _ = json.Marshal(body)
@@ -114,10 +114,10 @@ func TestRBACPermissions(t *testing.T) {
 		req.Header.Set("Content-Type", "application/json")
 		if sessionToken != "" {
 			req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: sessionToken})
-			// Supply matching CSRF cookie and header for cookie-authenticated mutating requests
-			csrfToken := "test-csrf-token-123456"
-			req.AddCookie(&http.Cookie{Name: CSRFCookieName, Value: csrfToken})
-			req.Header.Set("X-CSRF-Token", csrfToken)
+			if csrfToken != "" {
+				req.AddCookie(&http.Cookie{Name: CSRFCookieName, Value: csrfToken})
+				req.Header.Set("X-CSRF-Token", csrfToken)
+			}
 		}
 		if targetOrgID != "" {
 			req.Header.Set("X-Organization-ID", targetOrgID)
@@ -128,7 +128,7 @@ func TestRBACPermissions(t *testing.T) {
 	}
 
 	// Test Case 1: Member attempts to update organization settings -> MUST BE 403
-	rec := execReq(http.MethodPatch, "/api/v1/organizations/current", memberSession, orgID, map[string]string{
+	rec := execReq(http.MethodPatch, "/api/v1/organizations/current", memberSession, memberCSRF, orgID, map[string]string{
 		"name":     "Hacked Organization Name",
 		"locale":   "fa",
 		"timezone": "Asia/Tehran",
@@ -138,7 +138,7 @@ func TestRBACPermissions(t *testing.T) {
 	}
 
 	// Test Case 2: Admin can update organization settings -> MUST BE 200
-	rec = execReq(http.MethodPatch, "/api/v1/organizations/current", adminSession, orgID, map[string]string{
+	rec = execReq(http.MethodPatch, "/api/v1/organizations/current", adminSession, adminCSRF, orgID, map[string]string{
 		"name":     "Alice Agency Updated by Admin",
 		"locale":   "en",
 		"timezone": "UTC",
@@ -148,7 +148,7 @@ func TestRBACPermissions(t *testing.T) {
 	}
 
 	// Test Case 3: Admin attempts to change member role (Owner-only endpoint) -> MUST BE 403
-	rec = execReq(http.MethodPatch, fmt.Sprintf("/api/v1/organizations/current/members/%s", memberUser.ID), adminSession, orgID, map[string]string{
+	rec = execReq(http.MethodPatch, fmt.Sprintf("/api/v1/organizations/current/members/%s", memberUser.ID), adminSession, adminCSRF, orgID, map[string]string{
 		"role": "admin",
 	})
 	if rec.Code != http.StatusForbidden {
@@ -156,7 +156,7 @@ func TestRBACPermissions(t *testing.T) {
 	}
 
 	// Test Case 4: Owner can change member role -> MUST BE 200
-	rec = execReq(http.MethodPatch, fmt.Sprintf("/api/v1/organizations/current/members/%s", memberUser.ID), ownerSession, orgID, map[string]string{
+	rec = execReq(http.MethodPatch, fmt.Sprintf("/api/v1/organizations/current/members/%s", memberUser.ID), ownerSession, ownerCSRF, orgID, map[string]string{
 		"role": "admin",
 	})
 	if rec.Code != http.StatusOK {
@@ -164,7 +164,7 @@ func TestRBACPermissions(t *testing.T) {
 	}
 
 	// Test Case 5: Owner cannot demote themselves if they are the only Owner -> MUST BE 400 with error
-	rec = execReq(http.MethodPatch, fmt.Sprintf("/api/v1/organizations/current/members/%s", ownerUser.ID), ownerSession, orgID, map[string]string{
+	rec = execReq(http.MethodPatch, fmt.Sprintf("/api/v1/organizations/current/members/%s", ownerUser.ID), ownerSession, ownerCSRF, orgID, map[string]string{
 		"role": "member",
 	})
 	if rec.Code != http.StatusBadRequest {
@@ -172,7 +172,7 @@ func TestRBACPermissions(t *testing.T) {
 	}
 
 	// Test Case 6: Unauthenticated request to protected endpoint -> MUST BE 401
-	rec = execReq(http.MethodGet, "/api/v1/organizations/current", "", orgID, nil)
+	rec = execReq(http.MethodGet, "/api/v1/organizations/current", "", "", orgID, nil)
 	if rec.Code != http.StatusUnauthorized {
 		t.Errorf("expected 401 Unauthorized for unauthenticated request, got %d", rec.Code)
 	}

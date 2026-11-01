@@ -10,13 +10,40 @@ import (
 	"clientpulse/services/api/internal/database"
 )
 
-// GetTestDB connects to the running PostgreSQL test instance.
+// GetTestDB connects to the running PostgreSQL test instance (as migration/admin user).
 func GetTestDB(t *testing.T) *database.DB {
 	t.Helper()
 
 	dbURL := os.Getenv("TEST_DATABASE_URL")
 	if dbURL == "" {
 		dbURL = "postgres://clientpulse:clientpulse_dev_password@localhost:5433/clientpulse?sslmode=disable"
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	db, err := database.New(ctx, database.Config{DatabaseURL: dbURL})
+	if err != nil {
+		t.Skip("skipping integration test: database not reachable at", dbURL)
+		return nil
+	}
+
+	if err := db.Ping(ctx); err != nil {
+		db.Close()
+		t.Skip("skipping integration test: database ping failed:", err)
+		return nil
+	}
+
+	return db
+}
+
+// GetAppTestDB connects to PostgreSQL as the non-superuser, NOBYPASSRLS production runtime role (clientpulse_app).
+func GetAppTestDB(t *testing.T) *database.DB {
+	t.Helper()
+
+	dbURL := os.Getenv("APP_TEST_DATABASE_URL")
+	if dbURL == "" {
+		dbURL = "postgres://clientpulse_app:clientpulse_app_dev_password@localhost:5433/clientpulse?sslmode=disable"
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -49,4 +76,3 @@ func GetTestConfig() *config.Config {
 		TokenHashPepper: "test-token-hash-pepper-value-for-testing-12345",
 	}
 }
-

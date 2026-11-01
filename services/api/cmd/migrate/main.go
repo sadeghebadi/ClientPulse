@@ -55,8 +55,13 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
+	migrationDBURL := os.Getenv("MIGRATION_DATABASE_URL")
+	if migrationDBURL == "" {
+		migrationDBURL = cfg.DatabaseURL
+	}
+
 	db, err := database.New(ctx, database.Config{
-		DatabaseURL: cfg.DatabaseURL,
+		DatabaseURL: migrationDBURL,
 	})
 	if err != nil {
 		log.Error("failed to connect to database for migration", "error", err)

@@ -33,7 +33,8 @@ services:
       APP_BASE_URL: ${APP_BASE_URL:-http://localhost:3000}
       API_BASE_URL: ${API_BASE_URL:-http://localhost:8080}
       API_PORT: "8080"
-      DATABASE_URL: postgres://${POSTGRES_USER:-clientpulse}:${POSTGRES_PASSWORD:-clientpulse_dev_password}@postgres:5432/${POSTGRES_DB:-clientpulse}?sslmode=disable
+      DATABASE_URL: postgres://clientpulse_app:clientpulse_app_dev_password@postgres:5432/${POSTGRES_DB:-clientpulse}?sslmode=disable
+      MIGRATION_DATABASE_URL: postgres://${POSTGRES_USER:-clientpulse}:${POSTGRES_PASSWORD:-clientpulse_dev_password}@postgres:5432/${POSTGRES_DB:-clientpulse}?sslmode=disable
       SESSION_SECRET: ${SESSION_SECRET:-dev-session-secret-replace-with-cryptographic-random-value-in-prod}
       TOKEN_HASH_PEPPER: ${TOKEN_HASH_PEPPER:-dev-token-pepper-replace-with-cryptographic-random-value-in-prod}
       DEFAULT_LOCALE: ${DEFAULT_LOCALE:-en}
@@ -65,7 +66,7 @@ services:
         condition: service_healthy
     environment:
       APP_ENV: ${APP_ENV:-development}
-      DATABASE_URL: postgres://${POSTGRES_USER:-clientpulse}:${POSTGRES_PASSWORD:-clientpulse_dev_password}@postgres:5432/${POSTGRES_DB:-clientpulse}?sslmode=disable
+      DATABASE_URL: postgres://clientpulse_app:clientpulse_app_dev_password@postgres:5432/${POSTGRES_DB:-clientpulse}?sslmode=disable
       WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-10}
       WORKER_HEARTBEAT_TIMEOUT_SECONDS: "${WORKER_HEARTBEAT_TIMEOUT_SECONDS:-10}"
       DEFAULT_TIMEZONE: ${DEFAULT_TIMEZONE:-UTC}

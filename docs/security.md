@@ -1,12 +1,12 @@
 # ClientPulse Security Architecture & Controls
 
-This document details the security architecture and defensive controls implemented in ClientPulse according to PRD.md requirements.
+This document details the security architecture, threat model, and defensive controls implemented and audited in ClientPulse Phase 1 according to `PRD.md` and TASK-002.1 security audit requirements.
 
 ---
 
-## 1. Multi-Tenant Data Isolation (Defense in Depth)
+## 1. Multi-Tenant Data Isolation & Database Role Separation (Defense in Depth)
 
-Multi-tenant isolation is the highest-priority security requirement of ClientPulse. Defense in depth is enforced across four distinct architectural layers:
+Multi-tenant isolation is the highest-priority security requirement of ClientPulse. Defense in depth is enforced across five distinct architectural layers:
 
 ```
 +-------------------------------------------------------------------------+
@@ -18,8 +18,8 @@ Multi-tenant isolation is the highest-priority security requirement of ClientPul
                                     v
 +-------------------------------------------------------------------------+
 | Layer 2: Explicit Repository Scoping                                    |
-| - Repository methods require organization_id.                           |
-| - SQL queries enforce WHERE organization_id = $1.                       |
+| - Repository methods require organization_id parameter.                 |
+| - SQL queries explicitly enforce WHERE organization_id = $1.            |
 +-------------------------------------------------------------------------+
                                     |
                                     v
@@ -34,74 +34,119 @@ Multi-tenant isolation is the highest-priority security requirement of ClientPul
                                     |
                                     v
 +-------------------------------------------------------------------------+
-| Layer 4: PostgreSQL Row-Level Security (RLS)                            |
+| Layer 4: PostgreSQL Row-Level Security (FORCE ROW LEVEL SECURITY)        |
 | - Tenant tables (audit_logs, organization_memberships, etc.) enforce    |
 |   FORCE ROW LEVEL SECURITY.                                             |
-| - Application role clientpulse_app has NOBYPASSRLS.                     |
-| - Policy restricts rows to NULLIF(current_setting(...), '')::uuid.      |
+| - RLS fails closed (returns 0 rows) when tenant context is unset.       |
+| - Direct WHERE clauses cannot bypass tenant RLS policy.                 |
++-------------------------------------------------------------------------+
+                                    |
+                                    v
++-------------------------------------------------------------------------+
+| Layer 5: Database Role Privilege Separation (Least Privilege)           |
+| - Migration user (clientpulse): superuser/table owner for migrations.   |
+| - Runtime user (clientpulse_app): NOSUPERUSER, NOBYPASSRLS.             |
+| - Runtime user does not own tables; cannot ALTER, DROP, or disable RLS. |
+| - audit_logs is append-only: UPDATE and DELETE are revoked.             |
 +-------------------------------------------------------------------------+
 ```
 
-### Connection Pool Safety
-Because `pgxpool` reuses physical connections across HTTP requests:
-1. Setting global session variables (`SET app.current_organization_id`) is strictly prohibited.
-2. The repository layer executes tenant transactions using `WithTenantTx(ctx, pool, orgID, fn)`.
-3. Inside the transaction, `SET LOCAL ROLE clientpulse_app` and `set_config(..., ..., true)` are executed.
-4. When the transaction commits or rolls back, PostgreSQL automatically purges the transaction-local setting and restores the pool connection state.
-5. Automated tests (`TestTenantContextCleanupAndConnectionPoolSafety` and `TestConcurrentTenantQueries`) continuously verify that 0 context leaks occur across pooled connections and concurrent goroutines.
+### 1.1 Database Role Separation
+- **Migration Role (`clientpulse`):** Used strictly during deployment and migration execution (`cmd/migrate`) to apply DDL schema changes. Configured via `MIGRATION_DATABASE_URL`.
+- **Application Runtime Role (`clientpulse_app`):** Used exclusively by the runtime API service and background workers.
+  - Defined with `NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS`.
+  - Non-owner of database tables, preventing runtime `ALTER TABLE`, `DROP TABLE`, or `ALTER ... DISABLE ROW LEVEL SECURITY`.
+  - Grants:
+    - Tables (`users`, `organizations`, `organization_memberships`, `sessions`, `password_reset_tokens`, `email_verification_tokens`): `SELECT, INSERT, UPDATE, DELETE`.
+    - Table (`audit_logs`): `SELECT, INSERT` ONLY. `UPDATE` and `DELETE` are revoked at the SQL grant level, making audit logs cryptographically tamper-resistant and append-only even if the application runtime were compromised.
+
+### 1.2 Connection Pool Safety & Fail-Closed RLS
+- Because `pgxpool` multiplexes physical connections across incoming HTTP requests, global session variables (`SET app.current_organization_id`) are strictly prohibited.
+- Repository operations use `WithTenantTx(ctx, pool, orgID, fn)` which binds `set_config('app.current_organization_id', $orgID, true)`. The third parameter `is_local = true` ensures that PostgreSQL automatically clears the tenant context immediately upon transaction `COMMIT` or `ROLLBACK`.
+- Automated regression test `TestTenantContextCleanupAndConnectionPoolSafety` verifies that physical pooled connections released to the pool retain an empty string `""` for `app.current_organization_id`.
+- Automated regression test `TestRuntimeRoleFailsClosedWithoutTenantContext` verifies that queries executed without setting `app.current_organization_id` return 0 rows (fail closed).
 
 ---
 
 ## 2. Authentication & Session Security Model
 
-### 2.1 Password Hashing: Argon2id
-- **Algorithm:** Argon2id (hybrid memory-hard algorithm)
-- **Parameters (OWASP Recommended):**
+### 2.1 Password Hashing: Argon2id with Bounded Concurrency
+- **Algorithm:** Argon2id (hybrid memory-hard algorithm, OWASP recommended).
+- **Parameters:**
   - Memory: 64 MiB (`65536` KiB)
   - Iterations (Time): 1 pass
   - Parallelism: 4 threads
   - Salt: 16 cryptographically secure random bytes (`crypto/rand`)
   - Key length: 32 bytes
-- **Comparison:** `crypto/subtle.ConstantTimeCompare` protects against timing attacks.
-- **Enforcement:** Passwords must be at least 12 characters. Plaintext passwords and hashes are never logged or exposed in JSON responses.
+- **Benchmark Measurements (Development Container / x86_64 CPU):**
+  - Hash latency: **38.7 ms**
+  - Verification latency: **45.5 ms**
+  - Memory allocation: **~64 MiB/op** (`67,117,466 B/op`)
+  - Concurrent batch latency (16 parallel operations): **349.8 ms** with 0 errors.
+- **Bounded Concurrency Semaphore:**
+  - Because 64 MiB Argon2id allocations could exhaust container memory under distributed login flood attacks, the cryptographic engine enforces a process-wide concurrency semaphore bounded to `max(runtime.NumCPU() * 2, 4)`.
+  - Excessive requests that cannot acquire a semaphore slot within 3 seconds are shed with `ErrCryptoBusy` (`503 Service Unavailable`), preventing memory exhaustion (OOM) and CPU starvation.
 
-### 2.2 Token Generation & Hashing
-- **Raw Generation:** Generated with CSPRNG (`crypto/rand`), 32 bytes URL-safe base64.
-- **Storage:** Raw tokens (sessions, password reset tokens, email verification tokens) are **never** stored in the database.
-- **Hash with Pepper:** Tokens are stored as HMAC-SHA256 hashes keyed with a server-side secret (`TOKEN_HASH_PEPPER`). If the database is compromised, active session or reset tokens cannot be forged or extracted.
+### 2.2 Token Generation, Hashing & Atomic Consumption
+- **Token Entropy:** Generated using CSPRNG (`crypto/rand`), 32 bytes URL-safe base64 (256 bits of entropy).
+- **Hash with Pepper:** Raw tokens (sessions, password reset tokens, email verification tokens) are **never** stored in plaintext. They are hashed using SHA-256 combined with a 32+ byte server-side pepper (`TOKEN_HASH_PEPPER`).
+- **Atomic Single-Use Token Consumption:**
+  - Password reset tokens and email verification tokens are consumed atomically using a single SQL statement:
+    ```sql
+    UPDATE password_reset_tokens
+    SET used_at = NOW()
+    WHERE token_hash = $1 AND used_at IS NULL AND expires_at > NOW()
+    RETURNING id, user_id, expires_at, created_at, used_at;
+    ```
+  - This eliminates check-then-act race conditions.
+  - Automated concurrency test `TestConcurrentPasswordResetTokenAtomicConsumption` verifies that out of 10 simultaneous goroutines attempting to consume the same token, exactly 1 succeeds and 9 fail.
 
-### 2.3 Cookie Security
+### 2.3 Cookie Security & Storage
 - **Session Cookie:** `clientpulse_session`
   - `HttpOnly: true` (inaccessible to JavaScript, immune to XSS token theft)
   - `SameSite: Lax`
-  - `Secure: true` in production environments
+  - `Secure: true` in production environments (`false` in local development)
   - `Path: /`
-- **Revocation:** Explicit logout marks `revoked_at = NOW()`. Password changes or user-initiated "Revoke all sessions" invalidate all user sessions server-side.
+- **Revocation:** Explicit logout marks `revoked_at = NOW()`. Password changes or user-initiated revocation invalidate all user sessions server-side.
+- **Client Storage Policy:** The Next.js frontend never stores raw session secrets or credentials in `localStorage` or `sessionStorage`. All authenticated state is tracked via HttpOnly session cookies.
 
-### 2.4 CSRF Protection
-- **Mechanism:** Double-Submit Cookie pattern paired with custom header verification (`X-CSRF-Token`).
-- **Operation:**
-  - Upon authentication, a random token is issued in readable cookie `clientpulse_csrf` (`SameSite=Lax`).
-  - All mutating requests (`POST`, `PUT`, `PATCH`, `DELETE`) authenticated via cookie must present the `X-CSRF-Token` header.
-  - Safe methods (`GET`, `HEAD`, `OPTIONS`) are exempt.
-  - API requests using `Authorization: Bearer ...` are exempt because cross-origin browser requests cannot inject custom authorization headers without CORS preflight.
+### 2.4 CSRF Protection: Session-Bound Cryptographic Signatures
+- **Architecture:** Session-Bound Signed Double-Submit Cookie pattern with defense-in-depth origin validation.
+- **Token Composition:**
+  - `CSRFToken = Base64URL(Nonce) + "." + Base64URL(HMAC-SHA256(Nonce + ":" + SessionID, SessionSecret))`
+- **Verification Pipeline:**
+  1. **Cross-Site Blocking:** Requests bearing `Sec-Fetch-Site: cross-site` on mutating methods are rejected immediately (`403 CSRF_CROSS_SITE_BLOCKED`).
+  2. **Strict Origin & Referer Verification:** Mutating requests must have an `Origin` (or fallback `Referer`) strictly matching the whitelisted application origins (`APP_BASE_URL` or `API_BASE_URL`).
+  3. **Double-Submit Matching:** The `clientpulse_csrf` cookie value and the `X-CSRF-Token` HTTP header value must match in constant time (`subtle.ConstantTimeCompare`).
+  4. **Session Binding Cryptographic Verification:** The token's HMAC is verified against the authenticated user's `SessionID`. Replaying a valid CSRF token from Session B against Session A is rejected (`403 CSRF_TOKEN_INVALID`).
+  5. **Session Revocation Guard:** If a session is revoked or expired, the request fails with `401 Unauthorized` before any state-changing handler can execute.
+- **Mandatory Negative Regression Tests (`TestCSRFProtectionMandatoryNegativeCases`):**
+  - Missing CSRF token -> 403 Forbidden.
+  - Mismatched CSRF header vs cookie -> 403 Forbidden.
+  - Forged CSRF cookie -> 403 Forbidden.
+  - Token from another session -> 403 Forbidden.
+  - Cross-origin state-changing request -> 403 Forbidden.
+  - `Sec-Fetch-Site: cross-site` -> 403 Forbidden.
+  - Revoked session with previously valid token -> 401 Unauthorized.
 
-### 2.5 User Enumeration Mitigation
-- `POST /api/v1/auth/forgot-password` returns `200 OK` with a generic message ("If this email is registered, password reset instructions have been sent") regardless of whether the email exists.
-- Login failures return generic `INVALID_CREDENTIALS` for both non-existent users and bad passwords.
-- Rate limiting prevents automated enumeration scans.
-
-### 2.6 Rate Limiting
-- In-memory sliding window rate limiter protects sensitive endpoints:
-  - `/api/v1/auth/login`: 10 requests / minute / IP
-  - `/api/v1/auth/forgot-password`: 5 requests / minute / IP
-- Returns `429 Too Many Requests` when limits are exceeded.
+### 2.5 Rate Limiting & Proxy Trust
+- In-memory sliding window rate limiters protect all sensitive authentication endpoints:
+  - `POST /api/v1/auth/signup`: 10 requests / min / IP
+  - `POST /api/v1/auth/login`: 10 requests / min / IP
+  - `POST /api/v1/auth/forgot-password`: 5 requests / min / IP
+  - `POST /api/v1/auth/reset-password`: 10 requests / min / IP
+  - `POST /api/v1/auth/verify-email`: 15 requests / min / IP
+  - `POST /api/v1/auth/resend-verification`: 5 requests / min / IP
+- **Proxy Trust CIDR Validation:**
+  - Untrusted clients cannot bypass IP rate limiting by spoofing the `X-Forwarded-For` header.
+  - `X-Forwarded-For` is only inspected if `RemoteAddr` belongs to a trusted reverse proxy CIDR (`127.0.0.0/8`, `::1/128`, `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`).
+  - Automated test `TestRateLimiterMiddlewareAndProxyTrust` verifies that spoofed headers from untrusted remote IPs are discarded.
 
 ---
 
 ## 3. Role-Based Access Control (RBAC)
 
-Roles are enforced strictly on the backend:
+RBAC is strictly enforced on the API backend via middleware (`RequireRole(minRole)`):
 
 | Capability | Owner | Admin | Member | Viewer |
 | :--- | :---: | :---: | :---: | :---: |
@@ -115,6 +160,10 @@ Roles are enforced strictly on the backend:
 | Transfer / Delete Organization | Yes | No | No | No |
 
 - An organization must retain at least one active Owner. Attempting to demote or remove the sole Owner is rejected with `400 Bad Request`.
+- Self-promotion is prevented: Admins cannot promote themselves or others to Owner.
+
+> [!NOTE]
+> **Email Invitations Status:** In Phase 1, `POST /api/v1/organizations/current/members` allows adding already registered users directly by email address. True pending email invitation links with cryptographic invitation tokens (PRD FR-TEN-03) will be implemented as an explicit feature in a subsequent phase.
 
 ---
 
@@ -126,3 +175,4 @@ Roles are enforced strictly on the backend:
 - `Access-Control-Allow-Origin`: Explicit whitelist (`APP_BASE_URL`).
 - `Access-Control-Allow-Credentials: true`
 - `Access-Control-Allow-Headers: Content-Type, Authorization, X-Request-ID, X-CSRF-Token, X-Organization-ID`
+

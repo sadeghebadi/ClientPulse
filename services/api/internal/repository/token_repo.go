@@ -69,6 +69,33 @@ func (r *TokenRepository) GetValidPasswordResetToken(ctx context.Context, tokenH
 	return rec, nil
 }
 
+// ConsumePasswordResetToken atomically verifies and marks a password reset token as used in a single statement.
+// This prevents concurrent double-consumption race conditions.
+func (r *TokenRepository) ConsumePasswordResetToken(ctx context.Context, tokenHash string) (*TokenRecord, error) {
+	query := `
+		UPDATE password_reset_tokens
+		SET used_at = NOW()
+		WHERE token_hash = $1 AND used_at IS NULL AND expires_at > NOW()
+		RETURNING id, user_id, token_hash, expires_at, used_at, created_at
+	`
+	rec := &TokenRecord{}
+	err := r.pool.QueryRow(ctx, query, tokenHash).Scan(
+		&rec.ID,
+		&rec.UserID,
+		&rec.TokenHash,
+		&rec.ExpiresAt,
+		&rec.UsedAt,
+		&rec.CreatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrTokenNotFound
+		}
+		return nil, fmt.Errorf("failed to consume password reset token: %w", err)
+	}
+	return rec, nil
+}
+
 // MarkPasswordResetTokenUsed invalidates a password reset token.
 func (r *TokenRepository) MarkPasswordResetTokenUsed(ctx context.Context, tokenID string) error {
 	query := `
@@ -129,6 +156,33 @@ func (r *TokenRepository) GetValidEmailVerificationToken(ctx context.Context, to
 			return nil, ErrTokenNotFound
 		}
 		return nil, fmt.Errorf("failed to query email verification token: %w", err)
+	}
+	return rec, nil
+}
+
+// ConsumeEmailVerificationToken atomically verifies and marks an email verification token as used in a single statement.
+// This prevents concurrent double-consumption race conditions.
+func (r *TokenRepository) ConsumeEmailVerificationToken(ctx context.Context, tokenHash string) (*TokenRecord, error) {
+	query := `
+		UPDATE email_verification_tokens
+		SET used_at = NOW()
+		WHERE token_hash = $1 AND used_at IS NULL AND expires_at > NOW()
+		RETURNING id, user_id, token_hash, expires_at, used_at, created_at
+	`
+	rec := &TokenRecord{}
+	err := r.pool.QueryRow(ctx, query, tokenHash).Scan(
+		&rec.ID,
+		&rec.UserID,
+		&rec.TokenHash,
+		&rec.ExpiresAt,
+		&rec.UsedAt,
+		&rec.CreatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrTokenNotFound
+		}
+		return nil, fmt.Errorf("failed to consume email verification token: %w", err)
 	}
 	return rec, nil
 }

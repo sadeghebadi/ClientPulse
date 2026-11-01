@@ -4,9 +4,11 @@ import (
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"strings"
 )
 
 // GenerateSecureToken generates a cryptographically secure random token of the given byte length,
@@ -29,4 +31,42 @@ func HashToken(rawToken, pepper string) string {
 	h.Write([]byte(rawToken))
 	return hex.EncodeToString(h.Sum(nil))
 }
+
+// GenerateSessionCSRFToken generates a cryptographically signed CSRF token bound to a session ID.
+// Format: <entropy>.<hmac-sha256(secret, sessionID + "." + entropy)>
+func GenerateSessionCSRFToken(sessionID, secret string) (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("failed to generate csrf entropy: %w", err)
+	}
+	entropy := base64.RawURLEncoding.EncodeToString(b)
+	payload := sessionID + "." + entropy
+
+	h := hmac.New(sha256.New, []byte(secret))
+	h.Write([]byte(payload))
+	sig := hex.EncodeToString(h.Sum(nil))
+
+	return entropy + "." + sig, nil
+}
+
+// VerifySessionCSRFToken validates that a CSRF token has a valid signature bound to the specific session ID.
+func VerifySessionCSRFToken(token, sessionID, secret string) bool {
+	if token == "" || sessionID == "" || secret == "" {
+		return false
+	}
+	parts := strings.Split(token, ".")
+	if len(parts) != 2 {
+		return false
+	}
+	entropy := parts[0]
+	sig := parts[1]
+
+	payload := sessionID + "." + entropy
+	h := hmac.New(sha256.New, []byte(secret))
+	h.Write([]byte(payload))
+	expectedSig := hex.EncodeToString(h.Sum(nil))
+
+	return subtle.ConstantTimeCompare([]byte(sig), []byte(expectedSig)) == 1
+}
+
 

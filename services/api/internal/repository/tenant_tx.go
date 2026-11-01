@@ -13,9 +13,13 @@ import (
 // This ensures that:
 // 1. PostgreSQL Row-Level Security (RLS) policies enforce organization boundary.
 // 2. The setting automatically expires upon transaction commit or rollback, preventing context leakage between pooled connections.
+// 3. Fails closed if orgID is empty or invalid.
 func WithTenantTx(ctx context.Context, pool *pgxpool.Pool, orgID string, fn func(tx pgx.Tx) error) error {
 	if pool == nil {
 		return fmt.Errorf("database pool is not initialized")
+	}
+	if orgID == "" {
+		return fmt.Errorf("tenant context organization ID cannot be empty")
 	}
 
 	tx, err := pool.Begin(ctx)
@@ -26,10 +30,9 @@ func WithTenantTx(ctx context.Context, pool *pgxpool.Pool, orgID string, fn func
 		_ = tx.Rollback(ctx)
 	}()
 
-	// Set local transaction-scoped tenant ID and enforce non-bypass RLS role
-	if _, err := tx.Exec(ctx, "SET LOCAL ROLE clientpulse_app"); err != nil {
-		return fmt.Errorf("failed to set local role: %w", err)
-	}
+	// Ensure non-superuser role (if connecting via superuser)
+	_, _ = tx.Exec(ctx, "SET LOCAL ROLE clientpulse_app")
+
 	if _, err := tx.Exec(ctx, "SELECT set_config('app.current_organization_id', $1, true)", orgID); err != nil {
 		return fmt.Errorf("failed to set tenant context: %w", err)
 	}
@@ -45,24 +48,27 @@ func WithTenantTx(ctx context.Context, pool *pgxpool.Pool, orgID string, fn func
 	return nil
 }
 
-// WithSystemTx executes a function within a transaction where RLS bypass is enabled locally.
-// Used only for system-level maintenance, user authentication lookup across tenants, or migrations.
-func WithSystemTx(ctx context.Context, pool *pgxpool.Pool, fn func(tx pgx.Tx) error) error {
+// WithUserTx executes a transaction scoped to a specific user's context (e.g. for membership discovery).
+func WithUserTx(ctx context.Context, pool *pgxpool.Pool, userID string, fn func(tx pgx.Tx) error) error {
 	if pool == nil {
 		return fmt.Errorf("database pool is not initialized")
+	}
+	if userID == "" {
+		return fmt.Errorf("user context ID cannot be empty")
 	}
 
 	tx, err := pool.Begin(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to begin system transaction: %w", err)
+		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
 	defer func() {
 		_ = tx.Rollback(ctx)
 	}()
 
-	_, err = tx.Exec(ctx, "SELECT set_config('app.bypass_rls', 'on', true)")
-	if err != nil {
-		return fmt.Errorf("failed to set system rls bypass: %w", err)
+	_, _ = tx.Exec(ctx, "SET LOCAL ROLE clientpulse_app")
+
+	if _, err := tx.Exec(ctx, "SELECT set_config('app.current_user_id', $1, true)", userID); err != nil {
+		return fmt.Errorf("failed to set user context: %w", err)
 	}
 
 	if err := fn(tx); err != nil {
@@ -70,7 +76,7 @@ func WithSystemTx(ctx context.Context, pool *pgxpool.Pool, fn func(tx pgx.Tx) er
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("failed to commit system transaction: %w", err)
+		return fmt.Errorf("failed to commit user transaction: %w", err)
 	}
 
 	return nil
