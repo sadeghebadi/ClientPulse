@@ -325,6 +325,12 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
                                 <span>{t.statusDown}</span>
                               </span>
                             )}
+                            {asset.monitor_status === "suspected_down" && (
+                              <span className="inline-flex items-center gap-1 text-xs font-semibold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-300">
+                                <AlertCircle className="w-3 h-3" />
+                                <span>{t.statusSuspectedDown}</span>
+                              </span>
+                            )}
                             {asset.monitor_status === "paused" && (
                               <span className="inline-flex items-center gap-1 text-xs font-semibold text-slate-600 bg-slate-100 px-2 py-0.5 rounded-full border border-slate-200">
                                 <PauseCircle className="w-3 h-3" />

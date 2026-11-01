@@ -30,8 +30,11 @@ func WithTenantTx(ctx context.Context, pool *pgxpool.Pool, orgID string, fn func
 		_ = tx.Rollback(ctx)
 	}()
 
-	// Ensure non-superuser role (if connecting via superuser)
-	_, _ = tx.Exec(ctx, "SET LOCAL ROLE clientpulse_app")
+	// Ensure non-superuser role strictly if connecting via superuser migration role
+	var currentUser string
+	if err := tx.QueryRow(ctx, "SELECT current_user").Scan(&currentUser); err == nil && currentUser == "clientpulse" {
+		_, _ = tx.Exec(ctx, "SET LOCAL ROLE clientpulse_app")
+	}
 
 	if _, err := tx.Exec(ctx, "SELECT set_config('app.current_organization_id', $1, true)", orgID); err != nil {
 		return fmt.Errorf("failed to set tenant context: %w", err)

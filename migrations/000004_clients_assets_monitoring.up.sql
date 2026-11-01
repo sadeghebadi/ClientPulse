@@ -234,3 +234,4 @@ CREATE POLICY check_results_tenant_isolation ON check_results
 -- 7. Application Runtime Role Grants
 GRANT SELECT, INSERT, UPDATE, DELETE ON clients, assets, monitors, check_results TO clientpulse_app;
 GRANT EXECUTE ON FUNCTION claim_due_monitors(VARCHAR, INT, INT) TO clientpulse_app;
+

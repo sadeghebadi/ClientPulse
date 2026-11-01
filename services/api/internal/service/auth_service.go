@@ -193,7 +193,7 @@ func (s *AuthService) Login(ctx context.Context, email, password, ip, userAgent 
 		}
 		return nil, fmt.Errorf("database error: %w", err)
 	}
-
+	
 	valid, err := auth.VerifyPassword(password, user.PasswordHash)
 	if err != nil || !valid {
 		return nil, ErrInvalidCredentials

@@ -257,3 +257,4 @@ func (r *ClientRepository) DeleteClient(ctx context.Context, orgID, clientID str
 		return nil
 	})
 }
+

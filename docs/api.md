@@ -335,6 +335,7 @@ Monitors perform automated availability, latency, SSL, and HTTP assertions again
 ### List Organization Monitors
 `GET /api/v1/monitors`
 - Tenant-wide listing with latest check result and current status.
+- Monitor statuses: `pending`, `up`, `suspected_down` (1 scheduled failure), `down` (2+ scheduled failures), `paused`, `unknown`. Contains `consecutive_failures` count.
 
 ### Create Monitor
 `POST /api/v1/assets/{assetID}/monitors`
@@ -404,7 +405,9 @@ Monitors perform automated availability, latency, SSL, and HTTP assertions again
   - `total_monitors`
   - `active_monitors`
   - `up_monitors`
-  - `down_monitors`
+  - `suspected_down_monitors` (1 consecutive scheduled failure)
+  - `down_monitors` (2+ consecutive scheduled failures)
   - `paused_monitors`
+  - `unknown_monitors`
   - `ssl_expiring_soon` (certificates expiring within 30 days)
   - `recent_results`: Last 10 check results across all tenant monitors.

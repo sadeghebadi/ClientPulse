@@ -66,9 +66,11 @@ services:
         condition: service_healthy
     environment:
       APP_ENV: ${APP_ENV:-development}
-      DATABASE_URL: postgres://clientpulse_app:clientpulse_app_dev_password@postgres:5432/${POSTGRES_DB:-clientpulse}?sslmode=disable
+      DATABASE_URL: postgres://clientpulse_worker:clientpulse_worker_dev_password@postgres:5432/${POSTGRES_DB:-clientpulse}?sslmode=disable
+      WORKER_DATABASE_URL: postgres://clientpulse_worker:clientpulse_worker_dev_password@postgres:5432/${POSTGRES_DB:-clientpulse}?sslmode=disable
       WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-10}
       WORKER_HEARTBEAT_TIMEOUT_SECONDS: "${WORKER_HEARTBEAT_TIMEOUT_SECONDS:-10}"
+      CHECK_RESULT_RETENTION_DAYS: "${CHECK_RESULT_RETENTION_DAYS:-90}"
       DEFAULT_TIMEZONE: ${DEFAULT_TIMEZONE:-UTC}
     restart: unless-stopped
     networks:

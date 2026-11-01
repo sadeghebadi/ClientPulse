@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"log/slog"
+	"net/http"
 	"sync"
 	"time"
 
@@ -13,20 +14,22 @@ import (
 )
 
 type SchedulerConfig struct {
-	WorkerID    string
-	Concurrency int
-	PollPeriod  time.Duration
+	WorkerID      string
+	Concurrency   int
+	PollPeriod    time.Duration
+	RetentionDays int
 }
 
 type Scheduler struct {
-	pool        *pgxpool.Pool
-	monitorRepo *repository.MonitorRepository
-	resultRepo  *repository.CheckResultRepository
-	checker     *checker.Checker
-	workerID    string
-	concurrency int
-	pollPeriod  time.Duration
-	logger      *slog.Logger
+	pool          *pgxpool.Pool
+	monitorRepo   *repository.MonitorRepository
+	resultRepo    *repository.CheckResultRepository
+	checker       *checker.Checker
+	workerID      string
+	concurrency   int
+	pollPeriod    time.Duration
+	retentionDays int
+	logger        *slog.Logger
 }
 
 func NewScheduler(
@@ -47,18 +50,28 @@ func NewScheduler(
 		logger = slog.Default()
 	}
 
+	if cfg.RetentionDays <= 0 {
+		cfg.RetentionDays = 90
+	}
+
 	chk := checker.NewChecker(guard, cfg.WorkerID)
 
 	return &Scheduler{
-		pool:        pool,
-		monitorRepo: monitorRepo,
-		resultRepo:  resultRepo,
-		checker:     chk,
-		workerID:    cfg.WorkerID,
-		concurrency: cfg.Concurrency,
-		pollPeriod:  cfg.PollPeriod,
-		logger:      logger,
+		pool:          pool,
+		monitorRepo:   monitorRepo,
+		resultRepo:    resultRepo,
+		checker:       chk,
+		workerID:      cfg.WorkerID,
+		concurrency:   cfg.Concurrency,
+		pollPeriod:    cfg.PollPeriod,
+		retentionDays: cfg.RetentionDays,
+		logger:        logger,
 	}
+}
+
+// SetTestTransport sets a custom transport on the internal checker for controlled testing.
+func (s *Scheduler) SetTestTransport(rt http.RoundTripper) {
+	s.checker.SetTestTransport(rt)
 }
 
 // Run executes the main scheduling loop until the context is canceled.
@@ -67,20 +80,34 @@ func (s *Scheduler) Run(ctx context.Context) error {
 		"worker_id", s.workerID,
 		"concurrency", s.concurrency,
 		"poll_period", s.pollPeriod.String(),
+		"retention_days", s.retentionDays,
 	)
 
-	// Prune old results periodically (every 12 hours)
-	pruneTicker := time.NewTicker(12 * time.Hour)
-	defer pruneTicker.Stop()
-
-	// Initial prune
-	go func() {
+	// Controlled background cleanup routine
+	runPrune := func() {
 		pruneCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		if count, err := s.resultRepo.PruneOldResults(pruneCtx, 30*24*time.Hour); err == nil && count > 0 {
-			s.logger.Info("pruned historical check results", "pruned_rows", count)
+		count, err := s.resultRepo.PruneExpiredCheckResults(pruneCtx, s.retentionDays, 500)
+		if err != nil {
+			s.logger.Error("failed to prune expired check results", "error", err)
+		} else if count > 0 {
+			s.logger.Info("pruned expired check results", "pruned_rows", count, "retention_days", s.retentionDays)
 		}
-	}()
+		// Also prune expired aggregates older than 400 days (13+ months)
+		aggCount, err := s.resultRepo.PruneExpiredAggregates(pruneCtx, 400)
+		if err != nil {
+			s.logger.Error("failed to prune expired aggregates", "error", err)
+		} else if aggCount > 0 {
+			s.logger.Info("pruned expired aggregates older than 13 months", "pruned_rows", aggCount)
+		}
+	}
+
+	// Prune old results periodically (every 6 hours)
+	pruneTicker := time.NewTicker(6 * time.Hour)
+	defer pruneTicker.Stop()
+
+	// Initial prune at startup
+	go runPrune()
 
 	sem := make(chan struct{}, s.concurrency)
 	var wg sync.WaitGroup
@@ -97,13 +124,7 @@ func (s *Scheduler) Run(ctx context.Context) error {
 			return nil
 
 		case <-pruneTicker.C:
-			go func() {
-				pruneCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-				defer cancel()
-				if count, err := s.resultRepo.PruneOldResults(pruneCtx, 30*24*time.Hour); err == nil && count > 0 {
-					s.logger.Info("pruned historical check results", "pruned_rows", count)
-				}
-			}()
+			go runPrune()
 
 		case <-ticker.C:
 			// Claim due jobs
@@ -199,17 +220,14 @@ func (s *Scheduler) processJob(ctx context.Context, job *repository.ClaimedMonit
 		s.logger.Error("failed to persist check result", "monitor_id", job.ID, "error", err)
 	}
 
-	// Update Monitor state and drift-free next check
-	newMonitorStatus := "up"
-	if execResult.Result != "success" {
-		newMonitorStatus = "down"
-	}
+	// Update Monitor state and drift-free next check via state transition machine
+	isSuccess := execResult.Result == "success"
 
-	updateErr := s.monitorRepo.UpdateAfterCheck(
+	newMonitorStatus, updateErr := s.monitorRepo.RecordScheduledCheckOutcome(
 		persistCtx,
 		job.OrganizationID,
 		job.ID,
-		newMonitorStatus,
+		isSuccess,
 		execResult.CompletedAt,
 		job.ScheduledAt,
 		job.IntervalSeconds,
@@ -226,3 +244,4 @@ func (s *Scheduler) processJob(ctx context.Context, job *repository.ClaimedMonit
 		)
 	}
 }
+

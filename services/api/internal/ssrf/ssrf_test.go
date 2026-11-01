@@ -242,3 +242,4 @@ func TestSSRFProxyBypassPrevention(t *testing.T) {
 		t.Fatal("transport.Proxy MUST be nil to prevent proxy environment bypass")
 	}
 }
+

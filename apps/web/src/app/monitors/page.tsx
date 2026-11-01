@@ -30,7 +30,7 @@ interface MonitorItem {
   client_name: string;
   effective_url: string;
   method: string;
-  status: "up" | "down" | "pending" | "paused";
+  status: "up" | "down" | "suspected_down" | "pending" | "paused" | "unknown";
   interval_seconds: number;
   last_checked_at?: string;
   next_check_at: string;
@@ -138,9 +138,11 @@ export default function MonitorsPage() {
             >
               <option value="all">{t.allStatuses}</option>
               <option value="up">{t.statusUp}</option>
+              <option value="suspected_down">{t.statusSuspectedDown}</option>
               <option value="down">{t.statusDown}</option>
               <option value="pending">{t.statusPending}</option>
               <option value="paused">{t.statusPaused}</option>
+              <option value="unknown">{t.statusUnknown}</option>
             </select>
           </div>
 
@@ -199,6 +201,12 @@ export default function MonitorsPage() {
                             <span>{t.statusUp}</span>
                           </span>
                         )}
+                        {m.status === "suspected_down" && (
+                          <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-amber-800 bg-amber-50 px-2.5 py-1 rounded-full border border-amber-300">
+                            <AlertCircle className="w-3.5 h-3.5 text-amber-600" />
+                            <span>{t.statusSuspectedDown}</span>
+                          </span>
+                        )}
                         {m.status === "down" && (
                           <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-rose-700 bg-rose-50 px-2.5 py-1 rounded-full border border-rose-200">
                             <XCircle className="w-3.5 h-3.5 text-rose-600" />
@@ -212,9 +220,15 @@ export default function MonitorsPage() {
                           </span>
                         )}
                         {m.status === "pending" && (
-                          <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-amber-700 bg-amber-50 px-2.5 py-1 rounded-full border border-amber-200">
-                            <Clock className="w-3.5 h-3.5 text-amber-600" />
+                          <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-blue-700 bg-blue-50 px-2.5 py-1 rounded-full border border-blue-200">
+                            <Clock className="w-3.5 h-3.5 text-blue-600" />
                             <span>{t.statusPending}</span>
+                          </span>
+                        )}
+                        {m.status === "unknown" && (
+                          <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-600 bg-slate-50 px-2.5 py-1 rounded-full border border-slate-200">
+                            <Clock className="w-3.5 h-3.5 text-slate-400" />
+                            <span>{t.statusUnknown}</span>
                           </span>
                         )}
                       </td>

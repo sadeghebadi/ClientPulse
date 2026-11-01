@@ -99,7 +99,8 @@ func (r *MonitorRepository) CreateMonitor(ctx context.Context, orgID string, par
 			RETURNING id, organization_id, asset_id, method, url_override, interval_seconds, timeout_seconds,
 			          expected_status_min, expected_status_max, follow_redirects, max_redirects,
 			          expected_text, json_pointer, json_expected_value, status, is_active,
-			          next_check_at, last_checked_at, lease_acquired_at, lease_worker_id, created_at, updated_at
+			          next_check_at, last_checked_at, lease_acquired_at, lease_worker_id, created_at, updated_at,
+			          consecutive_failures
 		`
 		return tx.QueryRow(ctx, query,
 			orgID, params.AssetID, params.Method, params.URLOverride, params.IntervalSeconds, params.TimeoutSeconds,
@@ -110,6 +111,7 @@ func (r *MonitorRepository) CreateMonitor(ctx context.Context, orgID string, par
 			&m.ExpectedStatusMin, &m.ExpectedStatusMax, &m.FollowRedirects, &m.MaxRedirects,
 			&m.ExpectedText, &m.JSONPointer, &m.JSONExpectedValue, &m.Status, &m.IsActive,
 			&m.NextCheckAt, &m.LastCheckedAt, &m.LeaseAcquiredAt, &m.LeaseWorkerID, &m.CreatedAt, &m.UpdatedAt,
+			&m.ConsecutiveFailures,
 		)
 	})
 	if err != nil {
@@ -127,6 +129,7 @@ func (r *MonitorRepository) GetMonitorByID(ctx context.Context, orgID, monitorID
 			       m.expected_status_min, m.expected_status_max, m.follow_redirects, m.max_redirects,
 			       m.expected_text, m.json_pointer, m.json_expected_value, m.status, m.is_active,
 			       m.next_check_at, m.last_checked_at, m.lease_acquired_at, m.lease_worker_id, m.created_at, m.updated_at,
+			       m.consecutive_failures,
 			       a.name AS asset_name, a.url AS asset_url,
 			       c.name AS client_name, c.id AS client_id,
 			       COALESCE(m.url_override, a.url) AS effective_url
@@ -140,6 +143,7 @@ func (r *MonitorRepository) GetMonitorByID(ctx context.Context, orgID, monitorID
 			&m.ExpectedStatusMin, &m.ExpectedStatusMax, &m.FollowRedirects, &m.MaxRedirects,
 			&m.ExpectedText, &m.JSONPointer, &m.JSONExpectedValue, &m.Status, &m.IsActive,
 			&m.NextCheckAt, &m.LastCheckedAt, &m.LeaseAcquiredAt, &m.LeaseWorkerID, &m.CreatedAt, &m.UpdatedAt,
+			&m.ConsecutiveFailures,
 			&m.AssetName, &m.AssetURL, &m.ClientName, &m.ClientID, &m.EffectiveURL,
 		)
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -200,6 +204,7 @@ func (r *MonitorRepository) ListMonitors(ctx context.Context, orgID string, asse
 			       m.expected_status_min, m.expected_status_max, m.follow_redirects, m.max_redirects,
 			       m.expected_text, m.json_pointer, m.json_expected_value, m.status, m.is_active,
 			       m.next_check_at, m.last_checked_at, m.lease_acquired_at, m.lease_worker_id, m.created_at, m.updated_at,
+			       m.consecutive_failures,
 			       a.name AS asset_name, a.url AS asset_url,
 			       c.name AS client_name, c.id AS client_id,
 			       COALESCE(m.url_override, a.url) AS effective_url
@@ -225,6 +230,7 @@ func (r *MonitorRepository) ListMonitors(ctx context.Context, orgID string, asse
 				&m.ExpectedStatusMin, &m.ExpectedStatusMax, &m.FollowRedirects, &m.MaxRedirects,
 				&m.ExpectedText, &m.JSONPointer, &m.JSONExpectedValue, &m.Status, &m.IsActive,
 				&m.NextCheckAt, &m.LastCheckedAt, &m.LeaseAcquiredAt, &m.LeaseWorkerID, &m.CreatedAt, &m.UpdatedAt,
+				&m.ConsecutiveFailures,
 				&m.AssetName, &m.AssetURL, &m.ClientName, &m.ClientID, &m.EffectiveURL,
 			); err != nil {
 				return err
@@ -292,7 +298,8 @@ func (r *MonitorRepository) UpdateMonitor(ctx context.Context, orgID, monitorID 
 			RETURNING id, organization_id, asset_id, method, url_override, interval_seconds, timeout_seconds,
 			          expected_status_min, expected_status_max, follow_redirects, max_redirects,
 			          expected_text, json_pointer, json_expected_value, status, is_active,
-			          next_check_at, last_checked_at, lease_acquired_at, lease_worker_id, created_at, updated_at
+			          next_check_at, last_checked_at, lease_acquired_at, lease_worker_id, created_at, updated_at,
+			          consecutive_failures
 		`
 		err := tx.QueryRow(ctx, query,
 			params.Method, params.URLOverride, params.IntervalSeconds, params.TimeoutSeconds,
@@ -304,6 +311,7 @@ func (r *MonitorRepository) UpdateMonitor(ctx context.Context, orgID, monitorID 
 			&m.ExpectedStatusMin, &m.ExpectedStatusMax, &m.FollowRedirects, &m.MaxRedirects,
 			&m.ExpectedText, &m.JSONPointer, &m.JSONExpectedValue, &m.Status, &m.IsActive,
 			&m.NextCheckAt, &m.LastCheckedAt, &m.LeaseAcquiredAt, &m.LeaseWorkerID, &m.CreatedAt, &m.UpdatedAt,
+			&m.ConsecutiveFailures,
 		)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrMonitorNotFound
@@ -403,30 +411,94 @@ func (r *MonitorRepository) ClaimDueMonitors(ctx context.Context, workerID strin
 	return jobs, rows.Err()
 }
 
-// UpdateAfterCheck updates monitor status and calculates next_check_at with drift prevention & misfire policy.
-func (r *MonitorRepository) UpdateAfterCheck(ctx context.Context, orgID, monitorID, newStatus string, completedAt, scheduledAt time.Time, intervalSeconds int) error {
+// RecordScheduledCheckOutcome updates monitor status based on check success/failure, tracks consecutive failures,
+// and schedules next_check_at with drift prevention & misfire policy.
+// State transitions:
+// - pending -> up (on first success)
+// - up -> suspected_down (on 1st consecutive failure)
+// - suspected_down -> down (on 2nd consecutive failure)
+// - down -> up (on recovery / success)
+// - paused -> remains paused (paused monitors are not marked down due to missing checks)
+func (r *MonitorRepository) RecordScheduledCheckOutcome(ctx context.Context, orgID, monitorID string, checkSuccess bool, completedAt, scheduledAt time.Time, intervalSeconds int) (string, error) {
 	now := time.Now().UTC()
 
-	// Drift-Free Next Check & Misfire Policy:
-	// Normal: scheduledAt + intervalSeconds
-	// Misfire: if scheduledAt + intervalSeconds is already in the past, skip missed executions to NOW + intervalSeconds!
 	nextCheck := scheduledAt.Add(time.Duration(intervalSeconds) * time.Second)
 	if nextCheck.Before(now) {
 		nextCheck = now.Add(time.Duration(intervalSeconds) * time.Second)
 	}
 
-	return WithTenantTx(ctx, r.pool, orgID, func(tx pgx.Tx) error {
+	var calculatedStatus string
+	err := WithTenantTx(ctx, r.pool, orgID, func(tx pgx.Tx) error {
+		var currentStatus string
+		var consecutiveFailures int
+		var isActive bool
+
+		err := tx.QueryRow(ctx, `
+			SELECT status, consecutive_failures, is_active
+			FROM monitors
+			WHERE id = $1 AND organization_id = $2
+			FOR UPDATE
+		`, monitorID, orgID).Scan(&currentStatus, &consecutiveFailures, &isActive)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrMonitorNotFound
+			}
+			return err
+		}
+
+		// Paused monitors stay paused
+		if currentStatus == "paused" || !isActive {
+			calculatedStatus = "paused"
+			_, err = tx.Exec(ctx, `
+				UPDATE monitors
+				SET last_checked_at = $1,
+				    next_check_at = $2,
+				    lease_acquired_at = NULL,
+				    lease_worker_id = NULL,
+				    updated_at = NOW()
+				WHERE id = $3 AND organization_id = $4
+			`, completedAt, nextCheck, monitorID, orgID)
+			return err
+		}
+
+		newFailures := consecutiveFailures
+		if checkSuccess {
+			newFailures = 0
+			calculatedStatus = "up"
+		} else {
+			newFailures = consecutiveFailures + 1
+			if newFailures == 1 {
+				calculatedStatus = "suspected_down"
+			} else {
+				calculatedStatus = "down"
+			}
+		}
+
 		query := `
 			UPDATE monitors
 			SET status = $1,
-			    last_checked_at = $2,
-			    next_check_at = $3,
+			    consecutive_failures = $2,
+			    last_checked_at = $3,
+			    next_check_at = $4,
 			    lease_acquired_at = NULL,
 			    lease_worker_id = NULL,
 			    updated_at = NOW()
-			WHERE id = $4 AND organization_id = $5
+			WHERE id = $5 AND organization_id = $6
 		`
-		_, err := tx.Exec(ctx, query, newStatus, completedAt, nextCheck, monitorID, orgID)
+		_, err = tx.Exec(ctx, query, calculatedStatus, newFailures, completedAt, nextCheck, monitorID, orgID)
 		return err
 	})
+
+	if err != nil {
+		return "", err
+	}
+	return calculatedStatus, nil
 }
+
+// UpdateAfterCheck updates monitor status directly (for backward compatibility).
+func (r *MonitorRepository) UpdateAfterCheck(ctx context.Context, orgID, monitorID, newStatus string, completedAt, scheduledAt time.Time, intervalSeconds int) error {
+	isSuccess := newStatus == "up"
+	_, err := r.RecordScheduledCheckOutcome(ctx, orgID, monitorID, isSuccess, completedAt, scheduledAt, intervalSeconds)
+	return err
+}
+

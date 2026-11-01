@@ -46,8 +46,10 @@ interface DashboardStats {
   total_assets: number;
   monitors_up: number;
   monitors_down: number;
+  monitors_suspected_down?: number;
   monitors_pending: number;
   monitors_paused: number;
+  monitors_unknown?: number;
   recent_checks: RecentCheck[];
 }
 

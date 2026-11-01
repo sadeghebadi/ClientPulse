@@ -102,6 +102,8 @@ export const translations = {
     // Assets
     assets: "Assets & Websites",
     assetsList: "Registered Assets",
+    assetsDirectory: "Websites & APIs Directory",
+    assetsDirectoryDesc: "Monitor website availability, environments, and SSL certificate lifecycles across all clients.",
     createAsset: "Add Website / API",
     editAsset: "Edit Asset",
     assetDetails: "Asset Details",
@@ -119,6 +121,10 @@ export const translations = {
     duplicateUrlWarning: "Notice: Another asset in this workspace is already configured with this URL.",
     noAssetsFound: "No assets registered for this client.",
     noAssetsDesc: "Add a website or API endpoint to start automated health checks.",
+    allEnvironments: "All Environments",
+    allTypes: "All Types",
+    allClients: "All Clients",
+    filterByClient: "Filter by Client",
 
     // Monitors
     monitors: "Monitors",
@@ -145,8 +151,16 @@ export const translations = {
     noHistory: "No check results recorded yet.",
     statusUp: "Operational (Up)",
     statusDown: "Downtime (Down)",
+    statusSuspectedDown: "Suspected Down (1 Failure)",
     statusPending: "Pending First Check",
     statusPaused: "Monitoring Paused",
+    statusUnknown: "Unknown",
+    statusUpDesc: "All health checks passed. Site is responding normally.",
+    statusDownDesc: "2+ consecutive failed checks. Target is confirmed down.",
+    statusSuspectedDownDesc: "1 check failed. Verifying in next cycle before alerting.",
+    statusPendingDesc: "Awaiting first scheduled check cycle from worker daemon.",
+    statusPausedDesc: "Monitoring has been paused by an administrator.",
+    statusUnknownDesc: "Check lease expired or status could not be verified.",
     sslDetails: "SSL / TLS Certificate",
     sslValid: "Valid Certificate",
     sslExpired: "Expired Certificate",
@@ -168,8 +182,49 @@ export const translations = {
     recentChecks: "Recent Health Checks",
     saveChanges: "Save Changes",
     cancel: "Cancel",
+    confirm: "Confirm",
     actions: "Actions",
     viewDetails: "View Details",
+
+    // Dashboard Redesign Additions
+    overview: "Workspace Overview",
+    monitorHealthOverview: "Monitor Health Breakdown",
+    recentlyFailedChecks: "Recently Failed Checks",
+    noFailedChecks: "All monitors operational. No failed checks recorded in this workspace.",
+    latestMonitoringActivity: "Latest Monitoring Activity",
+    clientsSummary: "Clients Summary",
+    quickActions: "Quick Actions",
+    manageClients: "Manage Clients",
+    viewAllMonitors: "View All Monitors",
+    viewAllAssets: "View All Assets",
+    liveEngineTitle: "Live Monitoring Engine Status",
+    statusCode: "Status Code",
+    refresh: "Refresh",
+    success: "Success",
+    failure: "Failure",
+    timeoutResult: "Timeout",
+    blockedResult: "Blocked",
+    errorResult: "Error",
+    viewMonitor: "View Monitor",
+    viewClient: "View Client",
+
+    // SSRF & Security Helpers
+    ssrfErrorTitle: "Restricted Target Address",
+    ssrfErrorExplanation: "For security, monitoring internal networks, loopback (localhost), and cloud metadata endpoints is prohibited. Please provide a publicly resolvable domain (e.g. https://example.com).",
+    
+    // UI Helpers & Modals
+    confirmAction: "Confirm Action",
+    areYouSure: "Are you sure you want to proceed?",
+    copiedToClipboard: "Copied to clipboard!",
+    close: "Close",
+    menu: "Menu",
+    navigation: "Navigation",
+    clearFilters: "Clear Filters",
+    search: "Search",
+    filter: "Filter",
+    all: "All",
+    timeAgo: "ago",
+    justNow: "Just now",
   },
   fa: {
     brandName: "کلاینت‌پالس",
@@ -268,6 +323,8 @@ export const translations = {
     // Assets
     assets: "دارایی‌ها و وب‌سایت‌ها",
     assetsList: "فهرست وب‌سایت‌ها",
+    assetsDirectory: "فهرست وب‌سایت‌ها و APIها",
+    assetsDirectoryDesc: "پایش وضعیت دسترسی، محیط‌ها و چرخه گواهینامه‌های SSL وب‌سایت‌های مشتریان.",
     createAsset: "افزودن وب‌سایت / API",
     editAsset: "ویرایش دارایی",
     assetDetails: "جزئیات دارایی",
@@ -285,6 +342,10 @@ export const translations = {
     duplicateUrlWarning: "توجه: این آدرس اینترنتی پیش‌تر برای وب‌سایت دیگری در این سازمان ثبت شده است.",
     noAssetsFound: "هیچ وب‌سایتی برای این مشتری ثبت نشده است.",
     noAssetsDesc: "با ثبت اولین وب‌سایت یا API، پایش سلامت را فعال کنید.",
+    allEnvironments: "تمام محیط‌ها",
+    allTypes: "تمام نوع‌ها",
+    allClients: "تمام مشتریان",
+    filterByClient: "فیلتر بر اساس مشتری",
 
     // Monitors
     monitors: "مانیتورها",
@@ -311,8 +372,16 @@ export const translations = {
     noHistory: "هنوز داده‌ای ثبت نشده است.",
     statusUp: "سالم و فعال (Up)",
     statusDown: "قطعی (Down)",
+    statusSuspectedDown: "مشکوک به قطعی (۱ خطا)",
     statusPending: "در انتظار اولین بررسی",
     statusPaused: "پایش متوقف‌شده",
+    statusUnknown: "نامشخص",
+    statusUpDesc: "تمام بررسی‌ها موفقیت‌آمیز بوده و وب‌سایت به درستی پاسخ می‌دهد.",
+    statusDownDesc: "۲ یا چند بررسی متوالی ناموفق بوده است؛ قطعی وب‌سایت تأیید شده است.",
+    statusSuspectedDownDesc: "۱ بررسی با خطا مواجه شد؛ قبل از اعلام قطعی نهایی، بررسی مجدد در جریان است.",
+    statusPendingDesc: "در انتظار اولین دوره بررسی توسط سرویس ورکر پس‌زمینه.",
+    statusPausedDesc: "پایش سلامت توسط مدیر به طور موقت متوقف شده است.",
+    statusUnknownDesc: "وضعیت پایش نامشخص است یا مهلت بررسی سپری شده است.",
     sslDetails: "گواهینامه امنیتی SSL / TLS",
     sslValid: "گواهینامه معتبر است",
     sslExpired: "گواهینامه منقضی شده است",
@@ -334,8 +403,49 @@ export const translations = {
     recentChecks: "آخرین بررسی‌های انجام‌شده",
     saveChanges: "ذخیره تغییرات",
     cancel: "انصراف",
+    confirm: "تأیید",
     actions: "عملیات",
     viewDetails: "مشاهده جزئیات",
+
+    // Dashboard Redesign Additions
+    overview: "نمای کلی فضای کاری",
+    monitorHealthOverview: "وضعیت سلامت مانیتورها",
+    recentlyFailedChecks: "آخرین خطاهای ثبت‌شده",
+    noFailedChecks: "همه مانیتورها در دسترس هستند. هیچ خطایی ثبت نشده است.",
+    latestMonitoringActivity: "آخرین فعالیت‌های پایش",
+    clientsSummary: "خلاصه وضعیت مشتریان",
+    quickActions: "دسترسی سریع",
+    manageClients: "مدیریت مشتریان",
+    viewAllMonitors: "مشاهده همه مانیتورها",
+    viewAllAssets: "مشاهده همه وب‌سایت‌ها",
+    liveEngineTitle: "وضعیت زنده موتور پایش و زیرساخت",
+    statusCode: "کد وضعیت",
+    refresh: "بروزرسانی",
+    success: "موفق",
+    failure: "خطا",
+    timeoutResult: "مهلت زمانی",
+    blockedResult: "مسدودشده",
+    errorResult: "خطا",
+    viewMonitor: "مشاهده مانیتور",
+    viewClient: "مشاهده مشتری",
+
+    // SSRF & Security Helpers
+    ssrfErrorTitle: "آدرس مقصد غیرمجاز",
+    ssrfErrorExplanation: "به دلایل امنیتی، پایش آدرس‌های شبکه محلی، لوکال‌هاست و متادیتای سرویس‌های ابری مجاز نیست. لطفاً یک دامنه عمومی و معتبر (مانند https://example.com) وارد نمایید.",
+
+    // UI Helpers & Modals
+    confirmAction: "تأیید عملیات",
+    areYouSure: "آیا از انجام این عملیات اطمینان دارید؟",
+    copiedToClipboard: "در کلیپ‌بورد کپی شد!",
+    close: "بستن",
+    menu: "منو",
+    navigation: "ناوبری",
+    clearFilters: "پاک کردن فیلترها",
+    search: "جستجو",
+    filter: "فیلتر",
+    all: "همه",
+    timeAgo: "پیش",
+    justNow: "هم‌اکنون",
   },
 };
 
@@ -343,28 +453,33 @@ interface I18nContextType {
   locale: Locale;
   setLocale: (l: Locale) => void;
   toggleLocale: () => void;
-  t: typeof translations["en"];
+  t: (typeof translations)["en"];
   isRTL: boolean;
 }
 
 const I18nContext = createContext<I18nContextType | null>(null);
 
 export function I18nProvider({ children }: { children: React.ReactNode }) {
-  const [locale, setLocale] = useState<Locale>(() => {
-    if (typeof window !== "undefined") {
-      const saved = localStorage.getItem("clientpulse_locale") as Locale;
-      if (saved === "en" || saved === "fa") {
-        return saved;
-      }
-    }
-    return "en";
-  });
+  const [locale, setLocale] = useState<Locale>("en");
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    // Initial mount sync from localStorage
+    const saved = localStorage.getItem("clientpulse_locale") as Locale;
+    const initialLocale = saved === "en" || saved === "fa" ? saved : "en";
+    setLocale(initialLocale);
+    document.documentElement.lang = initialLocale;
+    document.documentElement.dir = initialLocale === "fa" ? "rtl" : "ltr";
+    setMounted(true);
+  }, []);
 
   const changeLocale = (newLocale: Locale) => {
     setLocale(newLocale);
-    localStorage.setItem("clientpulse_locale", newLocale);
-    document.documentElement.lang = newLocale;
-    document.documentElement.dir = newLocale === "fa" ? "rtl" : "ltr";
+    if (typeof window !== "undefined") {
+      localStorage.setItem("clientpulse_locale", newLocale);
+      document.documentElement.lang = newLocale;
+      document.documentElement.dir = newLocale === "fa" ? "rtl" : "ltr";
+    }
   };
 
   const toggleLocale = () => {

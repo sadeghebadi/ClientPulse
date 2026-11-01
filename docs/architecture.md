@@ -111,9 +111,11 @@ sequenceDiagram
 ```
 
 ### 4.1 Atomic Job Claiming (`claim_due_monitors`)
-- Stored function defined with `SECURITY DEFINER` and search path restriction to allow background workers to claim due monitors across tenants without granting broad RLS bypasses to the application runtime user.
+- Stored function defined with `SECURITY DEFINER` and search path restriction (`pg_catalog, public, pg_temp`), owned by restricted non-login role `clientpulse_definer`.
+- `EXECUTE` privilege is revoked from `PUBLIC` and `clientpulse_app`, and granted strictly to dedicated login role `clientpulse_worker`.
+- Validates parameters strictly inside the function (`1 <= p_batch_size <= 100`, `5 <= p_lease_timeout_seconds <= 3600`, non-empty `p_worker_id`).
 - Employs `SELECT ... FOR UPDATE OF m SKIP LOCKED` to allow multiple concurrent worker instances to scale horizontally without duplicate executions.
-- Sets an execution lease (`lease_expires_at = NOW() + INTERVAL '60 seconds'`). Abandoned or crashed jobs whose leases expire are automatically reclaimed by the next available worker.
+- Sets an execution lease (`lease_acquired_at = NOW()`, `lease_worker_id = p_worker_id`). Abandoned or crashed jobs whose leases expire are automatically reclaimed by the next available worker.
 - Short-lived database transaction: The database connection is held only during the atomic claim query. All network I/O, DNS resolution, and outbound HTTP checks execute outside database transactions.
 
 ### 4.2 Drift Prevention & Misfire Policy
@@ -126,3 +128,16 @@ sequenceDiagram
 - **SNI Preservation:** The original target hostname is preserved in `tls.Config.ServerName` and the HTTP `Host` header for accurate virtual hosting and TLS certificate verification.
 - **Redirect Isolation:** The HTTP client validates every HTTP redirect target through the full SSRF pipeline before following. Redirects to internal or prohibited addresses are rejected immediately.
 - **Proxy Neutralization:** Custom HTTP transports set `Proxy = nil` to guarantee environment proxy variables do not bypass security controls.
+
+### 4.4 Monitor State Machine & Consecutive Failure Thresholds
+- **States:** `pending` (initial), `up` (healthy), `suspected_down` (1 failure), `down` (2+ consecutive failures), `paused` (intentionally disabled), `unknown` (insufficient data).
+- **Threshold Rules:**
+  - Scheduled check failure with 0 previous failures transitions monitor to `suspected_down` (`consecutive_failures = 1`).
+  - Scheduled check failure with 1+ previous failures transitions monitor to `down` (`consecutive_failures = consecutive_failures + 1`).
+  - Successful scheduled check transitions monitor to `up` and resets `consecutive_failures = 0`.
+  - Manual "Test Now" executions record results as `execution_type = 'manual'` but do not mutate `consecutive_failures` or change scheduled threshold status.
+
+### 4.5 Check Results Retention & Hourly Aggregations
+- **Raw Check Results Retention:** Raw entries in `check_results` are retained for a configurable period (`CHECK_RESULT_RETENTION_DAYS`, default 90 days).
+- **Bounded Batch Pruning:** Expired check results are deleted in bounded batches (`LIMIT 500`) to avoid table locks and long-running transactions.
+- **Hourly Metric Aggregations:** Stored in `check_aggregates_hourly` with rollups for `total_checks`, `successful_checks`, `total_latency_ms`, `min_latency_ms`, and `max_latency_ms`. Aggregates are retained for at least 13 months (400 days) to support historical dashboard reporting and uptime calculation.

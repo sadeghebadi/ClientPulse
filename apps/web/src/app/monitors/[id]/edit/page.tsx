@@ -290,3 +290,4 @@ export default function EditMonitorPage({ params }: { params: Promise<{ id: stri
     </div>
   );
 }
+

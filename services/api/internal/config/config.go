@@ -19,7 +19,8 @@ type Config struct {
 	DefaultTimezone string
 
 	// Database
-	DatabaseURL string
+	DatabaseURL       string
+	WorkerDatabaseURL string
 
 	// Security
 	SessionSecret   string
@@ -72,6 +73,7 @@ func Load() (*Config, error) {
 		DefaultLocale:                getEnv("DEFAULT_LOCALE", "en"),
 		DefaultTimezone:              getEnv("DEFAULT_TIMEZONE", "UTC"),
 		DatabaseURL:                  getEnv("DATABASE_URL", "postgres://clientpulse:clientpulse_dev_password@localhost:5433/clientpulse?sslmode=disable"),
+		WorkerDatabaseURL:            getEnv("WORKER_DATABASE_URL", getEnv("DATABASE_URL", "postgres://clientpulse_worker:clientpulse_worker_dev_password@localhost:5433/clientpulse?sslmode=disable")),
 		SessionSecret:                getEnv("SESSION_SECRET", "dev-session-secret-replace-with-cryptographic-random-value-in-prod"),
 		TokenHashPepper:              getEnv("TOKEN_HASH_PEPPER", "dev-token-pepper-replace-with-cryptographic-random-value-in-prod"),
 		TelegramBotToken:             getEnv("TELEGRAM_BOT_TOKEN", ""),

@@ -112,7 +112,7 @@ func (c *Checker) Execute(ctx context.Context, cfg CheckConfig) *CheckExecutionR
 		resolvedIPs = []net.IP{directIP}
 	} else {
 		dnsCtx, dnsCancel := context.WithTimeout(ctx, 5*time.Second)
-		ips, err := net.DefaultResolver.LookupIP(dnsCtx, "ip", hostname)
+		ips, err := c.guard.Resolver().LookupIP(dnsCtx, "ip", hostname)
 		dnsCancel()
 		result.DNSDurationMs = time.Since(dnsStart).Milliseconds()
 

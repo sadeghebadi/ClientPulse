@@ -142,10 +142,11 @@ type Monitor struct {
 	IsActive          bool       `json:"is_active"`
 	NextCheckAt       time.Time  `json:"next_check_at"`
 	LastCheckedAt     *time.Time `json:"last_checked_at,omitempty"`
-	LeaseAcquiredAt   *time.Time `json:"lease_acquired_at,omitempty"`
-	LeaseWorkerID     *string    `json:"lease_worker_id,omitempty"`
-	CreatedAt         time.Time  `json:"created_at"`
-	UpdatedAt         time.Time  `json:"updated_at"`
+	LeaseAcquiredAt     *time.Time `json:"lease_acquired_at,omitempty"`
+	LeaseWorkerID       *string    `json:"lease_worker_id,omitempty"`
+	CreatedAt           time.Time  `json:"created_at"`
+	UpdatedAt           time.Time  `json:"updated_at"`
+	ConsecutiveFailures int        `json:"consecutive_failures"`
 
 	// Joined metadata
 	AssetName    string `json:"asset_name,omitempty"`
@@ -203,12 +204,30 @@ type ClaimedMonitorJob struct {
 
 // DashboardStats aggregates high-level metrics for the active workspace.
 type DashboardStats struct {
-	TotalClients    int            `json:"total_clients"`
-	TotalAssets     int            `json:"total_assets"`
-	MonitorsUp      int            `json:"monitors_up"`
-	MonitorsDown    int            `json:"monitors_down"`
-	MonitorsPending int            `json:"monitors_pending"`
-	MonitorsPaused  int            `json:"monitors_paused"`
-	RecentChecks    []*CheckResult `json:"recent_checks"`
+	TotalClients          int            `json:"total_clients"`
+	TotalAssets           int            `json:"total_assets"`
+	MonitorsUp            int            `json:"monitors_up"`
+	MonitorsDown          int            `json:"monitors_down"`
+	MonitorsSuspectedDown int            `json:"monitors_suspected_down"`
+	MonitorsPending       int            `json:"monitors_pending"`
+	MonitorsPaused        int            `json:"monitors_paused"`
+	MonitorsUnknown       int            `json:"monitors_unknown"`
+	RecentChecks          []*CheckResult `json:"recent_checks"`
+}
+
+// CheckAggregateHourly represents hourly aggregated check metrics.
+type CheckAggregateHourly struct {
+	ID               string    `json:"id"`
+	OrganizationID   string    `json:"organization_id"`
+	MonitorID        string    `json:"monitor_id"`
+	BucketHour       time.Time `json:"bucket_hour"`
+	TotalChecks      int       `json:"total_checks"`
+	SuccessfulChecks int       `json:"successful_checks"`
+	FailedChecks     int       `json:"failed_checks"`
+	TotalLatencyMS   int64     `json:"total_latency_ms"`
+	MinLatencyMS     int64     `json:"min_latency_ms"`
+	MaxLatencyMS     int64     `json:"max_latency_ms"`
+	CreatedAt        time.Time `json:"created_at"`
+	UpdatedAt        time.Time `json:"updated_at"`
 }
 

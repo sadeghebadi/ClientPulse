@@ -100,6 +100,14 @@ func NewGuard(resolver IPResolver) *Guard {
 	return &Guard{resolver: resolver}
 }
 
+// Resolver returns the configured IP resolver.
+func (g *Guard) Resolver() IPResolver {
+	if g.resolver == nil {
+		return DefaultResolver
+	}
+	return g.resolver
+}
+
 // ValidateURL validates that a raw URL is safe from SSRF attack vectors.
 func (g *Guard) ValidateURL(rawURL string) (*url.URL, error) {
 	parsedURL, err := url.ParseRequestURI(strings.TrimSpace(rawURL))
@@ -308,3 +316,4 @@ func (g *Guard) NewSafeClient(timeout time.Duration, maxRedirects int) *http.Cli
 
 	return client
 }
+

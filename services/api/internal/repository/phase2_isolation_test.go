@@ -170,12 +170,21 @@ func TestPhase2TenantIsolationAndScheduler(t *testing.T) {
 	}
 
 	// 7. Test Atomic Scheduler Claiming
+	_, _ = db.Pool.Exec(ctx, "UPDATE monitors SET next_check_at = NOW() - INTERVAL '2 hours', lease_acquired_at = NULL WHERE id IN ($1, $2)", monA.ID, monB.ID)
+
 	claimed, err := monitorRepo.ClaimDueMonitors(ctx, "worker-1", 10, 60)
 	if err != nil {
 		t.Fatalf("failed to claim due monitors: %v", err)
 	}
 	if len(claimed) < 2 {
 		t.Fatalf("expected at least 2 due monitors to be claimed, got %d", len(claimed))
+	}
+	claimedMap := make(map[string]bool)
+	for _, job := range claimed {
+		claimedMap[job.ID] = true
+	}
+	if !claimedMap[monA.ID] || !claimedMap[monB.ID] {
+		t.Fatalf("expected monA and monB to be claimed by worker-1, got claimed: %+v", claimed)
 	}
 
 	// Immediate re-claim must return 0 because monitors are locked with active lease!
@@ -230,3 +239,4 @@ func TestPhase2TenantIsolationAndScheduler(t *testing.T) {
 		t.Fatalf("expected monitor A to be paused, got %s", archivedMonA.Status)
 	}
 }
+

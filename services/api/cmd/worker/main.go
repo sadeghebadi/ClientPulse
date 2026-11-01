@@ -45,12 +45,17 @@ func main() {
 		"concurrency", cfg.WorkerConcurrency,
 	)
 
-	// Connect to database pool
+	// Connect to database pool using dedicated Worker role credentials
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
+	workerDBURL := cfg.WorkerDatabaseURL
+	if workerDBURL == "" {
+		workerDBURL = cfg.DatabaseURL
+	}
+
 	db, err := database.New(ctx, database.Config{
-		DatabaseURL: cfg.DatabaseURL,
+		DatabaseURL: workerDBURL,
 	})
 	if err != nil {
 		log.Error("worker failed to connect to database", "error", err)
@@ -80,9 +85,10 @@ func main() {
 		resultRepo,
 		ssrfGuard,
 		worker.SchedulerConfig{
-			WorkerID:    workerID,
-			Concurrency: cfg.WorkerConcurrency,
-			PollPeriod:  1 * time.Second,
+			WorkerID:      workerID,
+			Concurrency:   cfg.WorkerConcurrency,
+			PollPeriod:    1 * time.Second,
+			RetentionDays: cfg.CheckResultRetentionDays,
 		},
 		log,
 	)

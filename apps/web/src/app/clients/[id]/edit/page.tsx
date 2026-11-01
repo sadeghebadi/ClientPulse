@@ -192,3 +192,4 @@ export default function EditClientPage({ params }: { params: Promise<{ id: strin
     </div>
   );
 }
+

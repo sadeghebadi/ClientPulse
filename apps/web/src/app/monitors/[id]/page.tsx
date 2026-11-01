@@ -46,7 +46,7 @@ interface MonitorDetail {
   expected_text?: string;
   json_pointer?: string;
   json_expected_value?: string;
-  status: "up" | "down" | "pending" | "paused";
+  status: "up" | "down" | "suspected_down" | "pending" | "paused" | "unknown";
   is_active: boolean;
   next_check_at: string;
   last_checked_at?: string;
@@ -280,22 +280,30 @@ export default function MonitorDetailPage({ params }: { params: Promise<{ id: st
                       className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold ${
                         monitor.status === "up"
                           ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                          : monitor.status === "suspected_down"
+                          ? "bg-amber-50 text-amber-800 border border-amber-300"
                           : monitor.status === "down"
                           ? "bg-rose-50 text-rose-700 border border-rose-200"
                           : monitor.status === "paused"
                           ? "bg-slate-100 text-slate-700 border border-slate-200"
-                          : "bg-amber-50 text-amber-700 border border-amber-200"
+                          : monitor.status === "pending"
+                          ? "bg-blue-50 text-blue-700 border border-blue-200"
+                          : "bg-slate-50 text-slate-600 border border-slate-200"
                       }`}
                     >
                       {monitor.status === "up" && <CheckCircle className="w-3.5 h-3.5" />}
+                      {monitor.status === "suspected_down" && <AlertCircle className="w-3.5 h-3.5" />}
                       {monitor.status === "down" && <XCircle className="w-3.5 h-3.5" />}
                       {monitor.status === "paused" && <PauseCircle className="w-3.5 h-3.5" />}
                       {monitor.status === "pending" && <Clock className="w-3.5 h-3.5" />}
+                      {monitor.status === "unknown" && <Clock className="w-3.5 h-3.5" />}
                       <span>
                         {monitor.status === "up" && t.statusUp}
+                        {monitor.status === "suspected_down" && t.statusSuspectedDown}
                         {monitor.status === "down" && t.statusDown}
                         {monitor.status === "paused" && t.statusPaused}
                         {monitor.status === "pending" && t.statusPending}
+                        {monitor.status === "unknown" && t.statusUnknown}
                       </span>
                     </span>
                   </div>

@@ -51,16 +51,42 @@ Multi-tenant isolation is the highest-priority security requirement of ClientPul
 +-------------------------------------------------------------------------+
 ```
 
-### 1.1 Database Role Separation
+### 1.1 Database Role Separation (Least Privilege Architecture)
+Database access is divided across four specialized PostgreSQL roles:
 - **Migration Role (`clientpulse`):** Used strictly during deployment and migration execution (`cmd/migrate`) to apply DDL schema changes. Configured via `MIGRATION_DATABASE_URL`.
-- **Application Runtime Role (`clientpulse_app`):** Used exclusively by the runtime API service and background workers.
+- **Application Runtime Role (`clientpulse_app`):** Used exclusively by the runtime API service.
   - Defined with `NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS`.
-  - Non-owner of database tables, preventing runtime `ALTER TABLE`, `DROP TABLE`, or `ALTER ... DISABLE ROW LEVEL SECURITY`.
+  - Non-owner of database tables; cannot execute `ALTER TABLE`, `DROP TABLE`, or disable RLS.
   - Grants:
-    - Tables (`users`, `organizations`, `organization_memberships`, `sessions`, `password_reset_tokens`, `email_verification_tokens`): `SELECT, INSERT, UPDATE, DELETE`.
-    - Table (`audit_logs`): `SELECT, INSERT` ONLY. `UPDATE` and `DELETE` are revoked at the SQL grant level, making audit logs cryptographically tamper-resistant and append-only even if the application runtime were compromised.
+    - Business tables (`users`, `organizations`, `organization_memberships`, `sessions`, `password_reset_tokens`, `email_verification_tokens`, `clients`, `assets`, `monitors`, `check_results`, `check_aggregates_hourly`): `SELECT, INSERT, UPDATE, DELETE` (subject to tenant RLS).
+    - Table (`audit_logs`): `SELECT, INSERT` ONLY. `UPDATE` and `DELETE` are revoked at the SQL grant level.
+    - Explicitly revoked from executing `claim_due_monitors`.
+- **Worker Runtime Role (`clientpulse_worker`):** Used exclusively by the monitoring worker daemon.
+  - Defined with `LOGIN`, `NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS`.
+  - Separate credentials configured via `WORKER_DATABASE_URL`.
+  - Grants:
+    - Only tables required for monitoring: `SELECT, UPDATE` on `monitors`; `SELECT` on `assets`; `INSERT, SELECT, DELETE` on `check_results`; `SELECT, INSERT, UPDATE, DELETE` on `check_aggregates_hourly`; `SELECT, INSERT, UPDATE` on `worker_heartbeats`.
+    - Revoked from all credential and audit tables: `users`, `sessions`, `password_reset_tokens`, `email_verification_tokens`, `audit_logs`.
+    - Sole role granted `EXECUTE ON FUNCTION claim_due_monitors`.
+    - Scoped worker RLS policies allow cross-tenant bounded cleanup and aggregation.
+- **Restricted Function Owner Role (`clientpulse_definer`):**
+  - Defined with `NOLOGIN`, `NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS`.
+  - Owns `claim_due_monitors` with explicit `search_path = pg_catalog, public, pg_temp`.
+  - `CREATE ON SCHEMA public` is revoked to prevent untrusted object creation.
 
-### 1.2 Connection Pool Safety & Fail-Closed RLS
+### 1.2 Composite Tenant Foreign Keys
+Cross-tenant parent-child data tampering is impossible even if application validation or RLS were bypassed, enforced by composite database constraints:
+- `clients(organization_id, id)` UNIQUE
+- `assets(organization_id, id)` UNIQUE
+- `monitors(organization_id, id)` UNIQUE
+- `assets(organization_id, client_id) REFERENCES clients(organization_id, id) ON DELETE CASCADE`
+- `monitors(organization_id, asset_id) REFERENCES assets(organization_id, id) ON DELETE CASCADE`
+- `check_results(organization_id, monitor_id) REFERENCES monitors(organization_id, id) ON DELETE CASCADE`
+- `check_aggregates_hourly(organization_id, monitor_id) REFERENCES monitors(organization_id, id) ON DELETE CASCADE`
+
+Cross-organization relationships fail unconditionally with PostgreSQL foreign key constraint errors.
+
+### 1.3 Connection Pool Safety & Fail-Closed RLS
 - Because `pgxpool` multiplexes physical connections across incoming HTTP requests, global session variables (`SET app.current_organization_id`) are strictly prohibited.
 - Repository operations use `WithTenantTx(ctx, pool, orgID, fn)` which binds `set_config('app.current_organization_id', $orgID, true)`. The third parameter `is_local = true` ensures that PostgreSQL automatically clears the tenant context immediately upon transaction `COMMIT` or `ROLLBACK`.
 - Automated regression test `TestTenantContextCleanupAndConnectionPoolSafety` verifies that physical pooled connections released to the pool retain an empty string `""` for `app.current_organization_id`.

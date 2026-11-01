@@ -282,3 +282,4 @@ func TestPhase2EndToEndScheduledWorkflow(t *testing.T) {
 		t.Fatalf("expected monitor status 'pending', got %v (err: %v)", monAfterResume.Status, err)
 	}
 }
+

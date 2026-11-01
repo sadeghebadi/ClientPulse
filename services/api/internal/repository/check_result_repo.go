@@ -63,7 +63,7 @@ func (r *CheckResultRepository) CreateCheckResult(ctx context.Context, params Cr
 			          tls_cert_not_before, tls_cert_not_after, tls_days_remaining, tls_is_valid,
 			          resolved_ip, worker_id, execution_type, created_at
 		`
-		return tx.QueryRow(ctx, query,
+		if err := tx.QueryRow(ctx, query,
 			params.OrganizationID, params.MonitorID, params.ScheduledAt, params.StartedAt, params.CompletedAt,
 			params.LatencyMs, params.Result, params.HTTPStatusCode, params.ErrorCategory, params.ErrorMessage,
 			params.TLSVersion, params.TLSCipher, params.TLSCertIssuer, params.TLSCertSubject,
@@ -75,7 +75,42 @@ func (r *CheckResultRepository) CreateCheckResult(ctx context.Context, params Cr
 			&res.TLSVersion, &res.TLSCipher, &res.TLSCertIssuer, &res.TLSCertSubject,
 			&res.TLSCertNotBefore, &res.TLSCertNotAfter, &res.TLSDaysRemaining, &res.TLSIsValid,
 			&res.ResolvedIP, &res.WorkerID, &res.ExecutionType, &res.CreatedAt,
-		)
+		); err != nil {
+			return err
+		}
+
+		// Update hourly aggregate if scheduled execution
+		if params.ExecutionType == "scheduled" {
+			bucketHour := params.CompletedAt.Truncate(time.Hour)
+			var isSuccess, isFailure int
+			if params.Result == "success" {
+				isSuccess = 1
+			} else {
+				isFailure = 1
+			}
+
+			aggQuery := `
+				INSERT INTO check_aggregates_hourly (
+					organization_id, monitor_id, bucket_hour, total_checks,
+					successful_checks, failed_checks, total_latency_ms, min_latency_ms, max_latency_ms,
+					created_at, updated_at
+				) VALUES ($1, $2, $3, 1, $4, $5, $6, $6, $6, NOW(), NOW())
+				ON CONFLICT (organization_id, monitor_id, bucket_hour)
+				DO UPDATE SET
+					total_checks = check_aggregates_hourly.total_checks + 1,
+					successful_checks = check_aggregates_hourly.successful_checks + EXCLUDED.successful_checks,
+					failed_checks = check_aggregates_hourly.failed_checks + EXCLUDED.failed_checks,
+					total_latency_ms = check_aggregates_hourly.total_latency_ms + EXCLUDED.total_latency_ms,
+					min_latency_ms = LEAST(check_aggregates_hourly.min_latency_ms, EXCLUDED.min_latency_ms),
+					max_latency_ms = GREATEST(check_aggregates_hourly.max_latency_ms, EXCLUDED.max_latency_ms),
+					updated_at = NOW()
+			`
+			if _, err := tx.Exec(ctx, aggQuery, params.OrganizationID, params.MonitorID, bucketHour, isSuccess, isFailure, params.LatencyMs); err != nil {
+				return fmt.Errorf("failed to upsert hourly aggregate: %w", err)
+			}
+		}
+
+		return nil
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create check result: %w", err)
@@ -165,10 +200,14 @@ func (r *CheckResultRepository) GetDashboardStats(ctx context.Context, orgID str
 						stats.MonitorsUp = count
 					case "down":
 						stats.MonitorsDown = count
+					case "suspected_down":
+						stats.MonitorsSuspectedDown = count
 					case "pending":
 						stats.MonitorsPending = count
 					case "paused":
 						stats.MonitorsPaused = count
+					case "unknown":
+						stats.MonitorsUnknown = count
 					}
 				}
 			}
@@ -212,12 +251,85 @@ func (r *CheckResultRepository) GetDashboardStats(ctx context.Context, orgID str
 	return stats, nil
 }
 
-// PruneOldResults deletes check results older than the given duration (retention policy).
-func (r *CheckResultRepository) PruneOldResults(ctx context.Context, retention time.Duration) (int64, error) {
-	cutoff := time.Now().UTC().Add(-retention)
-	res, err := r.pool.Exec(ctx, "DELETE FROM check_results WHERE created_at < $1", cutoff)
+// PruneExpiredCheckResults deletes check results older than retentionDays in bounded batches.
+func (r *CheckResultRepository) PruneExpiredCheckResults(ctx context.Context, retentionDays, batchSize int) (int64, error) {
+	if retentionDays <= 0 {
+		retentionDays = 90
+	}
+	if batchSize <= 0 {
+		batchSize = 500
+	}
+	cutoff := time.Now().UTC().AddDate(0, 0, -retentionDays)
+
+	var totalDeleted int64
+	for {
+		query := `
+			WITH to_delete AS (
+				SELECT id FROM check_results
+				WHERE created_at < $1
+				LIMIT $2
+			)
+			DELETE FROM check_results
+			WHERE id IN (SELECT id FROM to_delete)
+		`
+		res, err := r.pool.Exec(ctx, query, cutoff, batchSize)
+		if err != nil {
+			return totalDeleted, fmt.Errorf("failed to prune check results batch: %w", err)
+		}
+		deleted := res.RowsAffected()
+		totalDeleted += deleted
+		if deleted < int64(batchSize) {
+			break
+		}
+	}
+	return totalDeleted, nil
+}
+
+// PruneExpiredAggregates deletes hourly aggregates older than retentionDays (default 400 days / 13 months).
+func (r *CheckResultRepository) PruneExpiredAggregates(ctx context.Context, retentionDays int) (int64, error) {
+	if retentionDays <= 0 {
+		retentionDays = 400
+	}
+	cutoff := time.Now().UTC().AddDate(0, 0, -retentionDays)
+	res, err := r.pool.Exec(ctx, "DELETE FROM check_aggregates_hourly WHERE bucket_hour < $1", cutoff)
 	if err != nil {
-		return 0, fmt.Errorf("failed to prune old check results: %w", err)
+		return 0, fmt.Errorf("failed to prune expired aggregates: %w", err)
 	}
 	return res.RowsAffected(), nil
 }
+
+// ListMonitorAggregates retrieves hourly aggregated metrics for a monitor within a given time range.
+func (r *CheckResultRepository) ListMonitorAggregates(ctx context.Context, orgID, monitorID string, from, to time.Time) ([]*CheckAggregateHourly, error) {
+	var aggs []*CheckAggregateHourly
+	err := WithTenantTx(ctx, r.pool, orgID, func(tx pgx.Tx) error {
+		query := `
+			SELECT id, organization_id, monitor_id, bucket_hour, total_checks, successful_checks, failed_checks,
+			       total_latency_ms, min_latency_ms, max_latency_ms, created_at, updated_at
+			FROM check_aggregates_hourly
+			WHERE monitor_id = $1 AND organization_id = $2 AND bucket_hour >= $3 AND bucket_hour <= $4
+			ORDER BY bucket_hour ASC
+		`
+		rows, err := tx.Query(ctx, query, monitorID, orgID, from, to)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var a CheckAggregateHourly
+			if err := rows.Scan(
+				&a.ID, &a.OrganizationID, &a.MonitorID, &a.BucketHour, &a.TotalChecks, &a.SuccessfulChecks, &a.FailedChecks,
+				&a.TotalLatencyMS, &a.MinLatencyMS, &a.MaxLatencyMS, &a.CreatedAt, &a.UpdatedAt,
+			); err != nil {
+				return err
+			}
+			aggs = append(aggs, &a)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list monitor aggregates: %w", err)
+	}
+	return aggs, nil
+}
+

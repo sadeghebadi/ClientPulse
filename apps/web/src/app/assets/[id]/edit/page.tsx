@@ -217,3 +217,4 @@ export default function EditAssetPage({ params }: { params: Promise<{ id: string
     </div>
   );
 }
+
