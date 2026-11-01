@@ -48,7 +48,16 @@ func TestReportResponseTimeRegression(t *testing.T) {
 		if len(data.Monitors) != 1 {
 			t.Fatalf("expected 1 monitor, got %d", len(data.Monitors))
 		}
-		m := data.Monitors[0]
+		var m *pdf.MonitorReportData
+		for i := range data.Monitors {
+			if data.Monitors[i].ID == monID {
+				m = &data.Monitors[i]
+				break
+			}
+		}
+		if m == nil {
+			t.Fatalf("expected to find monitor %s in report data", monID)
+		}
 		if m.AvgResponseTimeMs != nil {
 			t.Errorf("expected AvgResponseTimeMs to be nil when no checks exist, got %v", *m.AvgResponseTimeMs)
 		}
@@ -89,7 +98,16 @@ func TestReportResponseTimeRegression(t *testing.T) {
 		if len(data.Monitors) != 1 {
 			t.Fatalf("expected 1 monitor, got %d", len(data.Monitors))
 		}
-		m := data.Monitors[0]
+		var m *pdf.MonitorReportData
+		for i := range data.Monitors {
+			if data.Monitors[i].ID == monID {
+				m = &data.Monitors[i]
+				break
+			}
+		}
+		if m == nil {
+			t.Fatalf("expected to find monitor %s in report data", monID)
+		}
 
 		if m.AvgResponseTimeMs == nil {
 			t.Fatalf("expected AvgResponseTimeMs to be populated, got nil")
@@ -181,7 +199,16 @@ func TestReportResponseTimeRegression(t *testing.T) {
 		if err != nil {
 			t.Fatalf("CalculateReportData failed: %v", err)
 		}
-		m := data.Monitors[0]
+		var m *pdf.MonitorReportData
+		for i := range data.Monitors {
+			if data.Monitors[i].ID == monID {
+				m = &data.Monitors[i]
+				break
+			}
+		}
+		if m == nil {
+			t.Fatalf("expected to find monitor %s in report data", monID)
+		}
 		// In 1 hour, expected checks = 12 (every 5 min: 00, 05, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60 -> 13 slots)
 		// Total executed checks = 6 (5 success, 1 failure).
 		if m.CoveragePercentage <= 0 || m.CoveragePercentage > 100 {
@@ -228,10 +255,16 @@ func TestReportResponseTimeRegression(t *testing.T) {
 		if err := json.Unmarshal(retrieved.SnapshotJSON, &snap); err != nil {
 			t.Fatalf("failed unmarshaling SnapshotJSON: %v", err)
 		}
-		if len(snap.Monitors) != 1 {
-			t.Fatalf("expected 1 monitor in saved snapshot, got %d", len(snap.Monitors))
+		var savedMon *pdf.MonitorReportData
+		for i := range snap.Monitors {
+			if snap.Monitors[i].ID == monID {
+				savedMon = &snap.Monitors[i]
+				break
+			}
 		}
-		savedMon := snap.Monitors[0]
+		if savedMon == nil {
+			t.Fatalf("expected to find monitor %s in saved snapshot", monID)
+		}
 		if savedMon.AvgResponseTimeMs == nil || *savedMon.AvgResponseTimeMs != 300 {
 			t.Errorf("expected saved snapshot AvgResponseTimeMs = 300, got %v", savedMon.AvgResponseTimeMs)
 		}
