@@ -783,6 +783,7 @@ func (r *ReportRepository) CalculateReportData(ctx context.Context, orgID, clien
 					WHERE monitor_id = $1 AND organization_id = $2
 					  AND execution_type = 'scheduled'
 					  AND result = 'success'
+					  AND latency_ms > 0
 					  AND created_at >= $3 AND created_at <= $4
 				`, m.id, orgID, covStart, covEnd).Scan(&medianResp)
 			}

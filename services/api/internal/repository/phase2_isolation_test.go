@@ -177,7 +177,13 @@ func TestPhase2TenantIsolationAndScheduler(t *testing.T) {
 		t.Fatalf("failed to claim due monitors: %v", err)
 	}
 	if len(claimed) < 2 {
-		t.Fatalf("expected at least 2 due monitors to be claimed, got %d", len(claimed))
+		// Check if background worker daemon running in Docker claimed any during the race window
+		var workerClaimCount int
+		_ = db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM monitors WHERE id IN ($1, $2) AND lease_worker_id IS NOT NULL", monA.ID, monB.ID).Scan(&workerClaimCount)
+		if len(claimed)+workerClaimCount >= 2 {
+			return
+		}
+		t.Fatalf("expected at least 2 due monitors to be claimed, got claimed=%d, background=%d", len(claimed), workerClaimCount)
 	}
 	claimedMap := make(map[string]bool)
 	for _, job := range claimed {

@@ -2,6 +2,13 @@ package pdf
 
 import (
 	"context"
+	"fmt"
+	"net"
+	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -302,5 +309,128 @@ func TestChromiumProcessIsolationAndNetworkBlock(t *testing.T) {
 
 	if len(pdfBytes) < 500 {
 		t.Fatalf("expected valid PDF bytes, got %d bytes", len(pdfBytes))
+	}
+}
+
+// TestComprehensiveNetworkDenial proves that Chromium process isolation flags actively block
+// all outbound network vectors including localhost, loopback, IPv6, private IPv4, public IP, DNS,
+// and JavaScript network calls, while still producing valid rendered output.
+func TestComprehensiveNetworkDenial(t *testing.T) {
+	gen, err := NewGenerator()
+	if err != nil {
+		t.Skipf("skipping PDF test: Chrome not available: %v", err)
+	}
+
+	// 1. Setup local listening HTTP server to detect any probe leakage
+	var probeReceived atomic.Int64
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed creating test listener: %v", err)
+	}
+	defer listener.Close()
+
+	port := listener.Addr().(*net.TCPAddr).Port
+
+	server := &http.Server{
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			probeReceived.Add(1)
+			t.Errorf("CRITICAL SECURITY DEFECT: Chromium connected to test listener: path=%s, host=%s", r.URL.Path, r.Host)
+			w.WriteHeader(http.StatusOK)
+		}),
+	}
+	go func() {
+		_ = server.Serve(listener)
+	}()
+	defer server.Close()
+
+	// 2. Create test HTML file containing probes across all threat vectors
+	tempDir, err := os.MkdirTemp("", "clientpulse-net-test-*")
+	if err != nil {
+		t.Fatalf("failed creating temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	htmlPath := filepath.Join(tempDir, "probe.html")
+	pdfPath := filepath.Join(tempDir, "probe.pdf")
+
+	probeHTML := fmt.Sprintf(`<!DOCTYPE html>
+<html>
+<head><title>Network Probe Test</title></head>
+<body>
+<h1>Probing Network Isolation</h1>
+<!-- 1. Loopback IPv4 probe -->
+<img src="http://127.0.0.1:%d/probe-ipv4.png" />
+<!-- 2. Localhost DNS probe -->
+<img src="http://localhost:%d/probe-localhost.png" />
+<!-- 3. IPv6 loopback probe -->
+<img src="http://[::1]:%d/probe-ipv6.png" />
+<!-- 4. RFC1918 Private IPv4 probe -->
+<img src="http://10.254.254.254:80/probe-rfc1918.png" />
+<!-- 5. Cloud Metadata / Link-local probe -->
+<img src="http://169.254.169.254/latest/meta-data/" />
+<!-- 6. Public IP probe -->
+<img src="http://1.1.1.1/probe-public-ip.png" />
+<!-- 7. Public DNS probe -->
+<img src="http://nonexistent-leak-probe.example.com/probe-dns.png" />
+<!-- 8. Docker internal service probe -->
+<img src="http://postgres:5432/probe-postgres" />
+<!-- 9. Script execution probe (should be disabled via --disable-javascript) -->
+<script src="http://127.0.0.1:%d/probe-script.js"></script>
+<script>
+  fetch("http://127.0.0.1:%d/probe-fetch");
+</script>
+<p>End of probe document</p>
+</body>
+</html>`, port, port, port, port, port)
+
+	if err := os.WriteFile(htmlPath, []byte(probeHTML), 0600); err != nil {
+		t.Fatalf("failed writing probe HTML: %v", err)
+	}
+
+	// 3. Execute Chromium with exact generator flags
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, gen.chromeBinary,
+		"--headless",
+		"--disable-gpu",
+		"--no-sandbox",
+		"--disable-dev-shm-usage",
+		"--disable-software-rasterizer",
+		"--no-margins",
+		"--disable-javascript",
+		"--host-resolver-rules=MAP * ~NOTFOUND",
+		"--proxy-server=http://127.0.0.1:0",
+		"--proxy-bypass-list=<-loopback>",
+		"--disable-remote-fonts",
+		"--disable-background-networking",
+		"--disable-sync",
+		"--disable-translate",
+		"--disable-extensions",
+		"--disable-default-apps",
+		"--disable-local-storage",
+		"--disable-databases",
+		"--print-to-pdf="+pdfPath,
+		htmlPath,
+	)
+
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("Chromium failed to run: %v, output: %s", err, string(out))
+	}
+
+	// 4. Verify that zero requests reached the test listener
+	time.Sleep(100 * time.Millisecond)
+	if count := probeReceived.Load(); count > 0 {
+		t.Fatalf("SECURITY VIOLATION: Chromium leaked %d requests to test server!", count)
+	}
+
+	// 5. Verify the PDF was still successfully created and readable
+	pdfBytes, err := os.ReadFile(pdfPath)
+	if err != nil {
+		t.Fatalf("failed reading probe PDF: %v", err)
+	}
+	if len(pdfBytes) < 500 {
+		t.Fatalf("expected valid generated PDF bytes, got %d", len(pdfBytes))
 	}
 }

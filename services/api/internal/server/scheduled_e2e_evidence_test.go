@@ -143,11 +143,12 @@ func TestScheduledMonitoringEndToEndEvidence(t *testing.T) {
 	schedCtx, schedCancel := context.WithTimeout(ctx, 5*time.Second)
 	defer schedCancel()
 
-	// Cancel scheduler as soon as the test target receives a check request
+	// Cancel scheduler as soon as the test target receives a check request and result is written
 	go func() {
 		for i := 0; i < 50; i++ {
 			time.Sleep(100 * time.Millisecond)
 			if atomic.LoadInt64(&requestCount) > 0 {
+				time.Sleep(300 * time.Millisecond)
 				schedCancel()
 				return
 			}
