@@ -261,3 +261,31 @@ As mandated by PRD **FR-AUTH-01**, unverified accounts have restricted access:
   - Organization member additions and role changes (`POST/PATCH/DELETE /api/v1/organizations/current/members/*`)
 - Unverified requests to these endpoints are rejected with `403 Forbidden` (`code: EMAIL_NOT_VERIFIED`). The UI displays an email verification banner guiding the user to check their email.
 
+---
+
+## 7. Incident & Heartbeat Monitoring Security Controls
+
+### 7.1 Heartbeat Token Protection & Secret Hygiene
+1. **Cryptographic Entropy:** All heartbeat tokens are generated using 32 bytes of cryptographic randomness (`crypto/rand`), formatted as a 64-character lowercase hexadecimal string (256 bits of entropy).
+2. **Digest-Only Storage:** Plaintext tokens are NEVER stored in PostgreSQL. Only the SHA-256 digest (`token_hash`) is persisted.
+3. **Log Sanitization:** Raw tokens are strictly excluded from all application logs, database query parameters, error reports, and APM telemetry.
+4. **Single-Reveal Display:** The UI presents the raw secret token only once during creation or token rotation. Once dismissed, the token cannot be retrieved via any API endpoint.
+5. **Immediate Invalidation on Rotation / Revocation:** Rotating a token immediately calculates a new hash and replaces the stored digest in the database. Any subsequent ping using the prior token is immediately rejected. Revoking zeroes out the digest and marks the status as `revoked`.
+
+### 7.2 Public Ping Endpoint Hardening (`POST /api/v1/heartbeat-pings/{token}`)
+1. **Unauthenticated by Design:** Accepts pings without user session cookies to support unattended cron jobs and backup scripts. Authentication is purely cryptographic via token verification.
+2. **Untrusted Caller Identifiers:** The caller cannot provide an organization ID or client ID. Tenant context is derived strictly by matching the SHA-256 digest via SECURITY DEFINER function `lookup_heartbeat_by_token_hash`.
+3. **Payload Clamping & Strict Method:** Rejects any HTTP method other than `POST` with `405 Method Not Allowed`. Enforces a strict 1 KB body limit (`http.MaxBytesReader`) to thwart denial-of-service attempts.
+4. **Independent Sliding-Window Rate Limiting:** Rate-limited independently of web session endpoints at 120 pings per minute per source IP address.
+5. **Enumeration Resistance:** Invalid, revoked, or non-existent tokens return identical generic `404 Not Found` responses to prevent token existence or rotation state discovery.
+
+### 7.3 Multi-Tenant Incident Model Integrity
+1. **Anti-Polymorphism:** Incidents do not rely on untyped `target_type` + `target_id` pairs. Strong foreign keys (`monitor_id`, `heartbeat_monitor_id`) are enforced with database check constraints.
+2. **Composite Tenant Foreign Keys:** Cross-tenant target reference is impossible at the database engine level via composite keys:
+   - `(organization_id, monitor_id) REFERENCES monitors(organization_id, id)`
+   - `(organization_id, heartbeat_monitor_id) REFERENCES heartbeat_monitors(organization_id, id)`
+   - `(organization_id, first_failure_result_id) REFERENCES check_results(organization_id, id)`
+   - `(organization_id, recovery_result_id) REFERENCES check_results(organization_id, id)`
+3. **RLS Definer Policy Coexistence:** To prevent bypass of `FORCE ROW LEVEL SECURITY` while allowing atomic background worker claims across tenants, definer functions (`claim_missed_heartbeats`, `lookup_heartbeat_by_token_hash`) are owned by `clientpulse_definer` with explicit RLS definer policies (`heartbeat_monitors_definer_policy`, `monitors_definer_policy`). Runtime users cannot assume this definer role.
+4. **Append-Only Immutable Event Log:** `notification_events` rows are strictly append-only. UPDATE and DELETE privileges are revoked from the application role. Deterministic idempotency keys prevent duplicate notification spam during flapping or repeated checks.
+

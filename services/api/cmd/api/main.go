@@ -72,6 +72,9 @@ func main() {
 		assetRepo := repository.NewAssetRepository(db.Pool)
 		monitorRepo := repository.NewMonitorRepository(db.Pool)
 		resultRepo := repository.NewCheckResultRepository(db.Pool)
+		heartbeatRepo := repository.NewHeartbeatRepository(db.Pool)
+		incidentRepo := repository.NewIncidentRepository(db.Pool)
+		eventRepo := repository.NewNotificationEventRepository(db.Pool)
 		ssrfGuard := ssrf.NewGuard(nil)
 		chk := checker.NewChecker(ssrfGuard, "api-manual-worker")
 
@@ -96,6 +99,8 @@ func main() {
 		deps.ClientHdr = server.NewClientHandler(clientRepo, auditRepo)
 		deps.AssetHdr = server.NewAssetHandler(assetRepo, auditRepo, ssrfGuard, cfg.AppEnv)
 		deps.MonitorHdr = server.NewMonitorHandler(monitorRepo, resultRepo, assetRepo, auditRepo, chk, ssrfGuard)
+		deps.HeartbeatHdr = server.NewHeartbeatHandler(heartbeatRepo, cfg, log)
+		deps.IncidentHdr = server.NewIncidentHandler(incidentRepo, eventRepo, log)
 		deps.AuthMiddleware = server.NewAuthMiddleware(sessionRepo, userRepo, cfg)
 		deps.TenantMiddleware = server.NewTenantMiddleware(orgRepo, sessionRepo)
 	}

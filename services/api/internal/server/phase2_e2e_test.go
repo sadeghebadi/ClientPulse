@@ -62,10 +62,15 @@ func TestPhase2EndToEndScheduledWorkflow(t *testing.T) {
 
 	// Launch real monitoring scheduler daemon in background
 	workerID := "e2e-scheduler-worker"
+	hbRepo := repository.NewHeartbeatRepository(db.Pool)
+	incRepo := repository.NewIncidentRepository(db.Pool)
+
 	sched := worker.NewScheduler(
 		db.Pool,
 		monitorRepo,
 		resultRepo,
+		hbRepo,
+		incRepo,
 		ssrfGuard,
 		worker.SchedulerConfig{
 			WorkerID:    workerID,

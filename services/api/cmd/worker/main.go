@@ -77,12 +77,16 @@ func main() {
 	// Set up monitoring repositories and scheduler
 	monitorRepo := repository.NewMonitorRepository(db.Pool)
 	resultRepo := repository.NewCheckResultRepository(db.Pool)
+	heartbeatRepo := repository.NewHeartbeatRepository(db.Pool)
+	incidentRepo := repository.NewIncidentRepository(db.Pool)
 	ssrfGuard := ssrf.NewGuard(nil)
 
 	scheduler := worker.NewScheduler(
 		db.Pool,
 		monitorRepo,
 		resultRepo,
+		heartbeatRepo,
+		incidentRepo,
 		ssrfGuard,
 		worker.SchedulerConfig{
 			WorkerID:      workerID,

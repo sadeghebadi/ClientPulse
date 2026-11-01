@@ -29,6 +29,8 @@ import {
   RotateCcw,
   AlertTriangle,
   ExternalLink,
+  Radio,
+  AlertOctagon,
 } from "lucide-react";
 import { MetricCard } from "@/components/ui/MetricCard";
 import { Badge } from "@/components/ui/Badge";
@@ -68,6 +70,11 @@ interface DashboardStats {
   monitors_pending: number;
   monitors_paused: number;
   monitors_unknown?: number;
+  open_incidents?: number;
+  total_heartbeats?: number;
+  heartbeats_healthy?: number;
+  heartbeats_missed?: number;
+  heartbeats_pending?: number;
   recent_checks: RecentCheck[];
 }
 
@@ -177,16 +184,47 @@ export default function Home() {
                   {t.createMonitor}
                 </Button>
               </Link>
+              <Link href="/heartbeats/new">
+                <Button size="sm" variant="secondary" icon={<Radio className="w-4 h-4" />}>
+                  {t.createHeartbeat}
+                </Button>
+              </Link>
             </div>
           </div>
 
           {error && <ErrorState error={error} onRetry={reloadDashboardData} />}
 
+          {/* Active Incidents Alert Banner */}
+          {stats && (stats.open_incidents || 0) > 0 && (
+            <div className="bg-rose-50 border-2 border-rose-200 rounded-2xl p-4 sm:p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-rose-600 text-white rounded-xl shadow-sm">
+                  <AlertOctagon className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-rose-950">
+                    {stats.open_incidents} {t.openIncidents}
+                  </h3>
+                  <p className="text-xs text-rose-700 mt-0.5">
+                    {isRTL
+                      ? "یک یا چند هدف مانیتورینگ یا هارت‌بیت دچار قطعی تأییدشده هستند و نیاز به رسیدگی دارند."
+                      : "One or more monitors or heartbeats are currently down or missed and require attention."}
+                  </p>
+                </div>
+              </div>
+              <Link href="/incidents?status=open">
+                <Button size="sm" variant="danger">
+                  {t.incidents}
+                </Button>
+              </Link>
+            </div>
+          )}
+
           {/* Section 1: Real Summary Metrics Grid */}
           {loading ? (
             <MetricSkeleton />
           ) : (
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 sm:gap-6">
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 sm:gap-6">
               <MetricCard
                 title={t.totalClients}
                 value={stats ? stats.total_clients : 0}
@@ -218,6 +256,22 @@ export default function Home() {
                 href="/monitors?status=down"
                 trendColor="rose"
                 actionText={t.statusDown}
+              />
+              <MetricCard
+                title={t.openIncidents}
+                value={stats ? stats.open_incidents || 0 : 0}
+                icon={<AlertTriangle className="w-5 h-5" />}
+                href="/incidents?status=open"
+                trendColor={(stats?.open_incidents || 0) > 0 ? "rose" : "emerald"}
+                actionText={t.incidents}
+              />
+              <MetricCard
+                title={t.heartbeats}
+                value={stats ? stats.total_heartbeats || 0 : 0}
+                icon={<Radio className="w-5 h-5" />}
+                href="/heartbeats"
+                trendColor="indigo"
+                actionText={t.heartbeats}
               />
             </div>
           )}

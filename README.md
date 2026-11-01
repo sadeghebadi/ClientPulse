@@ -177,7 +177,7 @@ clientpulse/
 │           ├── health/          # Liveness, readiness, worker health handlers
 │           ├── logger/          # Structured JSON logging (slog) with Request ID
 │           ├── migrate/         # SQL migration engine
-│           ├── repository/      # RLS-enforced repositories (Client, Asset, Monitor, Results)
+│           ├── repository/      # RLS-enforced repositories (Client, Asset, Monitor, Results, Heartbeats, Incidents, Notification Events)
 │           ├── server/          # HTTP server, routing, RBAC, CSRF, auth & verified email middlewares
 │           ├── service/         # Auth & Organization domain logic
 │           ├── ssrf/            # Dedicated SSRF guard, DNS inspection & IP pinning
@@ -203,5 +203,6 @@ clientpulse/
 - **Phase 0 — Repository Audit & Foundation:** ✅ COMPLETE
 - **Phase 1 — Auth & Multi-Tenancy:** ✅ COMPLETE
 - **Phase 2 — Clients, Assets & Monitoring Core (TASK-003 & TASK-003.1):** ✅ COMPLETE & AUDITED
-- **Phase 3 — Incidents & Heartbeats:** ⏳ NEXT UPCOMING PHASE
+- **Phase 3 — Incidents & Heartbeats (TASK-004):** ✅ COMPLETE & AUDITED
+- **Phase 4 — Maintenance Windows, Status Pages & Client Reports:** ⏳ NEXT UPCOMING PHASE
 

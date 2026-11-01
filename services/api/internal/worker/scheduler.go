@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"sync"
@@ -10,6 +11,7 @@ import (
 	"clientpulse/services/api/internal/checker"
 	"clientpulse/services/api/internal/repository"
 	"clientpulse/services/api/internal/ssrf"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -24,6 +26,8 @@ type Scheduler struct {
 	pool          *pgxpool.Pool
 	monitorRepo   *repository.MonitorRepository
 	resultRepo    *repository.CheckResultRepository
+	heartbeatRepo *repository.HeartbeatRepository
+	incidentRepo  *repository.IncidentRepository
 	checker       *checker.Checker
 	workerID      string
 	concurrency   int
@@ -36,6 +40,8 @@ func NewScheduler(
 	pool *pgxpool.Pool,
 	monitorRepo *repository.MonitorRepository,
 	resultRepo *repository.CheckResultRepository,
+	heartbeatRepo *repository.HeartbeatRepository,
+	incidentRepo *repository.IncidentRepository,
 	guard *ssrf.Guard,
 	cfg SchedulerConfig,
 	logger *slog.Logger,
@@ -60,6 +66,8 @@ func NewScheduler(
 		pool:          pool,
 		monitorRepo:   monitorRepo,
 		resultRepo:    resultRepo,
+		heartbeatRepo: heartbeatRepo,
+		incidentRepo:  incidentRepo,
 		checker:       chk,
 		workerID:      cfg.WorkerID,
 		concurrency:   cfg.Concurrency,
@@ -127,7 +135,7 @@ func (s *Scheduler) Run(ctx context.Context) error {
 			go runPrune()
 
 		case <-ticker.C:
-			// Claim due jobs
+			// Claim due website / API monitoring jobs
 			claimBatchSize := s.concurrency
 			claimCtx, claimCancel := context.WithTimeout(ctx, 5*time.Second)
 			jobs, err := s.monitorRepo.ClaimDueMonitors(claimCtx, s.workerID, claimBatchSize, 60)
@@ -137,33 +145,97 @@ func (s *Scheduler) Run(ctx context.Context) error {
 				if ctx.Err() == nil {
 					s.logger.Warn("failed to claim due monitors", "error", err)
 				}
-				continue
-			}
+			} else if len(jobs) > 0 {
+				s.logger.Debug("claimed due monitoring jobs", "count", len(jobs))
 
-			if len(jobs) == 0 {
-				continue
-			}
+				for _, job := range jobs {
+					// Acquire concurrency slot
+					select {
+					case sem <- struct{}{}:
+					case <-ctx.Done():
+						return nil
+					}
 
-			s.logger.Debug("claimed due monitoring jobs", "count", len(jobs))
-
-			for _, job := range jobs {
-				// Acquire concurrency slot
-				select {
-				case sem <- struct{}{}:
-				case <-ctx.Done():
-					return nil
+					wg.Add(1)
+					go func(j *repository.ClaimedMonitorJob) {
+						defer func() {
+							<-sem
+							wg.Done()
+						}()
+						s.processJob(ctx, j)
+					}(job)
 				}
+			}
 
-				wg.Add(1)
-				go func(j *repository.ClaimedMonitorJob) {
-					defer func() {
-						<-sem
-						wg.Done()
-					}()
-					s.processJob(ctx, j)
-				}(job)
+			// Claim and process overdue heartbeat monitors
+			if s.heartbeatRepo != nil && s.incidentRepo != nil {
+				hbClaimCtx, hbClaimCancel := context.WithTimeout(ctx, 5*time.Second)
+				hbJobs, hbErr := s.heartbeatRepo.ClaimMissedHeartbeats(hbClaimCtx, s.workerID, 50, 60)
+				hbClaimCancel()
+
+				if hbErr != nil {
+					if ctx.Err() == nil {
+						s.logger.Warn("failed to claim missed heartbeats", "error", hbErr)
+					}
+				} else if len(hbJobs) > 0 {
+					s.logger.Info("claimed overdue heartbeats for incident handling", "count", len(hbJobs))
+					for _, hbJob := range hbJobs {
+						s.handleMissedHeartbeat(ctx, hbJob)
+					}
+				}
 			}
 		}
+	}
+}
+
+// handleMissedHeartbeat transitions a missed heartbeat monitor and opens a persistent incident.
+func (s *Scheduler) handleMissedHeartbeat(ctx context.Context, job *repository.ClaimedHeartbeatJob) {
+	hbCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	err := repository.WithTenantTx(hbCtx, s.pool, job.OrganizationID, func(tx pgx.Tx) error {
+		firstFailure := time.Now().UTC()
+		if job.NextExpectedAt != nil {
+			firstFailure = *job.NextExpectedAt
+		}
+
+		inc, created, err := s.incidentRepo.CreateHeartbeatIncidentTx(
+			hbCtx, tx, job.OrganizationID, job.ID,
+			firstFailure, time.Now().UTC(),
+			"heartbeat_missed",
+			"Heartbeat ping was not received before deadline",
+		)
+		if err != nil {
+			return err
+		}
+
+		if created && inc != nil {
+			idempKey := fmt.Sprintf("hb_missed:%s:%d", job.ID, firstFailure.Unix())
+			_, err = tx.Exec(hbCtx, `
+				INSERT INTO notification_events (
+					organization_id, event_type, incident_id, heartbeat_monitor_id,
+					client_id, idempotency_key, payload, status, created_at
+				)
+				VALUES ($1, 'heartbeat.missed', $2, $3, $4, $5, $6, 'pending', NOW())
+				ON CONFLICT (idempotency_key) DO NOTHING
+			`, job.OrganizationID, inc.ID, job.ID, job.ClientID, idempKey, map[string]interface{}{
+				"heartbeat_id":   job.ID,
+				"heartbeat_name": job.Name,
+				"client_id":      job.ClientID,
+				"incident_id":    inc.ID,
+				"missed_at":      firstFailure.Format(time.RFC3339),
+			})
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+
+	if err != nil {
+		s.logger.Error("failed to process missed heartbeat", "heartbeat_id", job.ID, "error", err)
+	} else {
+		s.logger.Warn("missed heartbeat incident opened", "heartbeat_id", job.ID, "name", job.Name)
 	}
 }
 
@@ -193,7 +265,7 @@ func (s *Scheduler) processJob(ctx context.Context, job *repository.ClaimedMonit
 	persistCtx, persistCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer persistCancel()
 
-	_, err := s.resultRepo.CreateCheckResult(persistCtx, repository.CreateCheckResultParams{
+	savedResult, err := s.resultRepo.CreateCheckResult(persistCtx, repository.CreateCheckResultParams{
 		OrganizationID:   job.OrganizationID,
 		MonitorID:        job.ID,
 		ScheduledAt:      job.ScheduledAt,
@@ -222,15 +294,24 @@ func (s *Scheduler) processJob(ctx context.Context, job *repository.ClaimedMonit
 
 	// Update Monitor state and drift-free next check via state transition machine
 	isSuccess := execResult.Result == "success"
+	var checkResultID *string
+	if savedResult != nil {
+		checkResultID = &savedResult.ID
+	}
 
-	newMonitorStatus, updateErr := s.monitorRepo.RecordScheduledCheckOutcome(
+	newMonitorStatus, inc, updateErr := s.monitorRepo.RecordScheduledCheckOutcomeWithResult(
 		persistCtx,
-		job.OrganizationID,
-		job.ID,
-		isSuccess,
-		execResult.CompletedAt,
-		job.ScheduledAt,
-		job.IntervalSeconds,
+		repository.ScheduledCheckOutcomeParams{
+			OrganizationID:  job.OrganizationID,
+			MonitorID:       job.ID,
+			CheckSuccess:    isSuccess,
+			CompletedAt:     execResult.CompletedAt,
+			ScheduledAt:     job.ScheduledAt,
+			IntervalSeconds: job.IntervalSeconds,
+			CheckResultID:   checkResultID,
+			ErrorCategory:   execResult.ErrorCategory,
+			ErrorMessage:    execResult.ErrorMessage,
+		},
 	)
 	if updateErr != nil {
 		s.logger.Error("failed to update monitor after check", "monitor_id", job.ID, "error", updateErr)
@@ -242,6 +323,14 @@ func (s *Scheduler) processJob(ctx context.Context, job *repository.ClaimedMonit
 			"status", newMonitorStatus,
 			"latency_ms", execResult.LatencyMs,
 		)
+		if inc != nil {
+			s.logger.Warn("incident status changed",
+				"monitor_id", job.ID,
+				"incident_id", inc.ID,
+				"status", inc.Status,
+				"category", inc.FailureCategory,
+			)
+		}
 	}
 }
 

@@ -18,6 +18,8 @@ import {
   LayoutDashboard,
   Shield,
   Languages,
+  Radio,
+  AlertTriangle,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
 import { useI18n } from "@/lib/i18n";
@@ -57,6 +59,18 @@ export function AppLayout({ children }: AppLayoutProps) {
       href: "/monitors",
       icon: <Activity className="w-4 h-4" />,
       active: pathname.startsWith("/monitors"),
+    },
+    {
+      label: t.heartbeats,
+      href: "/heartbeats",
+      icon: <Radio className="w-4 h-4" />,
+      active: pathname.startsWith("/heartbeats"),
+    },
+    {
+      label: t.incidents,
+      href: "/incidents",
+      icon: <AlertTriangle className="w-4 h-4" />,
+      active: pathname.startsWith("/incidents"),
     },
     {
       label: t.members,

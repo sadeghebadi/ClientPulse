@@ -212,6 +212,11 @@ type DashboardStats struct {
 	MonitorsPending       int            `json:"monitors_pending"`
 	MonitorsPaused        int            `json:"monitors_paused"`
 	MonitorsUnknown       int            `json:"monitors_unknown"`
+	OpenIncidents         int            `json:"open_incidents"`
+	TotalHeartbeats       int            `json:"total_heartbeats"`
+	HeartbeatsHealthy     int            `json:"heartbeats_healthy"`
+	HeartbeatsMissed      int            `json:"heartbeats_missed"`
+	HeartbeatsPending     int            `json:"heartbeats_pending"`
 	RecentChecks          []*CheckResult `json:"recent_checks"`
 }
 
@@ -230,4 +235,94 @@ type CheckAggregateHourly struct {
 	CreatedAt        time.Time `json:"created_at"`
 	UpdatedAt        time.Time `json:"updated_at"`
 }
+
+// HeartbeatMonitor represents a cron, background worker, or backup heartbeat monitor.
+type HeartbeatMonitor struct {
+	ID                      string     `json:"id"`
+	OrganizationID          string     `json:"organization_id"`
+	ClientID                string     `json:"client_id"`
+	AssetID                 *string    `json:"asset_id,omitempty"`
+	Name                    string     `json:"name"`
+	Description             *string    `json:"description,omitempty"`
+	ExpectedIntervalSeconds int        `json:"expected_interval_seconds"`
+	GracePeriodSeconds      int        `json:"grace_period_seconds"`
+	Status                  string     `json:"status"`
+	IsActive                bool       `json:"is_active"`
+	TokenHash               string     `json:"-"`
+	LastReceivedAt          *time.Time `json:"last_received_at,omitempty"`
+	NextExpectedAt          *time.Time `json:"next_expected_at,omitempty"`
+	LeaseAcquiredAt         *time.Time `json:"-"`
+	LeaseWorkerID           *string    `json:"-"`
+	CreatedAt               time.Time  `json:"created_at"`
+	UpdatedAt               time.Time  `json:"updated_at"`
+	ArchivedAt              *time.Time `json:"archived_at,omitempty"`
+
+	// Joined metadata
+	ClientName string  `json:"client_name,omitempty"`
+	AssetName  *string `json:"asset_name,omitempty"`
+}
+
+// ClaimedHeartbeatJob represents an overdue heartbeat claimed by the scheduler for incident handling.
+type ClaimedHeartbeatJob struct {
+	ID                      string     `json:"id"`
+	OrganizationID          string     `json:"organization_id"`
+	ClientID                string     `json:"client_id"`
+	AssetID                 *string    `json:"asset_id,omitempty"`
+	Name                    string     `json:"name"`
+	ExpectedIntervalSeconds int        `json:"expected_interval_seconds"`
+	GracePeriodSeconds      int        `json:"grace_period_seconds"`
+	Status                  string     `json:"status"`
+	LastReceivedAt          *time.Time `json:"last_received_at,omitempty"`
+	NextExpectedAt          *time.Time `json:"next_expected_at,omitempty"`
+}
+
+// Incident represents an operational outage or missed heartbeat.
+type Incident struct {
+	ID                   string     `json:"id"`
+	OrganizationID       string     `json:"organization_id"`
+	MonitorID            *string    `json:"monitor_id,omitempty"`
+	HeartbeatMonitorID   *string    `json:"heartbeat_monitor_id,omitempty"`
+	FirstFailureAt       time.Time  `json:"first_failure_at"`
+	ConfirmedAt          time.Time  `json:"confirmed_at"`
+	ResolvedAt           *time.Time `json:"resolved_at,omitempty"`
+	Status               string     `json:"status"`
+	FailureCategory      string     `json:"failure_category"`
+	FirstFailureResultID *string    `json:"first_failure_result_id,omitempty"`
+	RecoveryResultID     *string    `json:"recovery_result_id,omitempty"`
+	AcknowledgedAt       *time.Time `json:"acknowledged_at,omitempty"`
+	AcknowledgedBy       *string    `json:"acknowledged_by,omitempty"`
+	NotificationState    string     `json:"notification_state"`
+	DurationSeconds      *int       `json:"duration_seconds,omitempty"`
+	Summary              *string    `json:"summary,omitempty"`
+	CreatedAt            time.Time  `json:"created_at"`
+	UpdatedAt            time.Time  `json:"updated_at"`
+
+	// Joined metadata
+	TargetType             string       `json:"target_type"` // "monitor" or "heartbeat"
+	TargetName             string       `json:"target_name,omitempty"`
+	ClientID               string       `json:"client_id,omitempty"`
+	ClientName             string       `json:"client_name,omitempty"`
+	AssetID                *string      `json:"asset_id,omitempty"`
+	AssetName              *string      `json:"asset_name,omitempty"`
+	AcknowledgedByName     *string      `json:"acknowledged_by_name,omitempty"`
+	AcknowledgedByEmail    *string      `json:"acknowledged_by_email,omitempty"`
+	FirstFailureResult     *CheckResult `json:"first_failure_result,omitempty"`
+	RecoveryResult         *CheckResult `json:"recovery_result,omitempty"`
+}
+
+// NotificationEvent represents an immutable, persistent event ready for notification delivery.
+type NotificationEvent struct {
+	ID                 string                 `json:"id"`
+	OrganizationID     string                 `json:"organization_id"`
+	EventType          string                 `json:"event_type"`
+	IncidentID         *string                `json:"incident_id,omitempty"`
+	MonitorID          *string                `json:"monitor_id,omitempty"`
+	HeartbeatMonitorID *string                `json:"heartbeat_monitor_id,omitempty"`
+	ClientID           *string                `json:"client_id,omitempty"`
+	IdempotencyKey     string                 `json:"idempotency_key"`
+	Payload            map[string]interface{} `json:"payload"`
+	Status             string                 `json:"status"`
+	CreatedAt          time.Time              `json:"created_at"`
+}
+
 

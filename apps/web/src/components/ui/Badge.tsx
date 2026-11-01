@@ -19,6 +19,13 @@ export type BadgeVariant =
   | "pending"
   | "paused"
   | "unknown"
+  | "healthy"
+  | "missed"
+  | "late"
+  | "revoked"
+  | "open"
+  | "resolved"
+  | "acknowledged"
   | "active"
   | "archived"
   | "production"
@@ -110,6 +117,76 @@ export function Badge({ variant, label, showIcon = true, className = "" }: Badge
         >
           {showIcon && <HelpCircle className="w-3.5 h-3.5 text-slate-400" />}
           <span>{label || t.statusUnknown}</span>
+        </span>
+      );
+
+    case "healthy":
+      return (
+        <span
+          className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 ${className}`}
+        >
+          {showIcon && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />}
+          <span>{label || t.statusHealthy}</span>
+        </span>
+      );
+
+    case "missed":
+      return (
+        <span
+          className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-rose-50 text-rose-700 border border-rose-200 ${className}`}
+        >
+          {showIcon && <XCircle className="w-3.5 h-3.5 text-rose-600" />}
+          <span>{label || t.statusMissed}</span>
+        </span>
+      );
+
+    case "late":
+      return (
+        <span
+          className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-800 border border-amber-300 ${className}`}
+        >
+          {showIcon && <AlertCircle className="w-3.5 h-3.5 text-amber-600" />}
+          <span>{label || t.statusLate}</span>
+        </span>
+      );
+
+    case "revoked":
+      return (
+        <span
+          className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-600 border border-slate-300 ${className}`}
+        >
+          {showIcon && <ShieldAlert className="w-3.5 h-3.5 text-slate-500" />}
+          <span>{label || t.statusRevoked}</span>
+        </span>
+      );
+
+    case "open":
+      return (
+        <span
+          className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold uppercase tracking-wide bg-rose-100 text-rose-800 border border-rose-300 ${className}`}
+        >
+          {showIcon && <XCircle className="w-3.5 h-3.5 text-rose-600" />}
+          <span>{label || t.statusOpen}</span>
+        </span>
+      );
+
+    case "resolved":
+      return (
+        <span
+          className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 ${className}`}
+        >
+          {showIcon && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />}
+          <span>{label || t.statusResolved}</span>
+        </span>
+      );
+
+    case "acknowledged":
+      return (
+        <span
+          className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200 ${className}`}
+        >
+          {showIcon && <Clock className="w-3.5 h-3.5 text-blue-600" />}
+          <span>{label || t.statusAcknowledged}</span>
         </span>
       );
 

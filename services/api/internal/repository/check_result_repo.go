@@ -213,6 +213,30 @@ func (r *CheckResultRepository) GetDashboardStats(ctx context.Context, orgID str
 			}
 		}
 
+		// Open incidents count
+		_ = tx.QueryRow(ctx, "SELECT COUNT(*) FROM incidents WHERE organization_id = $1 AND status = 'open'", orgID).Scan(&stats.OpenIncidents)
+
+		// Heartbeats counts
+		hbRows, err := tx.Query(ctx, "SELECT status, COUNT(*) FROM heartbeat_monitors WHERE organization_id = $1 AND is_active = true AND archived_at IS NULL GROUP BY status", orgID)
+		if err == nil {
+			defer hbRows.Close()
+			for hbRows.Next() {
+				var status string
+				var count int
+				if err := hbRows.Scan(&status, &count); err == nil {
+					stats.TotalHeartbeats += count
+					switch status {
+					case "healthy":
+						stats.HeartbeatsHealthy = count
+					case "missed":
+						stats.HeartbeatsMissed = count
+					case "pending":
+						stats.HeartbeatsPending = count
+					}
+				}
+			}
+		}
+
 		// Recent 10 check results
 		recentQuery := `
 			SELECT id, organization_id, monitor_id, scheduled_at, started_at, completed_at,

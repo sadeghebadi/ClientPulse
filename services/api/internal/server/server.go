@@ -22,6 +22,8 @@ type Dependencies struct {
 	ClientHdr        *ClientHandler
 	AssetHdr         *AssetHandler
 	MonitorHdr       *MonitorHandler
+	HeartbeatHdr     *HeartbeatHandler
+	IncidentHdr      *IncidentHandler
 	AuthMiddleware   *AuthMiddleware
 	TenantMiddleware *TenantMiddleware
 }
@@ -198,6 +200,32 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 		mux.Handle("POST /api/v1/monitors/{id}/test", sensitiveTenantScoped(s.deps.MonitorHdr.TestNow, tenant.RoleMember))
 		mux.Handle("GET /api/v1/monitors/{id}/history", tenantScoped(s.deps.MonitorHdr.History, ""))
 		mux.Handle("GET /api/v1/dashboard/stats", tenantScoped(s.deps.MonitorHdr.DashboardStats, ""))
+	}
+
+	// 10. Heartbeat Public Ping Endpoint (Unauthenticated, rate limited)
+	if s.deps.HeartbeatHdr != nil {
+		mux.HandleFunc("POST /api/v1/heartbeat-pings/{token}", s.deps.HeartbeatHdr.Ping)
+	}
+
+	// 11. Heartbeat Management Routes (Tenant-scoped)
+	if s.deps.HeartbeatHdr != nil {
+		mux.Handle("GET /api/v1/heartbeats", tenantScoped(s.deps.HeartbeatHdr.List, ""))
+		mux.Handle("POST /api/v1/heartbeats", sensitiveTenantScoped(s.deps.HeartbeatHdr.Create, tenant.RoleMember))
+		mux.Handle("GET /api/v1/heartbeats/{id}", tenantScoped(s.deps.HeartbeatHdr.Get, ""))
+		mux.Handle("PATCH /api/v1/heartbeats/{id}", sensitiveTenantScoped(s.deps.HeartbeatHdr.Update, tenant.RoleMember))
+		mux.Handle("POST /api/v1/heartbeats/{id}/pause", sensitiveTenantScoped(s.deps.HeartbeatHdr.Pause, tenant.RoleMember))
+		mux.Handle("POST /api/v1/heartbeats/{id}/resume", sensitiveTenantScoped(s.deps.HeartbeatHdr.Resume, tenant.RoleMember))
+		mux.Handle("POST /api/v1/heartbeats/{id}/rotate-token", sensitiveTenantScoped(s.deps.HeartbeatHdr.RotateToken, tenant.RoleAdmin))
+		mux.Handle("POST /api/v1/heartbeats/{id}/revoke-token", sensitiveTenantScoped(s.deps.HeartbeatHdr.RevokeToken, tenant.RoleAdmin))
+		mux.Handle("DELETE /api/v1/heartbeats/{id}", sensitiveTenantScoped(s.deps.HeartbeatHdr.Delete, tenant.RoleAdmin))
+	}
+
+	// 12. Incident Management Routes (Tenant-scoped)
+	if s.deps.IncidentHdr != nil {
+		mux.Handle("GET /api/v1/incidents", tenantScoped(s.deps.IncidentHdr.List, ""))
+		mux.Handle("GET /api/v1/incidents/{id}", tenantScoped(s.deps.IncidentHdr.Get, ""))
+		mux.Handle("POST /api/v1/incidents/{id}/acknowledge", sensitiveTenantScoped(s.deps.IncidentHdr.Acknowledge, tenant.RoleMember))
+		mux.Handle("GET /api/v1/monitors/{id}/uptime", tenantScoped(s.deps.IncidentHdr.Uptime, ""))
 	}
 }
 

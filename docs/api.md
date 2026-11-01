@@ -410,4 +410,91 @@ Monitors perform automated availability, latency, SSL, and HTTP assertions again
   - `paused_monitors`
   - `unknown_monitors`
   - `ssl_expiring_soon` (certificates expiring within 30 days)
+  - `open_incidents`: Count of currently unresolved incidents
+  - `total_heartbeats`, `heartbeats_healthy`, `heartbeats_missed`, `heartbeats_pending`
   - `recent_results`: Last 10 check results across all tenant monitors.
+
+---
+
+## 10. Heartbeat Monitoring Endpoints
+
+### Public Heartbeat Ping
+`POST /api/v1/heartbeat-pings/{token}`
+- **Unauthenticated** public endpoint for cron jobs, backup scripts, and background daemons.
+- Caller identity and organization are resolved strictly from the SHA-256 hash digest of `{token}`.
+- Max payload 1 KB (empty or ignored); request timeout 5 seconds.
+- IP rate-limited (max 120 pings / min / IP).
+- Invalid, revoked, or archived tokens return `404 Not Found` to prevent timing enumeration.
+- When pinged while in `missed` status, automatically resolves any associated open incident and restores status to `healthy`.
+
+### List Heartbeat Monitors
+`GET /api/v1/heartbeats?client_id={id}&status={status}&search={query}&limit=50&offset=0`
+- Authenticated, organization-scoped.
+- Filterable by client, status (`healthy`, `missed`, `late`, `pending`, `paused`, `revoked`), and name query.
+
+### Create Heartbeat Monitor
+`POST /api/v1/heartbeats`
+- Authenticated, requires `member`, `admin`, or `owner` role.
+- Parameters: `client_id` (required), `asset_id` (optional, must belong to same client), `name` (required), `description`, `expected_interval_seconds` (60 to 2,592,000), `grace_period_seconds` (optional, defaults to 20% of interval with minimum 60s).
+- Generates 32-byte cryptographically secure token. Plaintext token and copyable snippets (`bash_snippet`, `powershell_snippet`) are returned **only once** upon creation.
+
+### Get Heartbeat Monitor Details
+`GET /api/v1/heartbeats/{heartbeatID}`
+- Returns full monitor status, timing metadata (`last_received_at`, `next_expected_at`), client name, and asset info. Never exposes token plaintext or hash.
+
+### Update Heartbeat Monitor
+`PUT /api/v1/heartbeats/{heartbeatID}`
+- Requires `member`, `admin`, or `owner` role.
+- Updates name, description, expected interval, and grace period.
+
+### Rotate Heartbeat Token
+`POST /api/v1/heartbeats/{heartbeatID}/rotate-token`
+- Requires `admin` or `owner` role.
+- Generates a new 32-byte cryptographic token and immediately invalidates the previous token digest.
+- Returns the new secret token and updated ready-to-copy snippets once.
+
+### Revoke Heartbeat Token
+`POST /api/v1/heartbeats/{heartbeatID}/revoke-token`
+- Requires `admin` or `owner` role.
+- Sets token hash to empty string and sets status to `revoked`. Future pings are immediately rejected.
+
+### Pause Heartbeat Monitor
+`POST /api/v1/heartbeats/{heartbeatID}/pause`
+- Pauses missed-heartbeat scheduling (`is_active = false`, `status = paused`).
+
+### Resume Heartbeat Monitor
+`POST /api/v1/heartbeats/{heartbeatID}/resume`
+- Resumes monitoring (`is_active = true`, `status = pending`). Sets `next_expected_at = NOW() + expected_interval`.
+
+### Delete Heartbeat Monitor
+`DELETE /api/v1/heartbeats/{heartbeatID}`
+- Soft-deletes monitor (`is_active = false`, `archived_at = NOW()`).
+
+---
+
+## 11. Incident Management Endpoints
+
+### List Incidents
+`GET /api/v1/incidents?status={status}&target_type={monitor|heartbeat}&client_id={id}&limit=50&offset=0`
+- Returns paginated incidents filtered by status (`open`, `resolved`), target type, client, or acknowledgement state.
+- Includes joined target names, client details, downtime durations, and acknowledgement metadata.
+
+### Get Incident Details
+`GET /api/v1/incidents/{incidentID}`
+- Returns full incident entity with diagnostic data:
+  - Initial failure check result (HTTP status, error message, latency, TLS info)
+  - Recovery check result (HTTP status, latency, recovery timestamp)
+  - Append-only event timeline (`notification_events`) sorted chronologically.
+
+### Acknowledge Incident
+`POST /api/v1/incidents/{incidentID}/acknowledge`
+- Requires `member`, `admin`, or `owner` role.
+- Records acknowledging user ID and timestamp (`acknowledged_at`).
+- **Important:** Acknowledging an incident confirms human review but **does not resolve** the incident. Status remains `open` until recovery criteria are satisfied.
+- Generates append-only `incident.acknowledged` notification event.
+
+### Calculate Operational Uptime
+`GET /api/v1/monitors/{monitorID}/uptime?range=30d`
+- Calculates true operational uptime percentage over the requested window.
+- Excludes manual test checks and paused maintenance intervals.
+- Accounts for partial outages from `first_failure_at` through `resolved_at`.

@@ -411,24 +411,46 @@ func (r *MonitorRepository) ClaimDueMonitors(ctx context.Context, workerID strin
 	return jobs, rows.Err()
 }
 
+// ScheduledCheckOutcomeParams defines input parameters for recording the outcome of a scheduled check.
+type ScheduledCheckOutcomeParams struct {
+	OrganizationID  string
+	MonitorID       string
+	CheckSuccess    bool
+	CompletedAt     time.Time
+	ScheduledAt     time.Time
+	IntervalSeconds int
+	CheckResultID   *string
+	ErrorCategory   *string
+	ErrorMessage    *string
+}
+
 // RecordScheduledCheckOutcome updates monitor status based on check success/failure, tracks consecutive failures,
-// and schedules next_check_at with drift prevention & misfire policy.
-// State transitions:
-// - pending -> up (on first success)
-// - up -> suspected_down (on 1st consecutive failure)
-// - suspected_down -> down (on 2nd consecutive failure)
-// - down -> up (on recovery / success)
-// - paused -> remains paused (paused monitors are not marked down due to missing checks)
+// transitions monitor state, atomically opens/resolves incidents, and prevents duplicate alerts.
 func (r *MonitorRepository) RecordScheduledCheckOutcome(ctx context.Context, orgID, monitorID string, checkSuccess bool, completedAt, scheduledAt time.Time, intervalSeconds int) (string, error) {
+	status, _, err := r.RecordScheduledCheckOutcomeWithResult(ctx, ScheduledCheckOutcomeParams{
+		OrganizationID:  orgID,
+		MonitorID:       monitorID,
+		CheckSuccess:    checkSuccess,
+		CompletedAt:     completedAt,
+		ScheduledAt:     scheduledAt,
+		IntervalSeconds: intervalSeconds,
+	})
+	return status, err
+}
+
+// RecordScheduledCheckOutcomeWithResult updates monitor status and manages incident lifecycle and notification events.
+func (r *MonitorRepository) RecordScheduledCheckOutcomeWithResult(ctx context.Context, params ScheduledCheckOutcomeParams) (string, *Incident, error) {
 	now := time.Now().UTC()
 
-	nextCheck := scheduledAt.Add(time.Duration(intervalSeconds) * time.Second)
+	nextCheck := params.ScheduledAt.Add(time.Duration(params.IntervalSeconds) * time.Second)
 	if nextCheck.Before(now) {
-		nextCheck = now.Add(time.Duration(intervalSeconds) * time.Second)
+		nextCheck = now.Add(time.Duration(params.IntervalSeconds) * time.Second)
 	}
 
 	var calculatedStatus string
-	err := WithTenantTx(ctx, r.pool, orgID, func(tx pgx.Tx) error {
+	var resultingIncident *Incident
+
+	err := WithTenantTx(ctx, r.pool, params.OrganizationID, func(tx pgx.Tx) error {
 		var currentStatus string
 		var consecutiveFailures int
 		var isActive bool
@@ -438,7 +460,7 @@ func (r *MonitorRepository) RecordScheduledCheckOutcome(ctx context.Context, org
 			FROM monitors
 			WHERE id = $1 AND organization_id = $2
 			FOR UPDATE
-		`, monitorID, orgID).Scan(&currentStatus, &consecutiveFailures, &isActive)
+		`, params.MonitorID, params.OrganizationID).Scan(&currentStatus, &consecutiveFailures, &isActive)
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return ErrMonitorNotFound
@@ -457,20 +479,169 @@ func (r *MonitorRepository) RecordScheduledCheckOutcome(ctx context.Context, org
 				    lease_worker_id = NULL,
 				    updated_at = NOW()
 				WHERE id = $3 AND organization_id = $4
-			`, completedAt, nextCheck, monitorID, orgID)
+			`, params.CompletedAt, nextCheck, params.MonitorID, params.OrganizationID)
 			return err
 		}
 
 		newFailures := consecutiveFailures
-		if checkSuccess {
+		if params.CheckSuccess {
 			newFailures = 0
 			calculatedStatus = "up"
+
+			// If there was an open incident for this monitor, resolve it atomically
+			var openIncID string
+			var confirmedAt time.Time
+			err := tx.QueryRow(ctx, `
+				SELECT id, confirmed_at
+				FROM incidents
+				WHERE monitor_id = $1 AND organization_id = $2 AND status = 'open'
+				FOR UPDATE
+			`, params.MonitorID, params.OrganizationID).Scan(&openIncID, &confirmedAt)
+
+			if err == nil {
+				durationSec := int(params.CompletedAt.Sub(confirmedAt).Seconds())
+				if durationSec < 0 {
+					durationSec = 0
+				}
+
+				var inc Incident
+				err = tx.QueryRow(ctx, `
+					UPDATE incidents
+					SET status = 'resolved',
+					    resolved_at = $1,
+					    recovery_result_id = $2,
+					    duration_seconds = $3,
+					    updated_at = NOW()
+					WHERE id = $4 AND organization_id = $5
+					RETURNING id, organization_id, monitor_id, heartbeat_monitor_id, first_failure_at,
+					          confirmed_at, resolved_at, status, failure_category, first_failure_result_id,
+					          recovery_result_id, acknowledged_at, acknowledged_by, notification_state,
+					          duration_seconds, summary, created_at, updated_at
+				`, params.CompletedAt, params.CheckResultID, durationSec, openIncID, params.OrganizationID).Scan(
+					&inc.ID, &inc.OrganizationID, &inc.MonitorID, &inc.HeartbeatMonitorID,
+					&inc.FirstFailureAt, &inc.ConfirmedAt, &inc.ResolvedAt, &inc.Status,
+					&inc.FailureCategory, &inc.FirstFailureResultID, &inc.RecoveryResultID,
+					&inc.AcknowledgedAt, &inc.AcknowledgedBy, &inc.NotificationState,
+					&inc.DurationSeconds, &inc.Summary, &inc.CreatedAt, &inc.UpdatedAt,
+				)
+				if err != nil {
+					return fmt.Errorf("failed to resolve incident: %w", err)
+				}
+				resultingIncident = &inc
+
+				// Generate persistent notification event: incident.resolved
+				idempKey := fmt.Sprintf("inc_res:%s:%d", inc.ID, params.CompletedAt.Unix())
+				_, err = tx.Exec(ctx, `
+					INSERT INTO notification_events (
+						organization_id, event_type, incident_id, monitor_id,
+						idempotency_key, payload, status, created_at
+					)
+					VALUES ($1, 'incident.resolved', $2, $3, $4, $5, 'pending', NOW())
+					ON CONFLICT (idempotency_key) DO NOTHING
+				`, params.OrganizationID, inc.ID, params.MonitorID, idempKey, map[string]interface{}{
+					"incident_id":   inc.ID,
+					"monitor_id":    params.MonitorID,
+					"resolved_at":   params.CompletedAt.Format(time.RFC3339),
+					"duration_sec":  durationSec,
+					"recovery_type": "scheduled_check_pass",
+				})
+				if err != nil {
+					return fmt.Errorf("failed to create incident.resolved event: %w", err)
+				}
+			} else if !errors.Is(err, pgx.ErrNoRows) {
+				return err
+			}
 		} else {
 			newFailures = consecutiveFailures + 1
 			if newFailures == 1 {
 				calculatedStatus = "suspected_down"
 			} else {
 				calculatedStatus = "down"
+
+				// Check if an open incident already exists to prevent duplicate open incidents
+				var existingIncID string
+				err := tx.QueryRow(ctx, `
+					SELECT id
+					FROM incidents
+					WHERE monitor_id = $1 AND organization_id = $2 AND status = 'open'
+				`, params.MonitorID, params.OrganizationID).Scan(&existingIncID)
+
+				if errors.Is(err, pgx.ErrNoRows) {
+					// No open incident exists - create one atomically
+					// Determine first failure timestamp and first failure check result
+					firstFailureAt := params.CompletedAt.Add(-time.Duration(params.IntervalSeconds) * time.Second)
+					firstResultID := params.CheckResultID
+
+					var prevFailAt time.Time
+					var prevResultID string
+					err := tx.QueryRow(ctx, `
+						SELECT completed_at, id
+						FROM check_results
+						WHERE monitor_id = $1 AND organization_id = $2 AND result != 'success' AND execution_type = 'scheduled'
+						ORDER BY created_at DESC
+						LIMIT 1 OFFSET 1
+					`, params.MonitorID, params.OrganizationID).Scan(&prevFailAt, &prevResultID)
+					if err == nil {
+						firstFailureAt = prevFailAt
+						firstResultID = &prevResultID
+					}
+
+					failCat := "http_failure"
+					if params.ErrorCategory != nil && *params.ErrorCategory != "" {
+						failCat = *params.ErrorCategory
+					}
+					var summary string
+					if params.ErrorMessage != nil {
+						summary = *params.ErrorMessage
+					}
+
+					var inc Incident
+					err = tx.QueryRow(ctx, `
+						INSERT INTO incidents (
+							organization_id, monitor_id, first_failure_at, confirmed_at, status,
+							failure_category, first_failure_result_id, notification_state, summary,
+							created_at, updated_at
+						)
+						VALUES ($1, $2, $3, $4, 'open', $5, $6, 'pending', $7, NOW(), NOW())
+						RETURNING id, organization_id, monitor_id, heartbeat_monitor_id, first_failure_at,
+						          confirmed_at, resolved_at, status, failure_category, first_failure_result_id,
+						          recovery_result_id, acknowledged_at, acknowledged_by, notification_state,
+						          duration_seconds, summary, created_at, updated_at
+					`, params.OrganizationID, params.MonitorID, firstFailureAt, params.CompletedAt, failCat, firstResultID, summary).Scan(
+						&inc.ID, &inc.OrganizationID, &inc.MonitorID, &inc.HeartbeatMonitorID,
+						&inc.FirstFailureAt, &inc.ConfirmedAt, &inc.ResolvedAt, &inc.Status,
+						&inc.FailureCategory, &inc.FirstFailureResultID, &inc.RecoveryResultID,
+						&inc.AcknowledgedAt, &inc.AcknowledgedBy, &inc.NotificationState,
+						&inc.DurationSeconds, &inc.Summary, &inc.CreatedAt, &inc.UpdatedAt,
+					)
+					if err != nil {
+						return fmt.Errorf("failed to create incident: %w", err)
+					}
+					resultingIncident = &inc
+
+					// Generate persistent notification event: incident.opened
+					idempKey := fmt.Sprintf("inc_open:%s:%d", inc.ID, params.CompletedAt.Unix())
+					_, err = tx.Exec(ctx, `
+						INSERT INTO notification_events (
+							organization_id, event_type, incident_id, monitor_id,
+							idempotency_key, payload, status, created_at
+						)
+						VALUES ($1, 'incident.opened', $2, $3, $4, $5, 'pending', NOW())
+						ON CONFLICT (idempotency_key) DO NOTHING
+					`, params.OrganizationID, inc.ID, params.MonitorID, idempKey, map[string]interface{}{
+						"incident_id":      inc.ID,
+						"monitor_id":       params.MonitorID,
+						"first_failure_at": firstFailureAt.Format(time.RFC3339),
+						"confirmed_at":     params.CompletedAt.Format(time.RFC3339),
+						"failure_category": failCat,
+						"summary":          summary,
+					})
+					if err != nil {
+						return fmt.Errorf("failed to create incident.opened event: %w", err)
+					}
+				} else if err != nil {
+					return err
+				}
 			}
 		}
 
@@ -485,14 +656,14 @@ func (r *MonitorRepository) RecordScheduledCheckOutcome(ctx context.Context, org
 			    updated_at = NOW()
 			WHERE id = $5 AND organization_id = $6
 		`
-		_, err = tx.Exec(ctx, query, calculatedStatus, newFailures, completedAt, nextCheck, monitorID, orgID)
+		_, err = tx.Exec(ctx, query, calculatedStatus, newFailures, params.CompletedAt, nextCheck, params.MonitorID, params.OrganizationID)
 		return err
 	})
 
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
-	return calculatedStatus, nil
+	return calculatedStatus, resultingIncident, nil
 }
 
 // UpdateAfterCheck updates monitor status directly (for backward compatibility).

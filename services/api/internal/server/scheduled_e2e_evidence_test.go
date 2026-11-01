@@ -135,7 +135,9 @@ func TestScheduledMonitoringEndToEndEvidence(t *testing.T) {
 		PollPeriod:    100 * time.Millisecond,
 		RetentionDays: 90,
 	}
-	sched := worker.NewScheduler(workerPool, workerMonitorRepo, workerResultRepo, guard, schedCfg, nil)
+	workerHbRepo := repository.NewHeartbeatRepository(workerPool)
+	workerIncRepo := repository.NewIncidentRepository(workerPool)
+	sched := worker.NewScheduler(workerPool, workerMonitorRepo, workerResultRepo, workerHbRepo, workerIncRepo, guard, schedCfg, nil)
 	sched.SetTestTransport(rewriter)
 
 	schedCtx, schedCancel := context.WithTimeout(ctx, 2*time.Second)
