@@ -41,7 +41,22 @@ func RequestID(next http.Handler) http.Handler {
 	})
 }
 
-// RequestLogger logs incoming HTTP requests with structured metadata.
+// SanitizeRequestPath redacts secret tokens from request paths (heartbeat pings, public report share tokens).
+func SanitizeRequestPath(path string) string {
+	if strings.HasPrefix(path, "/api/v1/heartbeat-pings/") {
+		return "/api/v1/heartbeat-pings/[REDACTED]"
+	}
+	if strings.HasPrefix(path, "/public/reports/") {
+		parts := strings.Split(strings.TrimPrefix(path, "/public/reports/"), "/")
+		if len(parts) > 1 && parts[1] != "" {
+			return "/public/reports/[REDACTED]/" + strings.Join(parts[1:], "/")
+		}
+		return "/public/reports/[REDACTED]"
+	}
+	return path
+}
+
+// RequestLogger logs incoming HTTP requests with structured metadata and token redaction.
 func RequestLogger(log *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -55,7 +70,7 @@ func RequestLogger(log *slog.Logger) func(http.Handler) http.Handler {
 
 			log.InfoContext(r.Context(), "http_request",
 				"method", r.Method,
-				"path", r.URL.Path,
+				"path", SanitizeRequestPath(r.URL.Path),
 				"status", rw.statusCode,
 				"duration_ms", duration.Milliseconds(),
 				"remote_addr", r.RemoteAddr,

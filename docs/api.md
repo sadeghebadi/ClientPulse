@@ -498,3 +498,140 @@ Monitors perform automated availability, latency, SSL, and HTTP assertions again
 - Calculates true operational uptime percentage over the requested window.
 - Excludes manual test checks and paused maintenance intervals.
 - Accounts for partial outages from `first_failure_at` through `resolved_at`.
+
+---
+
+## 12. Maintenance Activity Endpoints
+
+### List Maintenance Activities
+`GET /api/v1/maintenance-activities?client_id={id}&asset_id={id}&category={cat}&from={iso}&to={iso}&limit=50&offset=0`
+- Returns paginated list of maintenance work items.
+- Filterable by client, asset, category (`update`, `backup`, `bug_fix`, `performance`, `security_review`, `content_change`, `configuration`, `other`), and date range.
+
+### Create Maintenance Activity
+`POST /api/v1/maintenance-activities`
+- Requires `member`, `admin`, or `owner` role.
+- Body:
+  ```json
+  {
+    "client_id": "uuid",
+    "asset_id": "uuid (optional)",
+    "title": "Security update applied",
+    "description": "Updated WordPress core and WooCommerce plugins",
+    "category": "update",
+    "performed_at": "2026-10-15T10:00:00Z",
+    "duration_minutes": 45
+  }
+  ```
+- Validates client existence, optional asset ownership, non-negative duration, and title length.
+
+### Get Maintenance Activity
+`GET /api/v1/maintenance-activities/{id}`
+- Returns a single activity by ID with client, asset, and creator details.
+
+### Update Maintenance Activity
+`PATCH /api/v1/maintenance-activities/{id}`
+- Requires `member`, `admin`, or `owner` role.
+- If the activity falls within the period of an existing generated report, automatically creates an audit log entry (`maintenance_activity.updated_after_report`).
+- Historical report snapshots remain immutable.
+
+### Delete Maintenance Activity
+`DELETE /api/v1/maintenance-activities/{id}`
+- Requires `member`, `admin`, or `owner` role.
+- Removes activity record from database.
+
+---
+
+## 13. Agency White-Label Branding Endpoints
+
+### Get Branding Settings
+`GET /api/v1/settings/branding`
+- Returns active organization's branding configuration: `display_name`, `logo_storage_key`, `primary_color`, `accent_color`, `report_footer_text`, `contact_email`, `website_url`, and `default_report_locale`.
+
+### Update Branding Settings
+`PATCH /api/v1/settings/branding`
+- Requires `admin` or `owner` role.
+- Validates hex colors (`#RRGGBB`), contact email format, website URL, and report locale (`en` or `fa`).
+
+### Upload Agency Logo
+`POST /api/v1/settings/branding/logo`
+- Requires `admin` or `owner` role (`multipart/form-data`).
+- Validates 2MB max size and inspects file magic bytes for `image/png`, `image/jpeg`, or `image/webp`.
+- Explicitly rejects SVG uploads to eliminate script injection / XSS vectors.
+- Stores under random tenant-isolated keys.
+
+### Delete Agency Logo
+`DELETE /api/v1/settings/branding/logo`
+- Removes stored logo and nullifies `logo_storage_key`.
+
+---
+
+## 14. Monthly Care Reports & Snapshot Endpoints
+
+### Calculate Report Preview
+`POST /api/v1/reports/preview`
+- Body:
+  ```json
+  {
+    "client_id": "uuid",
+    "period_start": "2026-10-01T00:00:00Z (optional)",
+    "period_end": "2026-10-31T23:59:59Z (optional)",
+    "locale": "en | fa"
+  }
+  ```
+- Deterministically calculates real-time report metrics without persisting to database.
+
+### Generate & Seal Report Version
+`POST /api/v1/reports`
+- Requires `member`, `admin`, or `owner` role.
+- Deterministically computes metrics and persists an immutable snapshot in `reports` with monotonically incrementing `version_number`.
+
+### List Reports
+`GET /api/v1/reports?client_id={id}&report_type={type}&limit=50&offset=0`
+- Returns paginated list of generated reports with metadata, client details, version number, and PDF storage status.
+
+### Get Report Details & Snapshot
+`GET /api/v1/reports/{id}`
+- Returns full immutable `snapshot_json` along with report version and metadata.
+
+### Generate Report PDF
+`POST /api/v1/reports/{id}/generate-pdf`
+- Requires `member`, `admin`, or `owner` role.
+- Spawns headless Chromium to render the sealed snapshot into a selectable-text vector PDF with embedded fonts.
+- Stores PDF under `reports/<org_id>/<report_id>_v<version>.pdf`.
+
+### Download Report PDF
+`GET /api/v1/reports/{id}/pdf`
+- Returns PDF binary stream (`application/pdf`) with `Content-Disposition: attachment`. Generates on demand if not yet cached.
+
+---
+
+## 15. Secure Report Sharing Endpoints
+
+### Create Share Link
+`POST /api/v1/reports/{id}/share`
+- Requires `member`, `admin`, or `owner` role.
+- Body: `{"expires_in_days": 30}`
+- Generates 32 bytes of cryptographically secure random material (`cp_sh_<hex>`), stores only SHA-256 hash in `report_share_tokens`.
+- Returns full public URL once.
+
+### List Active Shares
+`GET /api/v1/reports/{id}/shares`
+- Returns list of unrevoked share tokens with expiry dates and creation timestamps.
+
+### Revoke Share Link
+`POST /api/v1/reports/{id}/revoke-share`
+- Body: `{"share_id": "uuid"}`
+- Immediately invalidates share link (`revoked_at = NOW()`).
+
+### Public Read-Only Report View (Unauthenticated)
+`GET /public/reports/{token}`
+- Rate-limited per client IP (60 req/min).
+- Redacts raw token in server logs (`/public/reports/[REDACTED]`).
+- Looks up report snapshot via stored procedure `lookup_report_by_share_token_hash`.
+- Returns generic 404 if invalid, expired, or revoked.
+
+### Public Read-Only PDF Download (Unauthenticated)
+`GET /public/reports/{token}/pdf`
+- Rate-limited per client IP.
+- Streams downloadable PDF corresponding to the shared snapshot.

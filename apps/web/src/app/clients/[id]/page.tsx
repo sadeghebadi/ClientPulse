@@ -19,6 +19,8 @@ import {
   ArrowLeft,
   ArrowRight,
   Mail,
+  Wrench,
+  FileText,
 } from "lucide-react";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Badge } from "@/components/ui/Badge";
@@ -153,6 +155,16 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
         actions={
           client && (
             <>
+              <Link href={`/maintenance?client_id=${client.id}`}>
+                <Button size="sm" variant="outline" icon={<Wrench className="w-4 h-4" />}>
+                  {t.maintenance}
+                </Button>
+              </Link>
+              <Link href={`/reports?client_id=${client.id}`}>
+                <Button size="sm" variant="outline" icon={<FileText className="w-4 h-4" />}>
+                  {t.reports}
+                </Button>
+              </Link>
               <Link href={`/clients/${client.id}/edit`}>
                 <Button size="sm" variant="outline" icon={<Edit className="w-4 h-4" />}>
                   {t.editClient}

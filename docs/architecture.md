@@ -209,3 +209,42 @@ Notification events are immutable and append-only (`notification_events` table).
 - Claims rows using `FOR UPDATE OF hm SKIP LOCKED` with lease timeout.
 - Sets `status = 'missed'` and creates an open incident.
 - When a valid ping is received for a missed heartbeat, the heartbeat atomically updates to `healthy`, updates `last_received_at` and `next_expected_at`, resolves the open incident, and emits `heartbeat.recovered`.
+
+---
+
+## 7. Maintenance, Reporting, PDF & White-Label Architecture (Phase 4)
+
+### 7.1 Immutable Snapshot Versioning
+Reports follow an append-only, immutable snapshot model:
+1. When a report is generated (`POST /api/v1/reports`), operational data across monitors, heartbeats, incidents, and maintenance work is deterministically aggregated.
+2. The entire calculated payload is persisted as JSONB in `reports.snapshot_json` along with metadata (`version_number`, `template_version`, `period_start`, `period_end`, `locale`).
+3. Future updates to maintenance activities, monitors, or incident resolutions do not alter existing snapshots. If an activity is updated post-generation, an audit log entry (`maintenance_activity.updated_after_report`) is created, and generating a new report increments the version number.
+
+### 7.2 Headless Chromium PDF Engine
+- **Engine:** Headless Chromium executed via Go (`services/api/internal/pdf/generator.go`).
+- **Font Rendering & Bidi Shaping:** Google `Noto Sans Arabic`, `Vazirmatn`, and `DejaVu Sans` are bundled directly into the container and injected via `@font-face` data declarations or system font lookups. HarfBuzz handles Persian glyph shaping and bidirectional RTL layout natively.
+- **Selectable Text & Vector Output:** Emits vector PDFs with fully selectable text (extractable via `pdftotext`).
+- **Deterministic Layout:** Uses print-specific CSS media styles, `@page` margin boxes, page number counters, and page-break controls to prevent orphaned headers or broken tables.
+
+### 7.3 Storage Abstraction
+File storage is governed by the `storage.Storage` interface:
+```go
+type Storage interface {
+    Save(ctx context.Context, key string, data io.Reader, contentType string) error
+    Get(ctx context.Context, key string) (io.ReadCloser, string, error)
+    Delete(ctx context.Context, key string) error
+    Exists(ctx context.Context, key string) (bool, error)
+}
+```
+- In development/production Docker, `LocalStorage` persists objects in `/data/storage` under tenant-partitioned namespaces (`logos/<org_id>/...`, `reports/<org_id>/...`).
+- Path traversal is strictly blocked via canonical path resolution and prefix enforcement.
+- Easily swap to S3 / Google Cloud Storage without modifying report handlers.
+
+### 7.4 Cryptographically Secure Share Token Architecture
+- **Generation:** 32-byte cryptographic random tokens (`cp_sh_<hex>`).
+- **Storage:** Only the SHA-256 digest is stored in `report_share_tokens.token_hash`.
+- **Public Endpoint Security:**
+  - Rate-limited per IP (60 req/min).
+  - Lookups occur via `SECURITY DEFINER` function `lookup_report_by_share_token_hash`.
+  - Expired or revoked tokens return generic 404 without database error leaks.
+  - Raw tokens are automatically redacted in HTTP access logs (`/public/reports/[REDACTED]`).

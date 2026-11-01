@@ -46,11 +46,12 @@ export type BadgeVariant =
 interface BadgeProps {
   variant: BadgeVariant | string;
   label?: string;
+  children?: React.ReactNode;
   showIcon?: boolean;
   className?: string;
 }
 
-export function Badge({ variant, label, showIcon = true, className = "" }: BadgeProps) {
+export function Badge({ variant, label, children, showIcon = true, className = "" }: BadgeProps) {
   const { t } = useI18n();
 
   switch (variant) {
@@ -310,7 +311,7 @@ export function Badge({ variant, label, showIcon = true, className = "" }: Badge
         <span
           className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-slate-100 text-slate-700 ${className}`}
         >
-          {label || variant}
+          {children || label || variant}
         </span>
       );
   }

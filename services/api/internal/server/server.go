@@ -24,6 +24,9 @@ type Dependencies struct {
 	MonitorHdr       *MonitorHandler
 	HeartbeatHdr     *HeartbeatHandler
 	IncidentHdr      *IncidentHandler
+	MaintenanceHdr   *MaintenanceHandler
+	BrandingHdr      *BrandingHandler
+	ReportHdr        *ReportHandler
 	AuthMiddleware   *AuthMiddleware
 	TenantMiddleware *TenantMiddleware
 }
@@ -226,6 +229,41 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 		mux.Handle("GET /api/v1/incidents/{id}", tenantScoped(s.deps.IncidentHdr.Get, ""))
 		mux.Handle("POST /api/v1/incidents/{id}/acknowledge", sensitiveTenantScoped(s.deps.IncidentHdr.Acknowledge, tenant.RoleMember))
 		mux.Handle("GET /api/v1/monitors/{id}/uptime", tenantScoped(s.deps.IncidentHdr.Uptime, ""))
+	}
+
+	// 13. Maintenance Activity Routes (Tenant-scoped)
+	if s.deps.MaintenanceHdr != nil {
+		mux.Handle("GET /api/v1/maintenance-activities", tenantScoped(s.deps.MaintenanceHdr.List, ""))
+		mux.Handle("POST /api/v1/maintenance-activities", sensitiveTenantScoped(s.deps.MaintenanceHdr.Create, tenant.RoleMember))
+		mux.Handle("GET /api/v1/maintenance-activities/{id}", tenantScoped(s.deps.MaintenanceHdr.Get, ""))
+		mux.Handle("PATCH /api/v1/maintenance-activities/{id}", sensitiveTenantScoped(s.deps.MaintenanceHdr.Update, tenant.RoleMember))
+		mux.Handle("DELETE /api/v1/maintenance-activities/{id}", sensitiveTenantScoped(s.deps.MaintenanceHdr.Delete, tenant.RoleMember))
+	}
+
+	// 14. Agency Branding Routes (Tenant-scoped)
+	if s.deps.BrandingHdr != nil {
+		mux.Handle("GET /api/v1/settings/branding", tenantScoped(s.deps.BrandingHdr.Get, ""))
+		mux.Handle("PATCH /api/v1/settings/branding", sensitiveTenantScoped(s.deps.BrandingHdr.Update, tenant.RoleAdmin))
+		mux.Handle("POST /api/v1/settings/branding/logo", sensitiveTenantScoped(s.deps.BrandingHdr.UploadLogo, tenant.RoleAdmin))
+		mux.Handle("DELETE /api/v1/settings/branding/logo", sensitiveTenantScoped(s.deps.BrandingHdr.DeleteLogo, tenant.RoleAdmin))
+		mux.Handle("GET /api/v1/settings/branding/logo-file", tenantScoped(s.deps.BrandingHdr.GetLogoFile, ""))
+	}
+
+	// 15. Reports & Snapshot Versioning Routes (Tenant-scoped)
+	if s.deps.ReportHdr != nil {
+		mux.Handle("POST /api/v1/reports/preview", tenantScoped(s.deps.ReportHdr.Preview, ""))
+		mux.Handle("POST /api/v1/reports", sensitiveTenantScoped(s.deps.ReportHdr.Create, tenant.RoleMember))
+		mux.Handle("GET /api/v1/reports", tenantScoped(s.deps.ReportHdr.List, ""))
+		mux.Handle("GET /api/v1/reports/{id}", tenantScoped(s.deps.ReportHdr.Get, ""))
+		mux.Handle("POST /api/v1/reports/{id}/generate-pdf", sensitiveTenantScoped(s.deps.ReportHdr.GeneratePDF, tenant.RoleMember))
+		mux.Handle("GET /api/v1/reports/{id}/pdf", tenantScoped(s.deps.ReportHdr.DownloadPDF, ""))
+		mux.Handle("POST /api/v1/reports/{id}/share", sensitiveTenantScoped(s.deps.ReportHdr.CreateShare, tenant.RoleMember))
+		mux.Handle("GET /api/v1/reports/{id}/shares", tenantScoped(s.deps.ReportHdr.ListShares, ""))
+		mux.Handle("POST /api/v1/reports/{id}/revoke-share", sensitiveTenantScoped(s.deps.ReportHdr.RevokeShare, tenant.RoleMember))
+
+		// Public unauthenticated read-only endpoints
+		mux.HandleFunc("GET /public/reports/{token}", s.deps.ReportHdr.PublicView)
+		mux.HandleFunc("GET /public/reports/{token}/pdf", s.deps.ReportHdr.PublicPDF)
 	}
 }
 

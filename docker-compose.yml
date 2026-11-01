@@ -43,9 +43,12 @@ services:
       SMTP_HOST: mailpit
       SMTP_PORT: "1025"
       STORAGE_PROVIDER: ${STORAGE_PROVIDER:-local}
+      STORAGE_LOCAL_DIR: /app/data/storage
       WORKER_HEARTBEAT_TIMEOUT_SECONDS: "${WORKER_HEARTBEAT_TIMEOUT_SECONDS:-10}"
     ports:
       - "127.0.0.1:${API_PORT:-8080}:8080"
+    volumes:
+      - storage_data:/app/data/storage
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8080/health/live || exit 1"]
       interval: 10s
@@ -104,6 +107,8 @@ services:
 
 volumes:
   postgres_data:
+    driver: local
+  storage_data:
     driver: local
 
 networks:

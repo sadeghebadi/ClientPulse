@@ -130,13 +130,15 @@ func (r *HeartbeatRepository) CreateHeartbeat(ctx context.Context, orgID string,
 			params.AssetID = nil
 		}
 
+		initialDeadline := time.Now().UTC().Add(time.Duration(params.ExpectedIntervalSeconds+grace) * time.Second)
+
 		query := `
 			INSERT INTO heartbeat_monitors (
 				organization_id, client_id, asset_id, name, description,
 				expected_interval_seconds, grace_period_seconds, status,
-				is_active, token_hash, created_at, updated_at
+				is_active, token_hash, next_expected_at, created_at, updated_at
 			)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', true, $8, NOW(), NOW())
+			VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', true, $8, $9, NOW(), NOW())
 			RETURNING id, organization_id, client_id, asset_id, name, description,
 			          expected_interval_seconds, grace_period_seconds, status,
 			          is_active, token_hash, last_received_at, next_expected_at,
@@ -145,7 +147,7 @@ func (r *HeartbeatRepository) CreateHeartbeat(ctx context.Context, orgID string,
 
 		return tx.QueryRow(ctx, query,
 			orgID, params.ClientID, params.AssetID, params.Name, params.Description,
-			params.ExpectedIntervalSeconds, grace, tokenHash,
+			params.ExpectedIntervalSeconds, grace, tokenHash, initialDeadline,
 		).Scan(
 			&hb.ID, &hb.OrganizationID, &hb.ClientID, &hb.AssetID, &hb.Name, &hb.Description,
 			&hb.ExpectedIntervalSeconds, &hb.GracePeriodSeconds, &hb.Status,

@@ -1,0 +1,903 @@
+package repository
+
+import (
+	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"strings"
+	"time"
+
+	"clientpulse/services/api/internal/pdf"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+var (
+	ErrReportNotFound     = errors.New("report not found")
+	ErrShareTokenNotFound = errors.New("report share link not found or has expired")
+	ErrInvalidPeriod      = errors.New("period end must be strictly after period start")
+)
+
+type ReportRepository struct {
+	pool         *pgxpool.Pool
+	brandingRepo *BrandingRepository
+}
+
+func NewReportRepository(pool *pgxpool.Pool, brandingRepo *BrandingRepository) *ReportRepository {
+	return &ReportRepository{
+		pool:         pool,
+		brandingRepo: brandingRepo,
+	}
+}
+
+type ReportFilter struct {
+	ClientID   *string
+	ReportType *string
+	From       *time.Time
+	To         *time.Time
+	Limit      int
+	Offset     int
+}
+
+// GenerateShareTokenMaterial generates at least 32 cryptographically secure random bytes.
+func GenerateShareTokenMaterial() (plaintextToken string, tokenHash string, err error) {
+	bytes := make([]byte, 32)
+	if _, err := rand.Read(bytes); err != nil {
+		return "", "", fmt.Errorf("failed reading random bytes: %w", err)
+	}
+	plaintextToken = "cp_sh_" + hex.EncodeToString(bytes)
+
+	hashBytes := sha256.Sum256([]byte(plaintextToken))
+	tokenHash = hex.EncodeToString(hashBytes[:])
+	return plaintextToken, tokenHash, nil
+}
+
+// HashShareToken calculates SHA-256 digest of incoming plaintext share token.
+func HashShareToken(token string) string {
+	hashBytes := sha256.Sum256([]byte(strings.TrimSpace(token)))
+	return hex.EncodeToString(hashBytes[:])
+}
+
+// CreateReport inserts a brand-new immutable report version with full calculated snapshot JSON.
+func (r *ReportRepository) CreateReport(
+	ctx context.Context,
+	orgID, clientID string,
+	reportType string,
+	periodStart, periodEnd time.Time,
+	orgTimezone, locale, title string,
+	snapshot pdf.ReportData,
+	generatedBy string,
+) (*Report, error) {
+	if !periodEnd.After(periodStart) {
+		return nil, ErrInvalidPeriod
+	}
+
+	if reportType == "" {
+		reportType = "monthly_care"
+	}
+	if locale != "fa" {
+		locale = "en"
+	}
+	if orgTimezone == "" {
+		orgTimezone = "UTC"
+	}
+	if title == "" {
+		title = fmt.Sprintf("Website Care Report - %s (%s)", snapshot.Client.Name, periodStart.Format("2006-01"))
+	}
+
+	snapshotJSON, err := json.Marshal(snapshot)
+	if err != nil {
+		return nil, fmt.Errorf("failed serializing report snapshot: %w", err)
+	}
+
+	var rep Report
+	err = WithTenantTx(ctx, r.pool, orgID, func(tx pgx.Tx) error {
+		// Determine next version number atomically for this exact client & period
+		var nextVersion int
+		err := tx.QueryRow(ctx, `
+			SELECT COALESCE(MAX(version_number), 0) + 1
+			FROM reports
+			WHERE organization_id = $1 AND client_id = $2
+			  AND period_start = $3 AND period_end = $4
+		`, orgID, clientID, periodStart, periodEnd).Scan(&nextVersion)
+		if err != nil {
+			return fmt.Errorf("failed calculating next version number: %w", err)
+		}
+
+		query := `
+			INSERT INTO reports (
+				organization_id, client_id, report_type, period_start, period_end,
+				organization_timezone, locale, version_number, template_version,
+				title, snapshot_json, generated_by, generated_at, created_at, updated_at
+			)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW(), NOW())
+			RETURNING id, organization_id, client_id, report_type, period_start, period_end,
+			          organization_timezone, locale, version_number, template_version,
+			          title, snapshot_json, pdf_storage_key, generated_by, generated_at, created_at, updated_at
+		`
+
+		return tx.QueryRow(ctx, query,
+			orgID, clientID, reportType, periodStart, periodEnd,
+			orgTimezone, locale, nextVersion, "v1.0",
+			title, snapshotJSON, generatedBy,
+		).Scan(
+			&rep.ID, &rep.OrganizationID, &rep.ClientID, &rep.ReportType, &rep.PeriodStart, &rep.PeriodEnd,
+			&rep.OrganizationTimezone, &rep.Locale, &rep.VersionNumber, &rep.TemplateVersion,
+			&rep.Title, &rep.SnapshotJSON, &rep.PDFStorageKey, &rep.GeneratedBy, &rep.GeneratedAt,
+			&rep.CreatedAt, &rep.UpdatedAt,
+		)
+	})
+
+	if err != nil {
+		return nil, err
+	}
+	return &rep, nil
+}
+
+// GetReport retrieves a single report version by ID.
+func (r *ReportRepository) GetReport(ctx context.Context, orgID, reportID string) (*Report, error) {
+	var rep Report
+	err := WithTenantTx(ctx, r.pool, orgID, func(tx pgx.Tx) error {
+		query := `
+			SELECT r.id, r.organization_id, r.client_id, r.report_type, r.period_start, r.period_end,
+			       r.organization_timezone, r.locale, r.version_number, r.template_version,
+			       r.title, r.snapshot_json, r.pdf_storage_key, r.generated_by, r.generated_at,
+			       r.created_at, r.updated_at,
+			       c.name AS client_name,
+			       u.display_name AS generated_by_name,
+			       u.email AS generated_by_email
+			FROM reports r
+			JOIN clients c ON c.id = r.client_id AND c.organization_id = r.organization_id
+			JOIN users u ON u.id = r.generated_by
+			WHERE r.id = $1 AND r.organization_id = $2
+		`
+
+		return tx.QueryRow(ctx, query, reportID, orgID).Scan(
+			&rep.ID, &rep.OrganizationID, &rep.ClientID, &rep.ReportType, &rep.PeriodStart, &rep.PeriodEnd,
+			&rep.OrganizationTimezone, &rep.Locale, &rep.VersionNumber, &rep.TemplateVersion,
+			&rep.Title, &rep.SnapshotJSON, &rep.PDFStorageKey, &rep.GeneratedBy, &rep.GeneratedAt,
+			&rep.CreatedAt, &rep.UpdatedAt,
+			&rep.ClientName, &rep.GeneratedByName, &rep.GeneratedByEmail,
+		)
+	})
+
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrReportNotFound
+		}
+		return nil, err
+	}
+	return &rep, nil
+}
+
+// ListReports queries reports with pagination and filtering.
+func (r *ReportRepository) ListReports(ctx context.Context, orgID string, filter ReportFilter) ([]*Report, int, error) {
+	if filter.Limit <= 0 || filter.Limit > 100 {
+		filter.Limit = 50
+	}
+	if filter.Offset < 0 {
+		filter.Offset = 0
+	}
+
+	var reports []*Report
+	var totalCount int
+
+	err := WithTenantTx(ctx, r.pool, orgID, func(tx pgx.Tx) error {
+		conditions := []string{"r.organization_id = $1"}
+		args := []interface{}{orgID}
+		argIdx := 2
+
+		if filter.ClientID != nil && *filter.ClientID != "" {
+			conditions = append(conditions, fmt.Sprintf("r.client_id = $%d", argIdx))
+			args = append(args, *filter.ClientID)
+			argIdx++
+		}
+
+		if filter.ReportType != nil && *filter.ReportType != "" {
+			conditions = append(conditions, fmt.Sprintf("r.report_type = $%d", argIdx))
+			args = append(args, *filter.ReportType)
+			argIdx++
+		}
+
+		if filter.From != nil {
+			conditions = append(conditions, fmt.Sprintf("r.period_start >= $%d", argIdx))
+			args = append(args, *filter.From)
+			argIdx++
+		}
+
+		if filter.To != nil {
+			conditions = append(conditions, fmt.Sprintf("r.period_end <= $%d", argIdx))
+			args = append(args, *filter.To)
+			argIdx++
+		}
+
+		whereClause := strings.Join(conditions, " AND ")
+
+		countQuery := fmt.Sprintf("SELECT COUNT(*) FROM reports r WHERE %s", whereClause)
+		if err := tx.QueryRow(ctx, countQuery, args...).Scan(&totalCount); err != nil {
+			return fmt.Errorf("failed to count reports: %w", err)
+		}
+
+		query := fmt.Sprintf(`
+			SELECT r.id, r.organization_id, r.client_id, r.report_type, r.period_start, r.period_end,
+			       r.organization_timezone, r.locale, r.version_number, r.template_version,
+			       r.title, r.pdf_storage_key, r.generated_by, r.generated_at,
+			       r.created_at, r.updated_at,
+			       c.name AS client_name,
+			       u.display_name AS generated_by_name,
+			       u.email AS generated_by_email
+			FROM reports r
+			JOIN clients c ON c.id = r.client_id AND c.organization_id = r.organization_id
+			JOIN users u ON u.id = r.generated_by
+			WHERE %s
+			ORDER BY r.generated_at DESC
+			LIMIT $%d OFFSET $%d
+		`, whereClause, argIdx, argIdx+1)
+
+		args = append(args, filter.Limit, filter.Offset)
+
+		rows, err := tx.Query(ctx, query, args...)
+		if err != nil {
+			return fmt.Errorf("failed querying reports: %w", err)
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var rep Report
+			if err := rows.Scan(
+				&rep.ID, &rep.OrganizationID, &rep.ClientID, &rep.ReportType, &rep.PeriodStart, &rep.PeriodEnd,
+				&rep.OrganizationTimezone, &rep.Locale, &rep.VersionNumber, &rep.TemplateVersion,
+				&rep.Title, &rep.PDFStorageKey, &rep.GeneratedBy, &rep.GeneratedAt,
+				&rep.CreatedAt, &rep.UpdatedAt,
+				&rep.ClientName, &rep.GeneratedByName, &rep.GeneratedByEmail,
+			); err != nil {
+				return fmt.Errorf("failed scanning report: %w", err)
+			}
+			reports = append(reports, &rep)
+		}
+		return rows.Err()
+	})
+
+	if err != nil {
+		return nil, 0, err
+	}
+	return reports, totalCount, nil
+}
+
+// UpdateReportPDFStorageKey sets the PDF storage key once the PDF is rendered.
+func (r *ReportRepository) UpdateReportPDFStorageKey(ctx context.Context, orgID, reportID, storageKey string) error {
+	return WithTenantTx(ctx, r.pool, orgID, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx, `
+			UPDATE reports
+			SET pdf_storage_key = $1, updated_at = NOW()
+			WHERE id = $2 AND organization_id = $3
+		`, storageKey, reportID, orgID)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() == 0 {
+			return ErrReportNotFound
+		}
+		return nil
+	})
+}
+
+// CreateShareToken generates an unauthenticated read-only share link token.
+func (r *ReportRepository) CreateShareToken(ctx context.Context, orgID, reportID string, expiresAt *time.Time, createdBy string) (string, *ReportShareToken, error) {
+	plaintextToken, tokenHash, err := GenerateShareTokenMaterial()
+	if err != nil {
+		return "", nil, err
+	}
+
+	var st ReportShareToken
+	err = WithTenantTx(ctx, r.pool, orgID, func(tx pgx.Tx) error {
+		// Verify report exists and belongs to org
+		var reportExists bool
+		err := tx.QueryRow(ctx, `
+			SELECT EXISTS(SELECT 1 FROM reports WHERE id = $1 AND organization_id = $2)
+		`, reportID, orgID).Scan(&reportExists)
+		if err != nil {
+			return err
+		}
+		if !reportExists {
+			return ErrReportNotFound
+		}
+
+		query := `
+			INSERT INTO report_share_tokens (
+				organization_id, report_id, token_hash, expires_at, created_by, created_at
+			)
+			VALUES ($1, $2, $3, $4, $5, NOW())
+			RETURNING id, organization_id, report_id, expires_at, revoked_at, created_by, created_at
+		`
+
+		return tx.QueryRow(ctx, query,
+			orgID, reportID, tokenHash, expiresAt, createdBy,
+		).Scan(
+			&st.ID, &st.OrganizationID, &st.ReportID, &st.ExpiresAt, &st.RevokedAt, &st.CreatedBy, &st.CreatedAt,
+		)
+	})
+
+	if err != nil {
+		return "", nil, err
+	}
+	st.IsActive = true
+	return plaintextToken, &st, nil
+}
+
+// RevokeShareToken immediately invalidates an active share link.
+func (r *ReportRepository) RevokeShareToken(ctx context.Context, orgID, shareID string) error {
+	return WithTenantTx(ctx, r.pool, orgID, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx, `
+			UPDATE report_share_tokens
+			SET revoked_at = NOW()
+			WHERE id = $1 AND organization_id = $2 AND revoked_at IS NULL
+		`, shareID, orgID)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() == 0 {
+			return ErrShareTokenNotFound
+		}
+		return nil
+	})
+}
+
+// ListShareTokens returns all share tokens created for a report.
+func (r *ReportRepository) ListShareTokens(ctx context.Context, orgID, reportID string) ([]*ReportShareToken, error) {
+	var tokens []*ReportShareToken
+	err := WithTenantTx(ctx, r.pool, orgID, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `
+			SELECT id, organization_id, report_id, expires_at, revoked_at, created_by, created_at
+			FROM report_share_tokens
+			WHERE report_id = $1 AND organization_id = $2
+			ORDER BY created_at DESC
+		`, reportID, orgID)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+
+		now := time.Now().UTC()
+		for rows.Next() {
+			var st ReportShareToken
+			if err := rows.Scan(
+				&st.ID, &st.OrganizationID, &st.ReportID, &st.ExpiresAt, &st.RevokedAt, &st.CreatedBy, &st.CreatedAt,
+			); err != nil {
+				return err
+			}
+			st.IsActive = st.RevokedAt == nil && (st.ExpiresAt == nil || st.ExpiresAt.After(now))
+			tokens = append(tokens, &st)
+		}
+		return rows.Err()
+	})
+
+	if err != nil {
+		return nil, err
+	}
+	return tokens, nil
+}
+
+// LookupReportByShareToken resolves an unauthenticated public share token via SECURITY DEFINER procedure.
+func (r *ReportRepository) LookupReportByShareToken(ctx context.Context, plaintextToken string) (*PublicReportView, string, error) {
+	tokenHash := HashShareToken(plaintextToken)
+
+	var v PublicReportView
+	var pdfStorageKey *string
+	var orgID, shareID, clientID string
+
+	query := `
+		SELECT share_id, report_id, organization_id, client_id, report_type,
+		       period_start, period_end, organization_timezone, locale,
+		       version_number, template_version, title, snapshot_json,
+		       pdf_storage_key, generated_at, expires_at, revoked_at
+		FROM lookup_report_by_share_token_hash($1)
+	`
+
+	var revokedAt *time.Time
+	err := r.pool.QueryRow(ctx, query, tokenHash).Scan(
+		&shareID, &v.ReportID, &orgID, &clientID, &v.ReportType,
+		&v.PeriodStart, &v.PeriodEnd, &v.OrganizationTimezone, &v.Locale,
+		&v.VersionNumber, &v.TemplateVersion, &v.Title, &v.SnapshotJSON,
+		&pdfStorageKey, &v.GeneratedAt, &v.ExpiresAt, &revokedAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, "", ErrShareTokenNotFound
+		}
+		return nil, "", err
+	}
+
+	if revokedAt != nil || (v.ExpiresAt != nil && v.ExpiresAt.Before(time.Now().UTC())) {
+		return nil, "", ErrShareTokenNotFound
+	}
+
+	v.HasPDF = pdfStorageKey != nil && *pdfStorageKey != ""
+	key := ""
+	if pdfStorageKey != nil {
+		key = *pdfStorageKey
+	}
+	return &v, key, nil
+}
+
+// CalculateReportData performs deterministic aggregation of monitoring, maintenance, incident, and heartbeat data.
+func (r *ReportRepository) CalculateReportData(ctx context.Context, orgID, clientID string, periodStart, periodEnd time.Time, orgTimezone, locale string) (*pdf.ReportData, error) {
+	if !periodEnd.After(periodStart) {
+		return nil, ErrInvalidPeriod
+	}
+
+	// 1. Fetch Branding
+	branding, err := r.brandingRepo.GetBranding(ctx, orgID)
+	if err != nil {
+		return nil, fmt.Errorf("failed fetching branding: %w", err)
+	}
+
+	if locale == "" {
+		locale = branding.DefaultReportLocale
+	}
+	if locale != "fa" {
+		locale = "en"
+	}
+	if orgTimezone == "" {
+		orgTimezone = "UTC"
+	}
+
+	var data pdf.ReportData
+	data.ReportType = "monthly_care"
+	data.Locale = locale
+	data.PeriodStart = periodStart
+	data.PeriodEnd = periodEnd
+	data.OrganizationTimezone = orgTimezone
+	data.GeneratedAt = time.Now().UTC()
+	data.TemplateVersion = "v1.0"
+	data.Branding = pdf.BrandingData{
+		DisplayName:  branding.DisplayName,
+		PrimaryColor: branding.PrimaryColor,
+		AccentColor:  branding.AccentColor,
+		FooterText:   branding.ReportFooterText,
+		ContactEmail: branding.ContactEmail,
+		WebsiteURL:   branding.WebsiteURL,
+	}
+
+	err = WithTenantTx(ctx, r.pool, orgID, func(tx pgx.Tx) error {
+		// 2. Fetch Client Info
+		var contactName, contactEmail *string
+		err := tx.QueryRow(ctx, `
+			SELECT id, name, contact_name, contact_email
+			FROM clients
+			WHERE id = $1 AND organization_id = $2
+		`, clientID, orgID).Scan(
+			&data.Client.ID, &data.Client.Name, &contactName, &contactEmail,
+		)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrClientNotFound
+			}
+			return err
+		}
+		if contactName != nil {
+			data.Client.Contact = *contactName
+		}
+		if contactEmail != nil {
+			data.Client.Email = *contactEmail
+		}
+
+		data.Title = fmt.Sprintf("Website Care Report - %s (%s)", data.Client.Name, periodStart.Format("2006-01"))
+		if locale == "fa" {
+			data.Title = fmt.Sprintf("گزارش ماهانه پایش و نگهداری - %s", data.Client.Name)
+		}
+
+		// 3. Fetch Assets
+		assetRows, err := tx.Query(ctx, `
+			SELECT id, name, type, url, environment, is_active
+			FROM assets
+			WHERE client_id = $1 AND organization_id = $2 AND archived_at IS NULL
+			ORDER BY name ASC
+		`, clientID, orgID)
+		if err != nil {
+			return fmt.Errorf("failed querying assets: %w", err)
+		}
+		defer assetRows.Close()
+
+		assetMap := make(map[string]string)
+		for assetRows.Next() {
+			var a pdf.AssetReportData
+			var isActive bool
+			if err := assetRows.Scan(&a.ID, &a.Name, &a.Type, &a.URL, &a.Environment, &isActive); err != nil {
+				return err
+			}
+			a.Status = "active"
+			if !isActive {
+				a.Status = "paused"
+			}
+			a.SSLStatus = "valid"
+			assetMap[a.ID] = a.Name
+			data.Assets = append(data.Assets, a)
+		}
+		if err := assetRows.Err(); err != nil {
+			return err
+		}
+
+		// 4. Fetch Monitors and Calculate Scheduled Uptime & Latency
+		monitorRows, err := tx.Query(ctx, `
+			SELECT m.id, m.asset_id, m.created_at, m.status, m.is_active,
+			       a.name AS asset_name, a.url AS asset_url
+			FROM monitors m
+			JOIN assets a ON a.id = m.asset_id AND a.organization_id = m.organization_id
+			WHERE a.client_id = $1 AND m.organization_id = $2 AND a.archived_at IS NULL
+		`, clientID, orgID)
+		if err != nil {
+			return fmt.Errorf("failed querying monitors: %w", err)
+		}
+		defer monitorRows.Close()
+
+		type monMeta struct {
+			id        string
+			assetID   string
+			createdAt time.Time
+			status    string
+			isActive  bool
+			assetName string
+			assetURL  string
+		}
+		var mons []monMeta
+		for monitorRows.Next() {
+			var m monMeta
+			if err := monitorRows.Scan(&m.id, &m.assetID, &m.createdAt, &m.status, &m.isActive, &m.assetName, &m.assetURL); err != nil {
+				return err
+			}
+			mons = append(mons, m)
+		}
+		monitorRows.Close()
+
+		totalPeriodSec := int64(periodEnd.Sub(periodStart).Seconds())
+		if totalPeriodSec <= 0 {
+			totalPeriodSec = 1
+		}
+
+		var uptimeSum float64
+		var uptimeCount int
+
+		for _, m := range mons {
+			covStart := periodStart
+			if m.createdAt.After(covStart) {
+				covStart = m.createdAt
+			}
+			covEnd := periodEnd
+
+			var monitoredSec int64
+			if covEnd.After(covStart) {
+				monitoredSec = int64(covEnd.Sub(covStart).Seconds())
+			}
+			covPct := (float64(monitoredSec) / float64(totalPeriodSec)) * 100.0
+			if covPct > 100.0 {
+				covPct = 100.0
+			}
+			if covPct < 0.0 {
+				covPct = 0.0
+			}
+
+			// Query scheduled check metrics
+			var checkCount, failedCount int
+			var avgResp *float64
+			err := tx.QueryRow(ctx, `
+				SELECT 
+					COUNT(*),
+					COUNT(*) FILTER (WHERE result IN ('failure', 'timeout', 'blocked', 'error')),
+					AVG(response_time_ms) FILTER (WHERE result = 'success' AND response_time_ms > 0)
+				FROM check_results
+				WHERE monitor_id = $1 AND organization_id = $2
+				  AND execution_type = 'scheduled'
+				  AND created_at >= $3 AND created_at <= $4
+			`, m.id, orgID, covStart, covEnd).Scan(&checkCount, &failedCount, &avgResp)
+			if err != nil {
+				return err
+			}
+
+			// Median Latency query
+			var medianResp *int64
+			if checkCount > 0 {
+				_ = tx.QueryRow(ctx, `
+					SELECT PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY response_time_ms)::BIGINT
+					FROM check_results
+					WHERE monitor_id = $1 AND organization_id = $2
+					  AND execution_type = 'scheduled'
+					  AND result = 'success'
+					  AND created_at >= $3 AND created_at <= $4
+				`, m.id, orgID, covStart, covEnd).Scan(&medianResp)
+			}
+
+			var avgRespMs *int64
+			if avgResp != nil {
+				val := int64(*avgResp)
+				avgRespMs = &val
+			}
+
+			// Incident overlap outage
+			var outageSec int64
+			var incCount int
+			incRows, err := tx.Query(ctx, `
+				SELECT confirmed_at, resolved_at
+				FROM incidents
+				WHERE monitor_id = $1 AND organization_id = $2
+				  AND confirmed_at <= $3
+				  AND (resolved_at IS NULL OR resolved_at >= $4)
+			`, m.id, orgID, covEnd, covStart)
+			if err == nil {
+				for incRows.Next() {
+					var cAt time.Time
+					var rAt *time.Time
+					if err := incRows.Scan(&cAt, &rAt); err == nil {
+						incCount++
+						oStart := cAt
+						if oStart.Before(covStart) {
+							oStart = covStart
+						}
+						oEnd := periodEnd
+						if rAt != nil && rAt.Before(periodEnd) {
+							oEnd = *rAt
+						}
+						if oEnd.After(oStart) {
+							outageSec += int64(oEnd.Sub(oStart).Seconds())
+						}
+					}
+				}
+				incRows.Close()
+			}
+
+			var uptimePct *float64
+			insufficientData := checkCount == 0
+
+			if !insufficientData && monitoredSec > 0 {
+				if outageSec > monitoredSec {
+					outageSec = monitoredSec
+				}
+				upSec := monitoredSec - outageSec
+				pct := (float64(upSec) / float64(monitoredSec)) * 100.0
+				if pct > 100.0 {
+					pct = 100.0
+				}
+				if pct < 0.0 {
+					pct = 0.0
+				}
+				uptimePct = &pct
+				uptimeSum += pct
+				uptimeCount++
+			}
+
+			data.Monitors = append(data.Monitors, pdf.MonitorReportData{
+				ID:                   m.id,
+				Name:                 "HTTP Monitor (" + m.assetName + ")",
+				AssetName:            m.assetName,
+				URL:                  m.assetURL,
+				UptimePercentage:     uptimePct,
+				CoveragePercentage:   covPct,
+				InsufficientData:     insufficientData,
+				AvgResponseTimeMs:    avgRespMs,
+				MedianResponseTimeMs: medianResp,
+				TotalChecks:          checkCount,
+				FailedChecks:         failedCount,
+				IncidentCount:        incCount,
+			})
+		}
+
+		// 5. Incidents during the period
+		incRows, err := tx.Query(ctx, `
+			SELECT i.id, 
+			       CASE WHEN i.monitor_id IS NOT NULL THEN 'monitor' ELSE 'heartbeat' END AS target_type,
+			       i.confirmed_at, i.resolved_at,
+			       i.failure_category, i.duration_seconds, i.summary,
+			       COALESCE(m.asset_id, hm.asset_id) AS asset_id,
+			       COALESCE(a.name, hm_a.name, 'Endpoint') AS asset_name,
+			       COALESCE(hm.name, a.name, 'Monitor') AS target_name
+			FROM incidents i
+			LEFT JOIN monitors m ON m.id = i.monitor_id AND m.organization_id = i.organization_id
+			LEFT JOIN assets a ON a.id = m.asset_id AND a.organization_id = i.organization_id
+			LEFT JOIN heartbeat_monitors hm ON hm.id = i.heartbeat_monitor_id AND hm.organization_id = i.organization_id
+			LEFT JOIN assets hm_a ON hm_a.id = hm.asset_id AND hm_a.organization_id = i.organization_id
+			WHERE i.organization_id = $1 
+			  AND COALESCE(a.client_id, hm.client_id) = $2
+			  AND i.confirmed_at <= $3
+			  AND (i.resolved_at IS NULL OR i.resolved_at >= $4)
+			ORDER BY i.confirmed_at DESC
+		`, orgID, clientID, periodEnd, periodStart)
+		if err != nil {
+			return fmt.Errorf("failed querying incidents: %w", err)
+		}
+		defer incRows.Close()
+
+		var totalDowntimeSec int64
+		for incRows.Next() {
+			var i pdf.IncidentReportData
+			var resolvedAt *time.Time
+			var confirmedAt time.Time
+			var durSec *int
+			var assetID *string
+			var assetName, sumText string
+
+			if err := incRows.Scan(
+				&i.ID, &i.TargetType, &confirmedAt, &resolvedAt,
+				&i.FailureCategory, &durSec, &sumText,
+				&assetID, &assetName, &i.TargetName,
+			); err != nil {
+				return err
+			}
+			i.ConfirmedAt = confirmedAt.Format("2006-01-02 15:04")
+			if resolvedAt != nil {
+				i.ResolvedAt = resolvedAt.Format("2006-01-02 15:04")
+			}
+			if durSec != nil {
+				i.DurationMinutes = int64(*durSec) / 60
+				totalDowntimeSec += int64(*durSec)
+			}
+			i.Summary = sumText
+			data.Incidents = append(data.Incidents, i)
+		}
+		incRows.Close()
+
+		// 6. Heartbeats (Cron / Backup Workers)
+		hbRows, err := tx.Query(ctx, `
+			SELECT hm.id, hm.name, hm.status, hm.expected_interval_seconds, hm.last_received_at,
+			       a.name AS asset_name
+			FROM heartbeat_monitors hm
+			LEFT JOIN assets a ON a.id = hm.asset_id AND a.organization_id = hm.organization_id
+			WHERE hm.client_id = $1 AND hm.organization_id = $2 AND hm.archived_at IS NULL
+			ORDER BY hm.name ASC
+		`, clientID, orgID)
+		if err != nil {
+			return fmt.Errorf("failed querying heartbeats: %w", err)
+		}
+		defer hbRows.Close()
+
+		for hbRows.Next() {
+			var hb pdf.HeartbeatReportData
+			var intervalSec int
+			var lastRec *time.Time
+			var assetName *string
+
+			if err := hbRows.Scan(&hb.ID, &hb.Name, &hb.Status, &intervalSec, &lastRec, &assetName); err != nil {
+				return err
+			}
+			if assetName != nil {
+				hb.AssetName = *assetName
+			}
+			if lastRec != nil {
+				hb.LastReceivedAt = lastRec.Format("2006-01-02 15:04")
+			}
+			hb.ExpectedInterval = formatInterval(intervalSec)
+			hb.LimitationNotice = "Heartbeat received indicates the script ran, but does not verify backup restoration validity or completeness."
+			data.Heartbeats = append(data.Heartbeats, hb)
+		}
+		hbRows.Close()
+
+		// 7. Maintenance Activities
+		actRows, err := tx.Query(ctx, `
+			SELECT ma.id, ma.title, ma.category, ma.performed_at, ma.duration_minutes, ma.description,
+			       COALESCE(a.name, 'General Client System') AS asset_name
+			FROM maintenance_activities ma
+			LEFT JOIN assets a ON a.id = ma.asset_id AND a.organization_id = ma.organization_id
+			WHERE ma.client_id = $1 AND ma.organization_id = $2
+			  AND ma.performed_at >= $3 AND ma.performed_at <= $4
+			ORDER BY ma.performed_at DESC
+		`, clientID, orgID, periodStart, periodEnd)
+		if err != nil {
+			return fmt.Errorf("failed querying maintenance activities: %w", err)
+		}
+		defer actRows.Close()
+
+		var totalMaintenanceMin int
+		for actRows.Next() {
+			var act pdf.MaintenanceReportData
+			var perfAt time.Time
+			if err := actRows.Scan(&act.ID, &act.Title, &act.Category, &perfAt, &act.DurationMinutes, &act.Description, &act.AssetName); err != nil {
+				return err
+			}
+			act.PerformedAt = perfAt.Format("2006-01-02 15:04")
+			if act.DurationMinutes != nil {
+				totalMaintenanceMin += *act.DurationMinutes
+			}
+			data.Maintenance = append(data.Maintenance, act)
+		}
+		actRows.Close()
+
+		// 8. Deterministic Summary Calculations
+		data.Summary.TotalMonitors = len(data.Monitors)
+		data.Summary.TotalIncidents = len(data.Incidents)
+		data.Summary.TotalDowntimeSec = totalDowntimeSec
+		data.Summary.TotalActivities = len(data.Maintenance)
+		data.Summary.TotalMaintenanceMin = totalMaintenanceMin
+
+		if uptimeCount > 0 {
+			avg := uptimeSum / float64(uptimeCount)
+			data.Summary.AverageUptime = &avg
+		}
+
+		// Executive Statement
+		if len(data.Incidents) == 0 && data.Summary.AverageUptime != nil && *data.Summary.AverageUptime >= 99.9 {
+			data.Summary.OverallStatus = "optimal"
+			if locale == "fa" {
+				data.Summary.ExecutiveStatement = fmt.Sprintf("در این دوره تمامی سرویس‌های %s با ضریب پایداری %.2f%% فعال بودند و هیچ‌گونه قطعی شناسایی نشد.", data.Client.Name, *data.Summary.AverageUptime)
+			} else {
+				data.Summary.ExecutiveStatement = fmt.Sprintf("All monitored endpoints for %s maintained exceptional stability at %.2f%% uptime with zero recorded incidents.", data.Client.Name, *data.Summary.AverageUptime)
+			}
+		} else if len(data.Incidents) > 0 {
+			data.Summary.OverallStatus = "remediated"
+			if locale == "fa" {
+				data.Summary.ExecutiveStatement = fmt.Sprintf("در این دوره تعداد %d رخداد قطعی ثبت شد که مجموعاً %d دقیقه به طول انجامید و با موفقیت توسط تیم فنی برطرف گردید.", len(data.Incidents), totalDowntimeSec/60)
+			} else {
+				data.Summary.ExecutiveStatement = fmt.Sprintf("%d incident(s) occurred during this period totaling %d minutes of downtime, which were investigated and resolved.", len(data.Incidents), totalDowntimeSec/60)
+			}
+		} else {
+			data.Summary.OverallStatus = "normal"
+			if locale == "fa" {
+				data.Summary.ExecutiveStatement = "سرویس‌ها به صورت عادی و پایدار در طول دوره گزارش فعالیت کردند."
+			} else {
+				data.Summary.ExecutiveStatement = "Operational endpoints operated normally throughout the reported billing period."
+			}
+		}
+
+		// 9. Deterministic Recommendations
+		for _, m := range data.Monitors {
+			if m.UptimePercentage != nil && *m.UptimePercentage < 99.0 {
+				data.Recommendations = append(data.Recommendations, pdf.RecommendationData{
+					Severity:    "warning",
+					Title:       ifElse(locale == "fa", "بررسی نوسان پایداری سرور", "Investigate Availability Fluctuations"),
+					Description: ifElse(locale == "fa", fmt.Sprintf("پایداری %s زیر ۹۹٪ بوده است. پیشنهاد می‌شود لاگ‌های سرور بررسی شوند.", m.Name), fmt.Sprintf("Availability on %s was %.2f%%. Server resource contention should be examined.", m.Name, *m.UptimePercentage)),
+				})
+			}
+			if m.AvgResponseTimeMs != nil && *m.AvgResponseTimeMs > 1000 {
+				data.Recommendations = append(data.Recommendations, pdf.RecommendationData{
+					Severity:    "info",
+					Title:       ifElse(locale == "fa", "بهینه‌سازی زمان پاسخ سرور", "Optimize Latency and Response Time"),
+					Description: ifElse(locale == "fa", fmt.Sprintf("میانگین پاسخ %s معادل %d میلی‌ثانیه است؛ فعال‌سازی Caching و CDN توصیه می‌شود.", m.Name, *m.AvgResponseTimeMs), fmt.Sprintf("Average response time for %s was %d ms. CDN caching is recommended.", m.Name, *m.AvgResponseTimeMs)),
+				})
+			}
+		}
+
+		if len(data.Heartbeats) == 0 {
+			data.Recommendations = append(data.Recommendations, pdf.RecommendationData{
+				Severity:    "info",
+				Title:       ifElse(locale == "fa", "فعال‌سازی مانیتورینگ بکاپ‌های خودکار", "Configure Automated Backup Monitoring"),
+				Description: ifElse(locale == "fa", "پیشنهاد می‌شود برای جاب‌های دوره‌ای دیتابیس یا بکاپ، Heartbeat فعال شود.", "Configure heartbeat monitoring for automated backups to track execution health."),
+			})
+		}
+
+		// 10. Limitation notice
+		if locale == "fa" {
+			data.LimitationNotice = "محاسبه ضریب پایداری بر اساس تست‌های دوره‌ای برنامه‌ریزی‌شده و رخدادهای تأییدشده انجام گرفته است. تست‌های دستی و زمان‌های غیرفعال از محاسبات خارج شده‌اند. دریافت سیگنال سلامت به تنهایی صحت فایل بکاپ را تضمین نمی‌کند."
+		} else {
+			data.LimitationNotice = "Uptime and coverage metrics are derived from scheduled checks and verified incidents. Manual tests and paused periods are strictly excluded. Heartbeat receipt confirms task execution but does not independently verify backup restoration validity or completeness."
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+	return &data, nil
+}
+
+func formatInterval(seconds int) string {
+	if seconds >= 86400 {
+		return fmt.Sprintf("%d days", seconds/86400)
+	}
+	if seconds >= 3600 {
+		return fmt.Sprintf("%d hours", seconds/3600)
+	}
+	if seconds >= 60 {
+		return fmt.Sprintf("%d minutes", seconds/60)
+	}
+	return fmt.Sprintf("%d seconds", seconds)
+}
+
+func ifElse(cond bool, a, b string) string {
+	if cond {
+		return a
+	}
+	return b
+}

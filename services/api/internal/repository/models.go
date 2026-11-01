@@ -325,4 +325,100 @@ type NotificationEvent struct {
 	CreatedAt          time.Time              `json:"created_at"`
 }
 
+// MaintenanceActivity represents actual work performed by the agency for a client.
+type MaintenanceActivity struct {
+	ID              string    `json:"id"`
+	OrganizationID  string    `json:"organization_id"`
+	ClientID        string    `json:"client_id"`
+	AssetID         *string   `json:"asset_id,omitempty"`
+	Title           string    `json:"title"`
+	Description     string    `json:"description"`
+	Category        string    `json:"category"`
+	PerformedAt     time.Time `json:"performed_at"`
+	DurationMinutes *int      `json:"duration_minutes,omitempty"`
+	CreatedBy       string    `json:"created_by"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
+
+	// Joined metadata
+	ClientName     string  `json:"client_name,omitempty"`
+	AssetName      *string `json:"asset_name,omitempty"`
+	CreatedByName  string  `json:"created_by_name,omitempty"`
+	CreatedByEmail string  `json:"created_by_email,omitempty"`
+}
+
+// OrganizationBranding represents custom branding configurations for client care reports.
+type OrganizationBranding struct {
+	OrganizationID      string    `json:"organization_id"`
+	DisplayName         string    `json:"display_name"`
+	LogoStorageKey      *string   `json:"logo_storage_key,omitempty"`
+	PrimaryColor        string    `json:"primary_color"`
+	AccentColor         string    `json:"accent_color"`
+	ReportFooterText    string    `json:"report_footer_text"`
+	ContactEmail        string    `json:"contact_email"`
+	WebsiteURL          string    `json:"website_url"`
+	DefaultReportLocale string    `json:"default_report_locale"`
+	CreatedAt           time.Time `json:"created_at"`
+	UpdatedAt           time.Time `json:"updated_at"`
+}
+
+// Report represents an immutable, versioned monthly care report snapshot.
+type Report struct {
+	ID                   string    `json:"id"`
+	OrganizationID       string    `json:"organization_id"`
+	ClientID             string    `json:"client_id"`
+	ReportType           string    `json:"report_type"`
+	PeriodStart          time.Time `json:"period_start"`
+	PeriodEnd            time.Time `json:"period_end"`
+	OrganizationTimezone string    `json:"organization_timezone"`
+	Locale               string    `json:"locale"`
+	VersionNumber        int       `json:"version_number"`
+	TemplateVersion      string    `json:"template_version"`
+	Title                string    `json:"title"`
+	SnapshotJSON         []byte    `json:"snapshot_json"`
+	PDFStorageKey        *string   `json:"pdf_storage_key,omitempty"`
+	GeneratedBy          string    `json:"generated_by"`
+	GeneratedAt          time.Time `json:"generated_at"`
+	CreatedAt            time.Time `json:"created_at"`
+	UpdatedAt            time.Time `json:"updated_at"`
+
+	// Joined metadata
+	ClientName       string `json:"client_name,omitempty"`
+	GeneratedByName  string `json:"generated_by_name,omitempty"`
+	GeneratedByEmail string `json:"generated_by_email,omitempty"`
+}
+
+// ReportShareToken represents an unauthenticated, read-only token to securely view a report snapshot.
+type ReportShareToken struct {
+	ID             string     `json:"id"`
+	OrganizationID string     `json:"organization_id"`
+	ReportID       string     `json:"report_id"`
+	TokenHash      string     `json:"-"`
+	ExpiresAt      *time.Time `json:"expires_at,omitempty"`
+	RevokedAt      *time.Time `json:"revoked_at,omitempty"`
+	CreatedBy      string     `json:"created_by"`
+	CreatedAt      time.Time  `json:"created_at"`
+
+	// Metadata
+	IsActive bool `json:"is_active"`
+}
+
+// PublicReportView represents the safe public projection returned when resolving a valid share token.
+type PublicReportView struct {
+	ReportID             string     `json:"report_id"`
+	ReportType           string     `json:"report_type"`
+	PeriodStart          time.Time  `json:"period_start"`
+	PeriodEnd            time.Time  `json:"period_end"`
+	OrganizationTimezone string     `json:"organization_timezone"`
+	Locale               string     `json:"locale"`
+	VersionNumber        int        `json:"version_number"`
+	TemplateVersion      string     `json:"template_version"`
+	Title                string     `json:"title"`
+	SnapshotJSON         []byte     `json:"snapshot_json"`
+	HasPDF               bool       `json:"has_pdf"`
+	GeneratedAt          time.Time  `json:"generated_at"`
+	ExpiresAt            *time.Time `json:"expires_at,omitempty"`
+}
+
+
 

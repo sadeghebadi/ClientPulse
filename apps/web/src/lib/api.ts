@@ -1,11 +1,11 @@
 // ClientPulse API Client with CSRF token support and cookie-based authentication
 
-const API_BASE_URL =
+export const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL ||
   process.env.NEXT_PUBLIC_API_URL ||
   "http://localhost:8080";
 
-function getCookie(name: string): string | null {
+export function getCookie(name: string): string | null {
   if (typeof document === "undefined") return null;
   const match = document.cookie.match(new RegExp("(^|;\\s*)(" + name + ")=([^;]*)"));
   return match ? decodeURIComponent(match[3]) : null;
@@ -51,7 +51,7 @@ export async function apiFetch<T>(
 
     // Handle session expiration (401) cleanly on protected routes
     if (response.status === 401 && typeof window !== "undefined") {
-      const publicPaths = ["/login", "/signup", "/forgot-password", "/reset-password", "/verify-email"];
+      const publicPaths = ["/login", "/signup", "/forgot-password", "/reset-password", "/verify-email", "/public"];
       if (!publicPaths.some((p) => window.location.pathname.startsWith(p))) {
         // Dispatch custom event for auth context to react
         window.dispatchEvent(new CustomEvent("clientpulse:session_expired"));

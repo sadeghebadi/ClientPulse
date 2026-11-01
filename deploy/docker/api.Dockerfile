@@ -19,8 +19,10 @@ FROM alpine:3.24.3
 
 WORKDIR /app
 
-RUN apk add --no-cache ca-certificates tzdata curl && \
-    addgroup -S clientpulse && adduser -S clientpulse -G clientpulse
+RUN apk add --no-cache ca-certificates tzdata curl chromium font-dejavu font-noto-arabic && \
+    mkdir -p /app/data/storage && \
+    addgroup -S clientpulse && adduser -S clientpulse -G clientpulse && \
+    chown -R clientpulse:clientpulse /app/data
 
 COPY --from=builder /bin/api /app/api
 COPY --from=builder /bin/migrate /app/migrate

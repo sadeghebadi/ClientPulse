@@ -652,3 +652,80 @@ func TestPhase3TenantIsolation(t *testing.T) {
 		t.Fatalf("Org B should see 0 incidents, got %d", totalB)
 	}
 }
+
+func TestNewlyCreatedHeartbeatWithoutPingCanBecomeMissed(t *testing.T) {
+	adminPool, appPool, workerPool := setupTestRoles(t)
+	ctx := context.Background()
+
+	slug := fmt.Sprintf("hb-deadline-%d", time.Now().UnixNano())
+	orgID, clientID := createTestOrgAndClient(t, adminPool, "HB First Deadline Org", slug)
+
+	hbRepo := NewHeartbeatRepository(appPool)
+	workerHbRepo := NewHeartbeatRepository(workerPool)
+
+	// 1. Create a brand new heartbeat with NO pings
+	interval := 300 // 5 mins
+	grace := 60     // 1 min
+	hb, _, err := hbRepo.CreateHeartbeat(ctx, orgID, CreateHeartbeatParams{
+		ClientID:                clientID,
+		Name:                    "Unpinged Backup Worker",
+		ExpectedIntervalSeconds: interval,
+		GracePeriodSeconds:      grace,
+	})
+	if err != nil {
+		t.Fatalf("failed to create heartbeat: %v", err)
+	}
+
+	// Verify initial status is pending
+	if hb.Status != "pending" {
+		t.Fatalf("expected initial status 'pending', got '%s'", hb.Status)
+	}
+
+	// Verify next_expected_at was initialized to creation + interval + grace
+	if hb.NextExpectedAt == nil {
+		t.Fatalf("expected next_expected_at to be non-nil upon creation")
+	}
+	expectedDeadline := hb.CreatedAt.Add(time.Duration(interval+grace) * time.Second)
+	diff := hb.NextExpectedAt.Sub(expectedDeadline)
+	if diff < -2*time.Second || diff > 2*time.Second {
+		t.Errorf("expected deadline ~%v, got %v (diff: %v)", expectedDeadline, *hb.NextExpectedAt, diff)
+	}
+
+	// 2. Simulate deadline expiry without ANY ping arriving (e.g. initial deadline passes)
+	pastDeadline := time.Now().UTC().Add(-10 * time.Minute)
+	_, err = adminPool.Exec(ctx, "UPDATE heartbeat_monitors SET next_expected_at = $1 WHERE id = $2", pastDeadline, hb.ID)
+	if err != nil {
+		t.Fatalf("failed setting overdue next_expected_at: %v", err)
+	}
+
+	// 3. Worker claims missed heartbeats -> Must claim this pending unpinged heartbeat
+	claimedJobs, err := workerHbRepo.ClaimMissedHeartbeats(ctx, "test-worker-deadline", 10, 60)
+	if err != nil {
+		t.Fatalf("failed to claim missed heartbeats: %v", err)
+	}
+
+	claimed := false
+	for _, job := range claimedJobs {
+		if job.ID == hb.ID {
+			claimed = true
+			if job.Status != "missed" {
+				t.Errorf("expected claimed job status 'missed', got '%s'", job.Status)
+			}
+			break
+		}
+	}
+	if !claimed {
+		t.Fatalf("expected newly created unpinged heartbeat %s to be claimed as missed", hb.ID)
+	}
+
+	// 4. Verify in DB that status transitioned to 'missed'
+	var updatedStatus string
+	err = adminPool.QueryRow(ctx, "SELECT status FROM heartbeat_monitors WHERE id = $1", hb.ID).Scan(&updatedStatus)
+	if err != nil {
+		t.Fatalf("failed to query updated status: %v", err)
+	}
+	if updatedStatus != "missed" {
+		t.Fatalf("expected heartbeat status to become 'missed', got '%s'", updatedStatus)
+	}
+}
+

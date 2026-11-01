@@ -15,10 +15,12 @@ import (
 	"clientpulse/services/api/internal/health"
 	"clientpulse/services/api/internal/logger"
 	"clientpulse/services/api/internal/mail"
+	"clientpulse/services/api/internal/pdf"
 	"clientpulse/services/api/internal/repository"
 	"clientpulse/services/api/internal/server"
 	"clientpulse/services/api/internal/service"
 	"clientpulse/services/api/internal/ssrf"
+	"clientpulse/services/api/internal/storage"
 )
 
 func main() {
@@ -78,6 +80,25 @@ func main() {
 		ssrfGuard := ssrf.NewGuard(nil)
 		chk := checker.NewChecker(ssrfGuard, "api-manual-worker")
 
+		storageDir := os.Getenv("STORAGE_LOCAL_DIR")
+		if storageDir == "" {
+			storageDir = "./data/storage"
+		}
+		st, err := storage.NewLocalStorage(storageDir)
+		if err != nil {
+			log.Error("failed initializing local storage", "error", err)
+			os.Exit(1)
+		}
+
+		pdfGen, err := pdf.NewGenerator()
+		if err != nil {
+			log.Warn("pdf generator initialized without chrome binary (generation will fail on demand)", "error", err)
+		}
+
+		maintRepo := repository.NewMaintenanceRepository(db.Pool, auditRepo)
+		brandingRepo := repository.NewBrandingRepository(db.Pool)
+		reportRepo := repository.NewReportRepository(db.Pool, brandingRepo)
+
 		var mailer mail.EmailSender
 		if cfg.SMTPHost != "" {
 			mailer = mail.NewSMTPMailer(mail.SMTPConfig{
@@ -101,6 +122,9 @@ func main() {
 		deps.MonitorHdr = server.NewMonitorHandler(monitorRepo, resultRepo, assetRepo, auditRepo, chk, ssrfGuard)
 		deps.HeartbeatHdr = server.NewHeartbeatHandler(heartbeatRepo, cfg, log)
 		deps.IncidentHdr = server.NewIncidentHandler(incidentRepo, eventRepo, log)
+		deps.MaintenanceHdr = server.NewMaintenanceHandler(maintRepo, log)
+		deps.BrandingHdr = server.NewBrandingHandler(brandingRepo, st, log)
+		deps.ReportHdr = server.NewReportHandler(reportRepo, brandingRepo, st, pdfGen, log)
 		deps.AuthMiddleware = server.NewAuthMiddleware(sessionRepo, userRepo, cfg)
 		deps.TenantMiddleware = server.NewTenantMiddleware(orgRepo, sessionRepo)
 	}

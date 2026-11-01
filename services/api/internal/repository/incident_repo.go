@@ -31,13 +31,18 @@ type IncidentFilter struct {
 }
 
 type UptimeReport struct {
-	UptimePercentage float64    `json:"uptime_percentage"`
-	TotalSeconds     int64      `json:"total_seconds"`
-	OutageSeconds    int64      `json:"outage_seconds"`
-	IncidentCount    int        `json:"incident_count"`
-	CoverageStart    time.Time  `json:"coverage_start"`
-	CoverageEnd      time.Time  `json:"coverage_end"`
-	LimitationNotice string     `json:"limitation_notice"`
+	UptimePercentage     *float64  `json:"uptime_percentage"`
+	CoveragePercentage   float64   `json:"coverage_percentage"`
+	InsufficientData     bool      `json:"insufficient_data"`
+	TotalSeconds         int64     `json:"total_seconds"`
+	OutageSeconds        int64     `json:"outage_seconds"`
+	IncidentCount        int       `json:"incident_count"`
+	TotalScheduledChecks int       `json:"total_scheduled_checks"`
+	SuccessfulChecks     int       `json:"successful_checks"`
+	FailedChecks         int       `json:"failed_checks"`
+	CoverageStart        time.Time `json:"coverage_start"`
+	CoverageEnd          time.Time `json:"coverage_end"`
+	LimitationNotice     string    `json:"limitation_notice"`
 }
 
 type IncidentRepository struct {
@@ -569,17 +574,23 @@ func (r *IncidentRepository) CalculateMonitorUptime(ctx context.Context, orgID, 
 	err := WithTenantTx(ctx, r.pool, orgID, func(tx pgx.Tx) error {
 		var monitorCreatedAt time.Time
 		var monitorStatus string
+		var monitorIsActive bool
 
 		err := tx.QueryRow(ctx, `
-			SELECT created_at, status
+			SELECT created_at, status, is_active
 			FROM monitors
 			WHERE id = $1 AND organization_id = $2
-		`, monitorID, orgID).Scan(&monitorCreatedAt, &monitorStatus)
+		`, monitorID, orgID).Scan(&monitorCreatedAt, &monitorStatus, &monitorIsActive)
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return ErrMonitorNotFound
 			}
 			return err
+		}
+
+		totalRequestedSec := int64(window.Seconds())
+		if totalRequestedSec <= 0 {
+			totalRequestedSec = 1
 		}
 
 		coverageStart := windowStart
@@ -588,12 +599,58 @@ func (r *IncidentRepository) CalculateMonitorUptime(ctx context.Context, orgID, 
 		}
 		coverageEnd := now
 
-		totalSec := int64(coverageEnd.Sub(coverageStart).Seconds())
+		var totalSec int64
+		if coverageEnd.After(coverageStart) {
+			totalSec = int64(coverageEnd.Sub(coverageStart).Seconds())
+		}
 		if totalSec <= 0 {
 			totalSec = 1
 		}
 
-		// Find all incidents for this monitor that intersect with the coverage window
+		coveragePct := (float64(totalSec) / float64(totalRequestedSec)) * 100.0
+		if coveragePct > 100.0 {
+			coveragePct = 100.0
+		}
+		if coveragePct < 0.0 {
+			coveragePct = 0.0
+		}
+
+		// 1. Query ONLY scheduled checks (strictly excluding manual checks)
+		var totalChecks, successChecks, failureChecks int
+		err = tx.QueryRow(ctx, `
+			SELECT 
+				COUNT(*),
+				COUNT(*) FILTER (WHERE result = 'success'),
+				COUNT(*) FILTER (WHERE result IN ('failure', 'timeout', 'blocked', 'error'))
+			FROM check_results
+			WHERE monitor_id = $1 AND organization_id = $2
+			  AND execution_type = 'scheduled'
+			  AND created_at >= $3 AND created_at <= $4
+		`, monitorID, orgID, coverageStart, coverageEnd).Scan(&totalChecks, &successChecks, &failureChecks)
+		if err != nil {
+			return fmt.Errorf("failed to query scheduled check results: %w", err)
+		}
+
+		// If no scheduled checks exist in the window, do NOT fabricate or assume 100% uptime.
+		if totalChecks == 0 {
+			report = UptimeReport{
+				UptimePercentage:     nil,
+				CoveragePercentage:   coveragePct,
+				InsufficientData:     true,
+				TotalSeconds:         totalSec,
+				OutageSeconds:        0,
+				IncidentCount:        0,
+				TotalScheduledChecks: 0,
+				SuccessfulChecks:     0,
+				FailedChecks:         0,
+				CoverageStart:        coverageStart,
+				CoverageEnd:          coverageEnd,
+				LimitationNotice:     "Insufficient monitoring data. No scheduled check results exist for the requested window. Manual checks are excluded.",
+			}
+			return nil
+		}
+
+		// 2. Query incidents intersecting with the coverage window
 		rows, err := tx.Query(ctx, `
 			SELECT confirmed_at, resolved_at
 			FROM incidents
@@ -651,13 +708,18 @@ func (r *IncidentRepository) CalculateMonitorUptime(ctx context.Context, orgID, 
 		}
 
 		report = UptimeReport{
-			UptimePercentage: percentage,
-			TotalSeconds:     totalSec,
-			OutageSeconds:    totalOutageSec,
-			IncidentCount:    incCount,
-			CoverageStart:    coverageStart,
-			CoverageEnd:      coverageEnd,
-			LimitationNotice: "Calculated from confirmed incident detections and scheduled check history. Outage start is estimated at first confirmed failure. Manual checks are excluded.",
+			UptimePercentage:     &percentage,
+			CoveragePercentage:   coveragePct,
+			InsufficientData:     false,
+			TotalSeconds:         totalSec,
+			OutageSeconds:        totalOutageSec,
+			IncidentCount:        incCount,
+			TotalScheduledChecks: totalChecks,
+			SuccessfulChecks:     successChecks,
+			FailedChecks:         failureChecks,
+			CoverageStart:        coverageStart,
+			CoverageEnd:          coverageEnd,
+			LimitationNotice:     "Calculated from confirmed incident detections and scheduled check history. Outage start is estimated at first confirmed failure. Manual checks and paused periods are excluded.",
 		}
 		return nil
 	})

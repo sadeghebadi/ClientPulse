@@ -31,6 +31,8 @@ import {
   ExternalLink,
   Radio,
   AlertOctagon,
+  Wrench,
+  FileText,
 } from "lucide-react";
 import { MetricCard } from "@/components/ui/MetricCard";
 import { Badge } from "@/components/ui/Badge";
@@ -84,6 +86,7 @@ export default function Home() {
 
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [clients, setClients] = useState<ClientSummary[]>([]);
+  const [recentActivities, setRecentActivities] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<any>(null);
 
@@ -98,10 +101,12 @@ export default function Home() {
     Promise.all([
       apiFetch<DashboardStats>("/api/v1/dashboard/stats"),
       apiFetch<{ clients: ClientSummary[] }>("/api/v1/clients?limit=5&status=active"),
+      apiFetch<{ activities: any[] }>("/api/v1/maintenance-activities?limit=5").catch(() => ({ activities: [] })),
     ])
-      .then(([statsData, clientsData]) => {
+      .then(([statsData, clientsData, actData]) => {
         setStats(statsData);
         setClients(clientsData.clients || []);
+        setRecentActivities(actData.activities || []);
       })
       .catch((err) => {
         setError(err);
@@ -118,11 +123,13 @@ export default function Home() {
     Promise.all([
       apiFetch<DashboardStats>("/api/v1/dashboard/stats"),
       apiFetch<{ clients: ClientSummary[] }>("/api/v1/clients?limit=5&status=active"),
+      apiFetch<{ activities: any[] }>("/api/v1/maintenance-activities?limit=5").catch(() => ({ activities: [] })),
     ])
-      .then(([statsData, clientsData]) => {
+      .then(([statsData, clientsData, actData]) => {
         if (isMounted) {
           setStats(statsData);
           setClients(clientsData.clients || []);
+          setRecentActivities(actData.activities || []);
         }
       })
       .catch((err) => {
@@ -187,6 +194,16 @@ export default function Home() {
               <Link href="/heartbeats/new">
                 <Button size="sm" variant="secondary" icon={<Radio className="w-4 h-4" />}>
                   {t.createHeartbeat}
+                </Button>
+              </Link>
+              <Link href="/maintenance">
+                <Button size="sm" variant="secondary" icon={<Wrench className="w-4 h-4" />}>
+                  {t.maintenance}
+                </Button>
+              </Link>
+              <Link href="/reports">
+                <Button size="sm" variant="secondary" icon={<FileText className="w-4 h-4" />}>
+                  {t.reports}
                 </Button>
               </Link>
             </div>
@@ -557,6 +574,77 @@ export default function Home() {
                 </Link>
               </div>
             </div>
+          </div>
+
+          {/* Section 5.5: Recent Maintenance Activities */}
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+            <div className="p-6 border-b border-slate-100 flex items-center justify-between">
+              <div>
+                <h2 className="text-base font-bold text-slate-900 tracking-tight flex items-center gap-2">
+                  <Wrench className="w-5 h-5 text-indigo-600" />
+                  <span>{t.maintenance}</span>
+                </h2>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  {isRTL
+                    ? "اقدامات و کارهای اخیر انجام‌شده برای سایت‌های مشتریان جهت درج در گزارش‌های ماهانه."
+                    : "Recent maintenance work performed for client assets, ready for monthly care reporting."}
+                </p>
+              </div>
+              <Link href="/maintenance">
+                <Button size="sm" variant="outline">
+                  {isRTL ? "مشاهده همه کارها" : "View All"}
+                </Button>
+              </Link>
+            </div>
+
+            {recentActivities.length === 0 ? (
+              <div className="p-8 text-center text-slate-400 text-xs">
+                {t.noActivitiesFound}
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-sm" dir={isRTL ? "rtl" : "ltr"}>
+                  <thead className="bg-slate-50 text-slate-600 text-xs uppercase font-semibold border-b border-slate-200">
+                    <tr>
+                      <th className="px-5 py-3.5">{t.clientName}</th>
+                      <th className="px-5 py-3.5">{t.activityTitle}</th>
+                      <th className="px-5 py-3.5">{t.activityCategory}</th>
+                      <th className="px-5 py-3.5">{t.activityPerformedAt}</th>
+                      <th className="px-5 py-3.5">{t.activityDuration}</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 text-xs">
+                    {recentActivities.map((act) => (
+                      <tr key={act.id} className="hover:bg-slate-50/70 transition-colors">
+                        <td className="px-5 py-3.5 font-medium text-slate-900">
+                          {act.client_name || act.client_id}
+                        </td>
+                        <td className="px-5 py-3.5">
+                          <span className="font-semibold text-slate-800">{act.title}</span>
+                          {act.asset_name && (
+                            <span className="text-slate-400 text-[11px] block">{act.asset_name}</span>
+                          )}
+                        </td>
+                        <td className="px-5 py-3.5">
+                          <span className="px-2 py-0.5 text-[11px] font-medium rounded-full bg-slate-100 text-slate-700">
+                            {act.category}
+                          </span>
+                        </td>
+                        <td className="px-5 py-3.5 text-slate-500">
+                          {new Date(act.performed_at).toLocaleDateString(locale === "fa" ? "fa-IR" : "en-US", {
+                            month: "short",
+                            day: "numeric",
+                          })}
+                        </td>
+                        <td className="px-5 py-3.5 text-slate-600">
+                          {act.duration_minutes ? `${act.duration_minutes} min` : "—"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
 
           {/* Section 6: Live Infrastructure Health Checker */}

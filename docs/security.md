@@ -289,3 +289,31 @@ As mandated by PRD **FR-AUTH-01**, unverified accounts have restricted access:
 3. **RLS Definer Policy Coexistence:** To prevent bypass of `FORCE ROW LEVEL SECURITY` while allowing atomic background worker claims across tenants, definer functions (`claim_missed_heartbeats`, `lookup_heartbeat_by_token_hash`) are owned by `clientpulse_definer` with explicit RLS definer policies (`heartbeat_monitors_definer_policy`, `monitors_definer_policy`). Runtime users cannot assume this definer role.
 4. **Append-Only Immutable Event Log:** `notification_events` rows are strictly append-only. UPDATE and DELETE privileges are revoked from the application role. Deterministic idempotency keys prevent duplicate notification spam during flapping or repeated checks.
 
+---
+
+## 8. Maintenance, Branding, Reports & Sharing Security Controls (Phase 4)
+
+### 8.1 White-Label Logo Upload Sanitization & XSS Defense
+1. **MIME-Type Sniffing:** Verifies actual magic bytes of uploaded files using Go's `http.DetectContentType`. File extensions are untrusted.
+2. **Explicit SVG Upload Rejection:** Scalable Vector Graphics (SVG) uploads are strictly rejected because SVGs can contain embedded JavaScript, `<foreignObject>` tags, or CSS-based external entity requests (SSRF/XSS).
+3. **Allowed Formats:** Only `image/png`, `image/jpeg`, and `image/webp` are permitted.
+4. **Dimension & Size Limits:** Maximum upload size is strictly clamped at 2MB (`http.MaxBytesReader`). Image dimensions are decoded and validated.
+5. **Isolated Storage Keys:** Logos are saved under randomly generated UUID keys (`logos/<org_id>/<random_uuid>.ext`). Original file names are discarded.
+6. **Data URI Embedding in PDF Engine:** Logos are converted to base64 Data URIs during PDF generation to eliminate local file path disclosures or external network round-trips.
+
+### 8.2 Immutable Report Snapshots & Audit Trails
+1. **JSONB Snapshot Preservation:** The entire state of a generated report is sealed into `reports.snapshot_json` with its corresponding `version_number` and `template_version`.
+2. **Post-Report Mutation Auditing:** If a user edits or deletes a maintenance activity whose `performed_at` falls within the period of an existing report for that client, an audit entry is automatically recorded:
+   - Action: `maintenance_activity.updated_after_report`
+   - Metadata: captures `activity_id`, `client_id`, `performed_at`, and `included_in_report: true`.
+3. **Zero Snapshot Tampering:** Editing underlying activities or check results has zero effect on already-generated report snapshots. New snapshots require generating a new report version.
+
+### 8.3 Cryptographically Secure Report Sharing
+1. **32-Byte Token Material:** Generated using `crypto/rand` with 256 bits of entropy (`cp_sh_<64-hex>`).
+2. **Digest-Only Storage:** Raw share tokens are never stored in PostgreSQL; only their SHA-256 digests (`token_hash`) are persisted in `report_share_tokens`.
+3. **Narrow Security Definer Lookup:** Public queries call `lookup_report_by_share_token_hash(p_token_hash TEXT)` with `SET search_path = public, pg_temp`. The query validates that the link is not expired (`expires_at IS NULL OR expires_at > NOW()`) and not revoked (`revoked_at IS NULL`).
+4. **Instant Revocation:** Clicking "Revoke" sets `revoked_at = NOW()`, causing all subsequent requests to return an immediate generic 404.
+5. **No Tenant ID Leakage:** Public URLs and JSON error responses do not disclose organization IDs, client IDs, internal database primary keys, or storage paths.
+6. **Rate Limiting:** Public endpoints (`/public/reports/:token` and `/public/reports/:token/pdf`) are rate-limited per client IP (60 req/min).
+7. **Access Log Redaction:** The server request logger automatically redacts raw tokens from HTTP logs: `/public/reports/[REDACTED]`.
+

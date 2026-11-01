@@ -112,3 +112,58 @@ func TestCORSMiddleware(t *testing.T) {
 	}
 }
 
+func TestHeartbeatTokenRedactionInRequestLogger(t *testing.T) {
+	var buf bytes.Buffer
+	log := logger.New("development", &buf)
+
+	testHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	h := RequestLogger(log)(testHandler)
+
+	rawSecretToken := "hb_sec_9999abcdef0123456789deadbeefcafebabe"
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/heartbeat-pings/"+rawSecretToken, nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	logOutput := buf.String()
+
+	// Prove that raw secret token never appears anywhere in recorded log
+	if bytes.Contains(buf.Bytes(), []byte(rawSecretToken)) {
+		t.Fatalf("SECURITY VIOLATION: raw heartbeat token was found in request log output: %s", logOutput)
+	}
+
+	// Verify that the sanitized path was logged with [REDACTED]
+	if !bytes.Contains(buf.Bytes(), []byte("/api/v1/heartbeat-pings/[REDACTED]")) {
+		t.Errorf("expected redacted path in log output, got: %s", logOutput)
+	}
+}
+
+func TestPublicReportTokenRedactionInRequestLogger(t *testing.T) {
+	var buf bytes.Buffer
+	log := logger.New("development", &buf)
+
+	testHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	h := RequestLogger(log)(testHandler)
+
+	rawShareToken := "cp_share_super_secret_report_token_12345678"
+	req := httptest.NewRequest(http.MethodGet, "/public/reports/"+rawShareToken+"/pdf", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	logOutput := buf.String()
+
+	if bytes.Contains(buf.Bytes(), []byte(rawShareToken)) {
+		t.Fatalf("SECURITY VIOLATION: raw report share token was found in request log output: %s", logOutput)
+	}
+
+	if !bytes.Contains(buf.Bytes(), []byte("/public/reports/[REDACTED]/pdf")) {
+		t.Errorf("expected redacted report path in log output, got: %s", logOutput)
+	}
+}
+
+

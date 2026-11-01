@@ -20,6 +20,9 @@ import {
   Languages,
   Radio,
   AlertTriangle,
+  Wrench,
+  FileText,
+  Palette,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
 import { useI18n } from "@/lib/i18n";
@@ -71,6 +74,24 @@ export function AppLayout({ children }: AppLayoutProps) {
       href: "/incidents",
       icon: <AlertTriangle className="w-4 h-4" />,
       active: pathname.startsWith("/incidents"),
+    },
+    {
+      label: t.maintenance,
+      href: "/maintenance",
+      icon: <Wrench className="w-4 h-4" />,
+      active: pathname.startsWith("/maintenance"),
+    },
+    {
+      label: t.reports,
+      href: "/reports",
+      icon: <FileText className="w-4 h-4" />,
+      active: pathname.startsWith("/reports"),
+    },
+    {
+      label: t.agencyBranding,
+      href: "/settings/branding",
+      icon: <Palette className="w-4 h-4" />,
+      active: pathname === "/settings/branding",
     },
     {
       label: t.members,
