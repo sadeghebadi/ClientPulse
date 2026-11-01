@@ -167,14 +167,16 @@ func (r *OrganizationRepository) AddMember(ctx context.Context, orgID, userID, r
 	`
 
 	m := &Membership{}
-	err := r.pool.QueryRow(ctx, query, orgID, userID, role).Scan(
-		&m.ID,
-		&m.OrganizationID,
-		&m.UserID,
-		&m.Role,
-		&m.CreatedAt,
-		&m.UpdatedAt,
-	)
+	err := WithTenantTx(ctx, r.pool, orgID, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, query, orgID, userID, role).Scan(
+			&m.ID,
+			&m.OrganizationID,
+			&m.UserID,
+			&m.Role,
+			&m.CreatedAt,
+			&m.UpdatedAt,
+		)
+	})
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
@@ -199,18 +201,20 @@ func (r *OrganizationRepository) GetMembership(ctx context.Context, orgID, userI
 	`
 
 	m := &Membership{}
-	err := r.pool.QueryRow(ctx, query, orgID, userID).Scan(
-		&m.ID,
-		&m.OrganizationID,
-		&m.UserID,
-		&m.Role,
-		&m.CreatedAt,
-		&m.UpdatedAt,
-		&m.OrgName,
-		&m.OrgSlug,
-		&m.UserEmail,
-		&m.UserDisplayName,
-	)
+	err := WithUserTx(ctx, r.pool, userID, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, query, orgID, userID).Scan(
+			&m.ID,
+			&m.OrganizationID,
+			&m.UserID,
+			&m.Role,
+			&m.CreatedAt,
+			&m.UpdatedAt,
+			&m.OrgName,
+			&m.OrgSlug,
+			&m.UserEmail,
+			&m.UserDisplayName,
+		)
+	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrMembershipNotFound
@@ -234,31 +238,37 @@ func (r *OrganizationRepository) ListUserMemberships(ctx context.Context, userID
 		ORDER BY m.created_at ASC
 	`
 
-	rows, err := r.pool.Query(ctx, query, userID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to query user memberships: %w", err)
-	}
-	defer rows.Close()
-
 	var list []Membership
-	for rows.Next() {
-		var m Membership
-		err := rows.Scan(
-			&m.ID,
-			&m.OrganizationID,
-			&m.UserID,
-			&m.Role,
-			&m.CreatedAt,
-			&m.UpdatedAt,
-			&m.OrgName,
-			&m.OrgSlug,
-			&m.UserEmail,
-			&m.UserDisplayName,
-		)
+	err := WithUserTx(ctx, r.pool, userID, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, query, userID)
 		if err != nil {
-			return nil, fmt.Errorf("failed to scan membership: %w", err)
+			return fmt.Errorf("failed to query user memberships: %w", err)
 		}
-		list = append(list, m)
+		defer rows.Close()
+
+		for rows.Next() {
+			var m Membership
+			err := rows.Scan(
+				&m.ID,
+				&m.OrganizationID,
+				&m.UserID,
+				&m.Role,
+				&m.CreatedAt,
+				&m.UpdatedAt,
+				&m.OrgName,
+				&m.OrgSlug,
+				&m.UserEmail,
+				&m.UserDisplayName,
+			)
+			if err != nil {
+				return fmt.Errorf("failed to scan membership: %w", err)
+			}
+			list = append(list, m)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 	return list, nil
 }
@@ -276,31 +286,37 @@ func (r *OrganizationRepository) ListOrganizationMembers(ctx context.Context, or
 		ORDER BY m.created_at ASC
 	`
 
-	rows, err := r.pool.Query(ctx, query, orgID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list organization members: %w", err)
-	}
-	defer rows.Close()
-
 	var list []Membership
-	for rows.Next() {
-		var m Membership
-		err := rows.Scan(
-			&m.ID,
-			&m.OrganizationID,
-			&m.UserID,
-			&m.Role,
-			&m.CreatedAt,
-			&m.UpdatedAt,
-			&m.OrgName,
-			&m.OrgSlug,
-			&m.UserEmail,
-			&m.UserDisplayName,
-		)
+	err := WithTenantTx(ctx, r.pool, orgID, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, query, orgID)
 		if err != nil {
-			return nil, fmt.Errorf("failed to scan membership: %w", err)
+			return fmt.Errorf("failed to list organization members: %w", err)
 		}
-		list = append(list, m)
+		defer rows.Close()
+
+		for rows.Next() {
+			var m Membership
+			err := rows.Scan(
+				&m.ID,
+				&m.OrganizationID,
+				&m.UserID,
+				&m.Role,
+				&m.CreatedAt,
+				&m.UpdatedAt,
+				&m.OrgName,
+				&m.OrgSlug,
+				&m.UserEmail,
+				&m.UserDisplayName,
+			)
+			if err != nil {
+				return fmt.Errorf("failed to scan membership: %w", err)
+			}
+			list = append(list, m)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 	return list, nil
 }
@@ -312,14 +328,16 @@ func (r *OrganizationRepository) UpdateMemberRole(ctx context.Context, orgID, us
 		SET role = $1, updated_at = NOW()
 		WHERE organization_id = $2 AND user_id = $3
 	`
-	cmdTag, err := r.pool.Exec(ctx, query, newRole, orgID, userID)
-	if err != nil {
-		return fmt.Errorf("failed to update member role: %w", err)
-	}
-	if cmdTag.RowsAffected() == 0 {
-		return ErrMembershipNotFound
-	}
-	return nil
+	return WithTenantTx(ctx, r.pool, orgID, func(tx pgx.Tx) error {
+		cmdTag, err := tx.Exec(ctx, query, newRole, orgID, userID)
+		if err != nil {
+			return fmt.Errorf("failed to update member role: %w", err)
+		}
+		if cmdTag.RowsAffected() == 0 {
+			return ErrMembershipNotFound
+		}
+		return nil
+	})
 }
 
 // RemoveMember deletes a membership from an organization.
@@ -328,14 +346,16 @@ func (r *OrganizationRepository) RemoveMember(ctx context.Context, orgID, userID
 		DELETE FROM organization_memberships
 		WHERE organization_id = $1 AND user_id = $2
 	`
-	cmdTag, err := r.pool.Exec(ctx, query, orgID, userID)
-	if err != nil {
-		return fmt.Errorf("failed to remove member: %w", err)
-	}
-	if cmdTag.RowsAffected() == 0 {
-		return ErrMembershipNotFound
-	}
-	return nil
+	return WithTenantTx(ctx, r.pool, orgID, func(tx pgx.Tx) error {
+		cmdTag, err := tx.Exec(ctx, query, orgID, userID)
+		if err != nil {
+			return fmt.Errorf("failed to remove member: %w", err)
+		}
+		if cmdTag.RowsAffected() == 0 {
+			return ErrMembershipNotFound
+		}
+		return nil
+	})
 }
 
 // CountOwners returns the number of owners in an organization.

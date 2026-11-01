@@ -1,11 +1,18 @@
 "use client";
 
 import React, { useState, useEffect, useCallback } from "react";
-import { Header } from "@/components/Header";
+import { AppLayout } from "@/components/AppLayout";
 import { useAuth } from "@/lib/auth-context";
 import { useI18n } from "@/lib/i18n";
 import { apiFetch } from "@/lib/api";
-import { Users, UserPlus, Shield, Trash2, AlertCircle } from "lucide-react";
+import { Users, UserPlus, Shield, Trash2 } from "lucide-react";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { Button } from "@/components/ui/Button";
+import { Badge } from "@/components/ui/Badge";
+import { ErrorState } from "@/components/ui/ErrorState";
+import { TableSkeleton } from "@/components/ui/LoadingSkeleton";
+import { ConfirmModal } from "@/components/ui/ConfirmModal";
+import { useToast } from "@/components/ui/Toast";
 
 interface MemberItem {
   id: string;
@@ -19,24 +26,33 @@ interface MemberItem {
 export default function MembersSettingsPage() {
   const { user, activeOrg, role } = useAuth();
   const { t } = useI18n();
+  const toast = useToast();
 
   const [members, setMembers] = useState<MemberItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<any>(null);
 
   const [newEmail, setNewEmail] = useState("");
   const [newRole, setNewRole] = useState("member");
   const [addLoading, setAddLoading] = useState(false);
 
-  const fetchMembers = useCallback(async () => {
+  // Remove Modal
+  const [targetMember, setTargetMember] = useState<MemberItem | null>(null);
+  const [removeModalOpen, setRemoveModalOpen] = useState(false);
+  const [removeLoading, setRemoveLoading] = useState(false);
+
+  const loadMembers = useCallback(async () => {
     if (!activeOrg) return;
     try {
-      const data = await apiFetch<{ members: MemberItem[] }>("/api/v1/organizations/current/members", {
-        headers: { "X-Organization-ID": activeOrg.id },
-      });
+      const data = await apiFetch<{ members: MemberItem[] }>(
+        "/api/v1/organizations/current/members",
+        {
+          headers: { "X-Organization-ID": activeOrg.id },
+        }
+      );
       setMembers(data.members || []);
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Failed to load members");
+    } catch (err) {
+      setError(err);
     } finally {
       setLoading(false);
     }
@@ -45,22 +61,27 @@ export default function MembersSettingsPage() {
   useEffect(() => {
     if (!activeOrg) return;
     let isMounted = true;
-    apiFetch<{ members: MemberItem[] }>("/api/v1/organizations/current/members", {
-      headers: { "X-Organization-ID": activeOrg.id },
-    })
+    apiFetch<{ members: MemberItem[] }>(
+      "/api/v1/organizations/current/members",
+      {
+        headers: { "X-Organization-ID": activeOrg.id },
+      }
+    )
       .then((data) => {
         if (isMounted) {
           setMembers(data.members || []);
-          setLoading(false);
         }
       })
-      .catch((err: unknown) => {
+      .catch((err) => {
         if (isMounted) {
-          setError(err instanceof Error ? err.message : "Failed to load members");
+          setError(err);
+        }
+      })
+      .finally(() => {
+        if (isMounted) {
           setLoading(false);
         }
       });
-
     return () => {
       isMounted = false;
     };
@@ -68,7 +89,7 @@ export default function MembersSettingsPage() {
 
   const handleAddMember = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newEmail.trim() || !activeOrg) return;
+    if (!newEmail.trim() || !activeOrg || addLoading) return;
 
     setAddLoading(true);
     setError(null);
@@ -76,12 +97,13 @@ export default function MembersSettingsPage() {
       await apiFetch("/api/v1/organizations/current/members", {
         method: "POST",
         headers: { "X-Organization-ID": activeOrg.id },
-        body: JSON.stringify({ email: newEmail, role: newRole }),
+        body: JSON.stringify({ email: newEmail.trim(), role: newRole }),
       });
+      toast.success(`Member invited: ${newEmail.trim()}`);
       setNewEmail("");
-      await fetchMembers();
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Failed to add member");
+      await loadMembers();
+    } catch (err) {
+      setError(err);
     } finally {
       setAddLoading(false);
     }
@@ -96,25 +118,29 @@ export default function MembersSettingsPage() {
         headers: { "X-Organization-ID": activeOrg.id },
         body: JSON.stringify({ role: roleValue }),
       });
-      await fetchMembers();
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Failed to change role");
+      toast.success("Member role updated");
+      await loadMembers();
+    } catch (err) {
+      setError(err);
     }
   };
 
-  const handleRemoveMember = async (targetUserID: string) => {
-    if (!activeOrg) return;
-    if (!confirm(t.confirmRemoveMember)) return;
-
-    setError(null);
+  const handleConfirmRemove = async () => {
+    if (!activeOrg || !targetMember) return;
     try {
-      await apiFetch(`/api/v1/organizations/current/members/${targetUserID}`, {
+      setRemoveLoading(true);
+      await apiFetch(`/api/v1/organizations/current/members/${targetMember.user_id}`, {
         method: "DELETE",
         headers: { "X-Organization-ID": activeOrg.id },
       });
-      await fetchMembers();
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Failed to remove member");
+      toast.success("Member removed from organization");
+      setRemoveModalOpen(false);
+      setTargetMember(null);
+      await loadMembers();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to remove member");
+    } finally {
+      setRemoveLoading(false);
     }
   };
 
@@ -122,138 +148,149 @@ export default function MembersSettingsPage() {
   const isOwner = role === "owner";
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col">
-      <Header />
-      <main className="max-w-4xl mx-auto px-4 sm:px-6 py-8 w-full flex-1">
-        <div className="flex items-center justify-between mb-8">
-          <div>
-            <h1 className="text-2xl font-bold text-slate-900 tracking-tight">{t.members}</h1>
-            <p className="text-xs text-slate-500 mt-1">
-              Manage organization members and role permissions for {activeOrg?.name || "your workspace"}.
-            </p>
-          </div>
-        </div>
+    <AppLayout>
+      <PageHeader
+        title={t.members}
+        description={`Manage team members and authorization roles for ${activeOrg?.name || "your workspace"}.`}
+        icon={<Users className="w-5 h-5" />}
+      />
 
-        {error && (
-          <div className="mb-6 p-3 bg-red-50 border border-red-200 rounded-lg flex items-start gap-2.5 text-xs text-red-700">
-            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-red-500" />
-            <span>{error}</span>
-          </div>
-        )}
+      {error && <ErrorState error={error} className="mb-6" />}
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-          {/* Members List */}
-          <div className="md:col-span-2 space-y-3">
-            {loading ? (
-              <p className="text-xs text-slate-500 py-4">{t.loading}</p>
-            ) : members.length === 0 ? (
-              <p className="text-xs text-slate-500 py-4">{t.noMembers}</p>
-            ) : (
-              members.map((m) => (
-                <div
-                  key={m.id}
-                  className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex items-center justify-between"
-                >
-                  <div className="flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-full bg-slate-100 text-slate-700 font-bold text-xs flex items-center justify-center">
-                      {(m.user_display_name || m.user_email || "?").charAt(0).toUpperCase()}
-                    </div>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+        {/* Members List */}
+        <div className="md:col-span-2 space-y-4">
+          {loading ? (
+            <TableSkeleton rows={4} cols={3} />
+          ) : members.length === 0 ? (
+            <div className="p-8 text-center bg-white rounded-2xl border border-slate-200 text-xs text-slate-500">
+              {t.noMembers}
+            </div>
+          ) : (
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden divide-y divide-slate-100">
+              {members.map((m) => {
+                const isSelf = m.user_id === user?.id;
+                return (
+                  <div key={m.id} className="p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                     <div>
                       <div className="flex items-center gap-2">
-                        <span className="text-xs font-bold text-slate-900">{m.user_display_name}</span>
-                        {m.user_id === user?.id && (
-                          <span className="text-[10px] text-slate-400 font-medium">(You)</span>
+                        <span className="font-bold text-sm text-slate-900">
+                          {m.user_display_name || "Team Member"}
+                        </span>
+                        {isSelf && (
+                          <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-blue-100 text-blue-800">
+                            You
+                          </span>
                         )}
                       </div>
-                      <p className="text-[11px] text-slate-500">{m.user_email}</p>
+                      <div className="text-xs text-slate-500 font-mono mt-0.5">{m.user_email}</div>
+                    </div>
+
+                    <div className="flex items-center gap-3">
+                      {isOwner && !isSelf ? (
+                        <select
+                          value={m.role}
+                          onChange={(e) => handleRoleChange(m.user_id, e.target.value)}
+                          className="px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        >
+                          <option value="owner">{t.roleOwner}</option>
+                          <option value="admin">{t.roleAdmin}</option>
+                          <option value="member">{t.roleMember}</option>
+                          <option value="viewer">{t.roleViewer}</option>
+                        </select>
+                      ) : (
+                        <Badge variant={m.role} />
+                      )}
+
+                      {canManageMembers && !isSelf && (
+                        <button
+                          onClick={() => {
+                            setTargetMember(m);
+                            setRemoveModalOpen(true)}
+                          }
+                          className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors border border-slate-200"
+                          title={t.remove}
+                          aria-label={t.remove}
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
                     </div>
                   </div>
-
-                  <div className="flex items-center gap-3">
-                    {isOwner && m.user_id !== user?.id ? (
-                      <select
-                        value={m.role}
-                        onChange={(e) => handleRoleChange(m.user_id, e.target.value)}
-                        className="text-xs border border-slate-300 rounded-md px-2 py-1 bg-white font-medium text-slate-700"
-                      >
-                        <option value="owner">{t.roleOwner}</option>
-                        <option value="admin">{t.roleAdmin}</option>
-                        <option value="member">{t.roleMember}</option>
-                        <option value="viewer">{t.roleViewer}</option>
-                      </select>
-                    ) : (
-                      <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-slate-700 bg-slate-100 px-2 py-0.5 rounded border border-slate-200 capitalize">
-                        <Shield className="w-3 h-3 text-slate-400" />
-                        {m.role}
-                      </span>
-                    )}
-
-                    {canManageMembers && (isOwner || m.role !== "owner") && m.user_id !== user?.id && (
-                      <button
-                        onClick={() => handleRemoveMember(m.user_id)}
-                        className="p-1 text-slate-400 hover:text-red-600 transition-colors"
-                        title={t.remove}
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    )}
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-
-          {/* Add Member Card */}
-          {canManageMembers && (
-            <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm h-fit">
-              <div className="flex items-center gap-2 mb-4">
-                <UserPlus className="w-4 h-4 text-blue-600" />
-                <h2 className="text-sm font-bold text-slate-900">{t.addMember}</h2>
-              </div>
-
-              <form onSubmit={handleAddMember} className="space-y-3.5">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    {t.memberEmail}
-                  </label>
-                  <input
-                    type="email"
-                    required
-                    value={newEmail}
-                    onChange={(e) => setNewEmail(e.target.value)}
-                    className="w-full px-3 py-1.5 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    placeholder="teammate@agency.com"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    {t.role}
-                  </label>
-                  <select
-                    value={newRole}
-                    onChange={(e) => setNewRole(e.target.value)}
-                    className="w-full px-3 py-1.5 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-                  >
-                    {isOwner && <option value="owner">{t.roleOwner}</option>}
-                    <option value="admin">{t.roleAdmin}</option>
-                    <option value="member">{t.roleMember}</option>
-                    <option value="viewer">{t.roleViewer}</option>
-                  </select>
-                </div>
-
-                <button
-                  type="submit"
-                  disabled={addLoading}
-                  className="w-full py-2 px-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs rounded-lg shadow-sm transition-colors disabled:opacity-50"
-                >
-                  {addLoading ? t.loading : t.addMember}
-                </button>
-              </form>
+                );
+              })}
             </div>
           )}
         </div>
-      </main>
-    </div>
+
+        {/* Add Member Form (Admin/Owner only) */}
+        {canManageMembers && (
+          <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm h-fit">
+            <div className="flex items-center gap-2 mb-4">
+              <UserPlus className="w-4 h-4 text-blue-600" />
+              <h2 className="text-sm font-bold text-slate-900">{t.addMember}</h2>
+            </div>
+
+            <form onSubmit={handleAddMember} className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                  {t.memberEmail}
+                </label>
+                <input
+                  type="email"
+                  required
+                  disabled={addLoading}
+                  value={newEmail}
+                  onChange={(e) => setNewEmail(e.target.value)}
+                  className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all disabled:opacity-50"
+                  placeholder="colleague@agency.com"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                  {t.role}
+                </label>
+                <select
+                  disabled={addLoading}
+                  value={newRole}
+                  onChange={(e) => setNewRole(e.target.value)}
+                  className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
+                >
+                  <option value="admin">{t.roleAdmin} (Manage monitors, clients, reports)</option>
+                  <option value="member">{t.roleMember} (Standard view & maintenance)</option>
+                  <option value="viewer">{t.roleViewer} (Read-only dashboard access)</option>
+                </select>
+              </div>
+
+              <Button
+                type="submit"
+                variant="primary"
+                size="md"
+                loading={addLoading}
+                className="w-full"
+              >
+                {t.addMember}
+              </Button>
+            </form>
+          </div>
+        )}
+      </div>
+
+      {/* Remove Confirmation Modal */}
+      <ConfirmModal
+        isOpen={removeModalOpen}
+        onClose={() => {
+          setRemoveModalOpen(false);
+          setTargetMember(null);
+        }}
+        onConfirm={handleConfirmRemove}
+        title={t.remove}
+        message={t.confirmRemoveMember}
+        confirmLabel={t.remove}
+        variant="danger"
+        loading={removeLoading}
+      />
+    </AppLayout>
   );
 }

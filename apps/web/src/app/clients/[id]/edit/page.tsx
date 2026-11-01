@@ -3,17 +3,34 @@
 import React, { useState, useEffect, use } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Header } from "@/components/Header";
+import { AppLayout } from "@/components/AppLayout";
 import { useAuth } from "@/lib/auth-context";
 import { useI18n } from "@/lib/i18n";
 import { apiFetch } from "@/lib/api";
-import { Users, ArrowLeft, ArrowRight, AlertCircle } from "lucide-react";
+import { Users } from "lucide-react";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { Button } from "@/components/ui/Button";
+import { ErrorState } from "@/components/ui/ErrorState";
+import { TableSkeleton } from "@/components/ui/LoadingSkeleton";
+import { useToast } from "@/components/ui/Toast";
+
+interface ClientResponse {
+  client: {
+    id: string;
+    name: string;
+    contact_name?: string;
+    contact_email?: string;
+    website?: string;
+    notes?: string;
+  };
+}
 
 export default function EditClientPage({ params }: { params: Promise<{ id: string }> }) {
   const resolvedParams = use(params);
   const router = useRouter();
   const { user, activeOrg } = useAuth();
-  const { t, isRTL } = useI18n();
+  const { t } = useI18n();
+  const toast = useToast();
 
   const [name, setName] = useState("");
   const [contactName, setContactName] = useState("");
@@ -22,20 +39,20 @@ export default function EditClientPage({ params }: { params: Promise<{ id: strin
   const [notes, setNotes] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<any>(null);
 
   useEffect(() => {
     async function loadClient() {
       try {
         setLoading(true);
-        const data = await apiFetch<{ client: any }>(`/api/v1/clients/${resolvedParams.id}`);
+        const data = await apiFetch<ClientResponse>(`/api/v1/clients/${resolvedParams.id}`);
         setName(data.client.name || "");
         setContactName(data.client.contact_name || "");
         setContactEmail(data.client.contact_email || "");
         setWebsite(data.client.website || "");
         setNotes(data.client.notes || "");
-      } catch (err: any) {
-        setError(err?.message || "Failed to load client");
+      } catch (err) {
+        setError(err);
       } finally {
         setLoading(false);
       }
@@ -47,8 +64,9 @@ export default function EditClientPage({ params }: { params: Promise<{ id: strin
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (saving) return; // Prevent duplicate submission
     if (!name.trim()) {
-      setError("Client name is required");
+      setError(new Error(t.clientName + " is required"));
       return;
     }
 
@@ -66,130 +84,117 @@ export default function EditClientPage({ params }: { params: Promise<{ id: strin
         }),
       });
 
+      toast.success("Client details updated successfully");
       router.push(`/clients/${resolvedParams.id}`);
-    } catch (err: any) {
-      setError(err?.message || "Failed to update client");
+    } catch (err) {
+      setError(err);
       setSaving(false);
     }
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col">
-      <Header />
+    <AppLayout>
+      <div className="max-w-3xl mx-auto">
+        <PageHeader
+          title={t.editClient}
+          description="Update contact information, website, and maintenance notes."
+          icon={<Users className="w-5 h-5" />}
+          breadcrumbs={[
+            { label: t.clients, href: "/clients" },
+            { label: name || t.clientDetails, href: `/clients/${resolvedParams.id}` },
+            { label: t.editClient },
+          ]}
+        />
 
-      <main className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-8 flex-1 w-full">
-        <div className="mb-6">
-          <Link
-            href={`/clients/${resolvedParams.id}`}
-            className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500 hover:text-slate-800 transition-colors"
-          >
-            {isRTL ? <ArrowRight className="w-3.5 h-3.5" /> : <ArrowLeft className="w-3.5 h-3.5" />}
-            <span>{t.clientDetails}</span>
-          </Link>
-        </div>
-
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-          <div className="p-6 sm:p-8 border-b border-slate-100">
-            <h1 className="text-xl font-bold text-slate-900 tracking-tight flex items-center gap-2">
-              <Users className="w-6 h-6 text-blue-600" />
-              <span>{t.editClient}</span>
-            </h1>
-          </div>
-
-          {loading ? (
-            <div className="p-12 text-center text-slate-500 text-sm">{t.loading}</div>
-          ) : (
-            <form onSubmit={handleSubmit} className="p-6 sm:p-8 space-y-6">
-              {error && (
-                <div className="p-4 rounded-lg bg-red-50 border border-red-200 text-red-700 text-xs flex items-center gap-2">
-                  <AlertCircle className="w-4 h-4 flex-shrink-0" />
-                  <span>{error}</span>
-                </div>
-              )}
+        {loading ? (
+          <TableSkeleton rows={4} cols={2} />
+        ) : (
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden p-6 sm:p-8">
+            <form onSubmit={handleSubmit} className="space-y-6">
+              {error && <ErrorState error={error} className="mb-4" />}
 
               <div>
-                <label className="block text-xs font-semibold text-slate-700 uppercase mb-2">
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
                   {t.clientName} <span className="text-red-500">*</span>
                 </label>
                 <input
                   type="text"
                   required
+                  disabled={saving}
                   value={name}
                   onChange={(e) => setName(e.target.value)}
-                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all"
+                  className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all disabled:opacity-50"
                 />
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 uppercase mb-2">
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
                     {t.contactName}
                   </label>
                   <input
                     type="text"
+                    disabled={saving}
                     value={contactName}
                     onChange={(e) => setContactName(e.target.value)}
-                    className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all"
+                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all disabled:opacity-50"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 uppercase mb-2">
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
                     {t.contactEmail}
                   </label>
                   <input
                     type="email"
+                    disabled={saving}
                     value={contactEmail}
                     onChange={(e) => setContactEmail(e.target.value)}
-                    className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all"
+                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all disabled:opacity-50"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-700 uppercase mb-2">
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
                   {t.website}
                 </label>
                 <input
                   type="url"
+                  disabled={saving}
                   value={website}
                   onChange={(e) => setWebsite(e.target.value)}
-                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all"
+                  className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all disabled:opacity-50"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-700 uppercase mb-2">
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
                   {t.notes}
                 </label>
                 <textarea
                   rows={3}
+                  disabled={saving}
                   value={notes}
                   onChange={(e) => setNotes(e.target.value)}
-                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all"
+                  className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all disabled:opacity-50"
                 />
               </div>
 
               <div className="pt-4 flex items-center justify-end gap-3 border-t border-slate-100">
-                <Link
-                  href={`/clients/${resolvedParams.id}`}
-                  className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-800 transition-colors"
-                >
-                  {t.cancel}
+                <Link href={`/clients/${resolvedParams.id}`}>
+                  <Button variant="ghost" size="sm" disabled={saving}>
+                    {t.cancel}
+                  </Button>
                 </Link>
-                <button
-                  type="submit"
-                  disabled={saving}
-                  className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg text-xs font-semibold shadow-sm transition-colors"
-                >
-                  {saving ? t.loading : t.saveChanges}
-                </button>
+                <Button type="submit" variant="primary" size="md" loading={saving}>
+                  {t.saveChanges}
+                </Button>
               </div>
             </form>
-          )}
-        </div>
-      </main>
-    </div>
+          </div>
+        )}
+      </div>
+    </AppLayout>
   );
 }
-

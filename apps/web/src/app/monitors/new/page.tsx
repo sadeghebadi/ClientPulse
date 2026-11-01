@@ -3,11 +3,15 @@
 import React, { useState, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { Header } from "@/components/Header";
+import { AppLayout } from "@/components/AppLayout";
 import { useAuth } from "@/lib/auth-context";
 import { useI18n } from "@/lib/i18n";
 import { apiFetch } from "@/lib/api";
-import { Activity, ArrowLeft, ArrowRight, AlertCircle } from "lucide-react";
+import { Activity, Info } from "lucide-react";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { Button } from "@/components/ui/Button";
+import { ErrorState } from "@/components/ui/ErrorState";
+import { useToast } from "@/components/ui/Toast";
 
 interface AssetOption {
   id: string;
@@ -23,6 +27,7 @@ function NewMonitorContent() {
 
   const { user, activeOrg } = useAuth();
   const { t, isRTL } = useI18n();
+  const toast = useToast();
 
   const [assets, setAssets] = useState<AssetOption[]>([]);
   const [assetID, setAssetID] = useState(initialAssetID);
@@ -39,7 +44,7 @@ function NewMonitorContent() {
   const [jsonExpectedValue, setJsonExpectedValue] = useState("");
 
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<any>(null);
 
   useEffect(() => {
     if (!user || !activeOrg) return;
@@ -66,8 +71,10 @@ function NewMonitorContent() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (loading) return; // Prevent duplicate submission
+
     if (!assetID) {
-      setError("Please select an asset");
+      setError(new Error("Please select an asset to monitor"));
       return;
     }
 
@@ -93,56 +100,42 @@ function NewMonitorContent() {
         }),
       });
 
+      toast.success("Monitor configured successfully");
       router.push(`/monitors/${res.monitor.id}`);
-    } catch (err: any) {
-      setError(err?.message || "Failed to create monitor");
+    } catch (err) {
+      setError(err);
       setLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col">
-      <Header />
+    <AppLayout>
+      <div className="max-w-3xl mx-auto">
+        <PageHeader
+          title={t.createMonitor}
+          description="Configure automated check parameters, timeouts, SSL validation, and assertions."
+          icon={<Activity className="w-5 h-5" />}
+          breadcrumbs={[
+            { label: t.monitors, href: "/monitors" },
+            { label: t.createMonitor },
+          ]}
+        />
 
-      <main className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-8 flex-1 w-full">
-        <div className="mb-6">
-          <Link
-            href="/monitors"
-            className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500 hover:text-slate-800 transition-colors"
-          >
-            {isRTL ? <ArrowRight className="w-3.5 h-3.5" /> : <ArrowLeft className="w-3.5 h-3.5" />}
-            <span>{t.monitors}</span>
-          </Link>
-        </div>
-
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-          <div className="p-6 sm:p-8 border-b border-slate-100">
-            <h1 className="text-xl font-bold text-slate-900 tracking-tight flex items-center gap-2">
-              <Activity className="w-6 h-6 text-blue-600" />
-              <span>{t.createMonitor}</span>
-            </h1>
-            <p className="text-xs text-slate-500 mt-1">
-              Configure automated check parameters, timeouts, SSL validation, and assertions.
-            </p>
-          </div>
-
-          <form onSubmit={handleSubmit} className="p-6 sm:p-8 space-y-6">
-            {error && (
-              <div className="p-4 rounded-lg bg-red-50 border border-red-200 text-red-700 text-xs flex items-center gap-2">
-                <AlertCircle className="w-4 h-4 flex-shrink-0" />
-                <span>{error}</span>
-              </div>
-            )}
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden p-6 sm:p-8">
+          <form onSubmit={handleSubmit} className="space-y-6">
+            {error && <ErrorState error={error} className="mb-4" />}
 
             <div>
-              <label className="block text-xs font-semibold text-slate-700 uppercase mb-2">
+              <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
                 Target Website / Asset <span className="text-red-500">*</span>
               </label>
               <select
+                name="asset_id"
                 required
+                disabled={loading}
                 value={assetID}
                 onChange={(e) => setAssetID(e.target.value)}
-                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all"
+                className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all disabled:opacity-50"
               >
                 {assets.length === 0 ? (
                   <option value="">No assets registered. Please register an asset first.</option>
@@ -158,27 +151,31 @@ function NewMonitorContent() {
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
               <div>
-                <label className="block text-xs font-semibold text-slate-700 uppercase mb-2">
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
                   {t.method}
                 </label>
                 <select
+                  name="method"
+                  disabled={loading}
                   value={method}
                   onChange={(e) => setMethod(e.target.value)}
-                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
                 >
-                  <option value="GET">GET (Full response & body)</option>
-                  <option value="HEAD">HEAD (Headers only)</option>
+                  <option value="GET">GET (Full response body & TLS handshake)</option>
+                  <option value="HEAD">HEAD (Fast headers check)</option>
                 </select>
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-700 uppercase mb-2">
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
                   {t.interval}
                 </label>
                 <select
+                  name="interval"
+                  disabled={loading}
                   value={interval}
                   onChange={(e) => setInterval(Number(e.target.value))}
-                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
                 >
                   <option value={60}>60 seconds (1 minute)</option>
                   <option value={180}>180 seconds (3 minutes)</option>
@@ -189,58 +186,62 @@ function NewMonitorContent() {
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-slate-700 uppercase mb-2">
+              <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
                 URL Override (Optional)
               </label>
               <input
                 type="url"
+                disabled={loading}
                 value={urlOverride}
                 onChange={(e) => setUrlOverride(e.target.value)}
-                placeholder="Leave blank to use Asset URL"
-                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all"
+                placeholder="Leave blank to use base asset URL"
+                className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all font-mono disabled:opacity-50"
               />
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
               <div>
-                <label className="block text-xs font-semibold text-slate-700 uppercase mb-2">
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
                   {t.timeout} (3–30s)
                 </label>
                 <input
                   type="number"
                   min={3}
                   max={30}
+                  disabled={loading}
                   value={timeout}
                   onChange={(e) => setTimeout(Number(e.target.value))}
-                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-700 uppercase mb-2">
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
                   Min Expected Status
                 </label>
                 <input
                   type="number"
                   min={100}
                   max={599}
+                  disabled={loading}
                   value={expectedStatusMin}
                   onChange={(e) => setExpectedStatusMin(Number(e.target.value))}
-                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-700 uppercase mb-2">
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
                   Max Expected Status
                 </label>
                 <input
                   type="number"
                   min={100}
                   max={599}
+                  disabled={loading}
                   value={expectedStatusMax}
                   onChange={(e) => setExpectedStatusMax(Number(e.target.value))}
-                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
                 />
               </div>
             </div>
@@ -249,82 +250,90 @@ function NewMonitorContent() {
               <input
                 type="checkbox"
                 id="followRedirects"
+                disabled={loading}
                 checked={followRedirects}
                 onChange={(e) => setFollowRedirects(e.target.checked)}
-                className="w-4 h-4 text-blue-600 rounded border-slate-300 focus:ring-blue-500"
+                className="w-4 h-4 text-blue-600 rounded border-slate-300 focus:ring-blue-500 disabled:opacity-50"
               />
               <label htmlFor="followRedirects" className="text-xs font-medium text-slate-700 cursor-pointer">
-                {t.followRedirects} (Maximum 5 hops with SSRF revalidation)
+                {t.followRedirects} (Maximum 5 hops with SSRF revalidation per redirect)
               </label>
             </div>
 
             {/* Response Assertions */}
             <div className="border-t border-slate-100 pt-6 space-y-4">
-              <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
-                Response Body Assertions (Optional)
-              </h3>
+              <div className="flex items-center gap-2">
+                <Info className="w-4 h-4 text-blue-600" />
+                <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
+                  Response Body Assertions (Optional)
+                </h3>
+              </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-700 uppercase mb-2">
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
                   {t.expectedText}
                 </label>
                 <input
                   type="text"
+                  disabled={loading}
                   value={expectedText}
                   onChange={(e) => setExpectedText(e.target.value)}
-                  placeholder="e.g. Welcome to Acme or OK"
-                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all"
+                  placeholder="e.g. Welcome to Acme or Operational"
+                  className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all disabled:opacity-50"
                 />
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 uppercase mb-2">
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
                     {t.jsonPointer}
                   </label>
                   <input
                     type="text"
+                    disabled={loading}
                     value={jsonPointer}
                     onChange={(e) => setJsonPointer(e.target.value)}
                     placeholder="/status or /data/ready"
-                    className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all"
+                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all font-mono disabled:opacity-50"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 uppercase mb-2">
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
                     {t.jsonExpectedValue}
                   </label>
                   <input
                     type="text"
+                    disabled={loading}
                     value={jsonExpectedValue}
                     onChange={(e) => setJsonExpectedValue(e.target.value)}
-                    placeholder="true or healthy"
-                    className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all"
+                    placeholder="true or ok"
+                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all font-mono disabled:opacity-50"
                   />
                 </div>
               </div>
             </div>
 
             <div className="pt-4 flex items-center justify-end gap-3 border-t border-slate-100">
-              <Link
-                href="/monitors"
-                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-800 transition-colors"
-              >
-                {t.cancel}
+              <Link href="/monitors">
+                <Button variant="ghost" size="sm" disabled={loading}>
+                  {t.cancel}
+                </Button>
               </Link>
-              <button
+              <Button
                 type="submit"
-                disabled={loading || assets.length === 0}
-                className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg text-xs font-semibold shadow-sm transition-colors"
+                variant="primary"
+                size="md"
+                loading={loading}
+                disabled={assets.length === 0}
               >
-                {loading ? t.loading : t.createMonitor}
-              </button>
+                {t.createMonitor}
+              </Button>
             </div>
           </form>
         </div>
-      </main>
-    </div>
+      </div>
+    </AppLayout>
   );
 }
 

@@ -2,11 +2,13 @@
 
 import React, { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Header } from "@/components/Header";
+import { AppLayout } from "@/components/AppLayout";
 import { useAuth } from "@/lib/auth-context";
 import { useI18n } from "@/lib/i18n";
 import { apiFetch } from "@/lib/api";
-import { Building2, Sparkles, AlertCircle } from "lucide-react";
+import { Building2, Sparkles } from "lucide-react";
+import { Button } from "@/components/ui/Button";
+import { ErrorState } from "@/components/ui/ErrorState";
 
 export default function OnboardingPage() {
   const router = useRouter();
@@ -17,12 +19,12 @@ export default function OnboardingPage() {
   const [slug, setSlug] = useState("");
   const [locale, setLocale] = useState("en");
   const [timezone, setTimezone] = useState("UTC");
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<any>(null);
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name.trim()) return;
+    if (!name.trim() || loading) return;
 
     setLoading(true);
     setError(null);
@@ -31,8 +33,8 @@ export default function OnboardingPage() {
       await apiFetch("/api/v1/organizations", {
         method: "POST",
         body: JSON.stringify({
-          name,
-          slug: slug || undefined,
+          name: name.trim(),
+          slug: slug.trim() || undefined,
           locale,
           timezone,
         }),
@@ -40,77 +42,75 @@ export default function OnboardingPage() {
 
       await refreshUser();
       router.push("/");
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Failed to create organization");
-    } finally {
+    } catch (err) {
+      setError(err);
       setLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen flex flex-col bg-slate-50">
-      <Header />
-      <div className="flex-1 flex items-center justify-center p-4">
-        <div className="w-full max-w-lg bg-white border border-slate-200 rounded-2xl p-8 shadow-sm">
-          <div className="flex items-center gap-3 mb-6">
-            <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
+    <AppLayout>
+      <div className="flex-1 flex items-center justify-center py-12 px-4">
+        <div className="w-full max-w-lg bg-white border border-slate-200 rounded-3xl p-8 sm:p-10 shadow-lg">
+          <div className="flex items-center gap-3.5 mb-8">
+            <div className="w-11 h-11 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center shadow-inner">
               <Building2 className="w-5 h-5" />
             </div>
             <div>
-              <h2 className="text-xl font-bold text-slate-900">{t.onboardingTitle}</h2>
-              <p className="text-xs text-slate-500">{t.onboardingDesc}</p>
+              <h2 className="text-xl font-extrabold text-slate-900 tracking-tight">{t.onboardingTitle}</h2>
+              <p className="text-xs text-slate-500 font-medium">{t.onboardingDesc}</p>
             </div>
           </div>
 
-          {error && (
-            <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg flex items-start gap-2.5 text-xs text-red-700">
-              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-red-500" />
-              <span>{error}</span>
-            </div>
-          )}
+          {error && <ErrorState error={error} className="mb-6" />}
 
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form onSubmit={handleSubmit} className="space-y-5">
             <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
+              <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
                 {t.orgNameLabel}
               </label>
               <input
                 type="text"
                 required
+                disabled={loading}
                 value={name}
                 onChange={(e) => {
                   setName(e.target.value);
                   if (!slug) {
-                    setSlug(e.target.value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""));
+                    setSlug(
+                      e.target.value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")
+                    );
                   }
                 }}
-                className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full px-4 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all disabled:opacity-50"
                 placeholder={isRTL ? "مثال: آژانس وب پالس" : "e.g. Apex Digital Agency"}
               />
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
+              <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
                 {t.orgSlugLabel}
               </label>
               <input
                 type="text"
+                disabled={loading}
                 value={slug}
                 onChange={(e) => setSlug(e.target.value)}
-                className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
+                className="w-full px-4 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all font-mono disabled:opacity-50"
                 placeholder="apex-digital"
               />
             </div>
 
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
                   {t.localeLabel}
                 </label>
                 <select
+                  disabled={loading}
                   value={locale}
                   onChange={(e) => setLocale(e.target.value)}
-                  className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                  className="w-full px-4 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
                 >
                   <option value="en">English (LTR)</option>
                   <option value="fa">فارسی (RTL)</option>
@@ -118,13 +118,14 @@ export default function OnboardingPage() {
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
                   {t.timezoneLabel}
                 </label>
                 <select
+                  disabled={loading}
                   value={timezone}
                   onChange={(e) => setTimezone(e.target.value)}
-                  className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                  className="w-full px-4 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
                 >
                   <option value="UTC">UTC</option>
                   <option value="Asia/Tehran">Asia/Tehran (IRST)</option>
@@ -134,17 +135,19 @@ export default function OnboardingPage() {
               </div>
             </div>
 
-            <button
+            <Button
               type="submit"
-              disabled={loading}
-              className="w-full py-2.5 px-4 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-sm rounded-lg shadow-sm transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+              variant="primary"
+              size="lg"
+              loading={loading}
+              icon={<Sparkles className="w-4 h-4" />}
+              className="w-full mt-4"
             >
-              <Sparkles className="w-4 h-4" />
-              <span>{loading ? t.loading : t.saveAndContinue}</span>
-            </button>
+              {t.saveAndContinue}
+            </Button>
           </form>
         </div>
       </div>
-    </div>
+    </AppLayout>
   );
 }

@@ -3,16 +3,21 @@
 import React, { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Header } from "@/components/Header";
+import { AppLayout } from "@/components/AppLayout";
 import { useAuth } from "@/lib/auth-context";
 import { useI18n } from "@/lib/i18n";
 import { apiFetch } from "@/lib/api";
-import { Users, ArrowLeft, ArrowRight, AlertCircle, CheckCircle } from "lucide-react";
+import { Users } from "lucide-react";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { Button } from "@/components/ui/Button";
+import { ErrorState } from "@/components/ui/ErrorState";
+import { useToast } from "@/components/ui/Toast";
 
 export default function NewClientPage() {
   const router = useRouter();
   const { user, activeOrg } = useAuth();
-  const { t, isRTL } = useI18n();
+  const { t } = useI18n();
+  const toast = useToast();
 
   const [name, setName] = useState("");
   const [contactName, setContactName] = useState("");
@@ -20,19 +25,20 @@ export default function NewClientPage() {
   const [website, setWebsite] = useState("");
   const [notes, setNotes] = useState("");
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<any>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (loading) return; // Prevent duplicate submission
     if (!name.trim()) {
-      setError("Client name is required");
+      setError(new Error(t.clientName + " is required"));
       return;
     }
 
     try {
       setLoading(true);
       setError(null);
-      const res = await apiFetch<{ client: { id: string } }>("/api/v1/clients", {
+      const res = await apiFetch<{ client: { id: string; name: string } }>("/api/v1/clients", {
         method: "POST",
         body: JSON.stringify({
           name: name.trim(),
@@ -43,135 +49,121 @@ export default function NewClientPage() {
         }),
       });
 
+      toast.success(`Client "${res.client.name}" created successfully`);
       router.push(`/clients/${res.client.id}`);
-    } catch (err: any) {
-      setError(err?.message || "Failed to create client");
+    } catch (err) {
+      setError(err);
       setLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col">
-      <Header />
+    <AppLayout>
+      <div className="max-w-3xl mx-auto">
+        <PageHeader
+          title={t.createClient}
+          description={`Add a new client profile to ${activeOrg?.name || "your workspace"} to associate websites and monitoring.`}
+          icon={<Users className="w-5 h-5" />}
+          breadcrumbs={[
+            { label: t.clients, href: "/clients" },
+            { label: t.createClient },
+          ]}
+        />
 
-      <main className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-8 flex-1 w-full">
-        {/* Breadcrumb */}
-        <div className="mb-6">
-          <Link
-            href="/clients"
-            className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500 hover:text-slate-800 transition-colors"
-          >
-            {isRTL ? <ArrowRight className="w-3.5 h-3.5" /> : <ArrowLeft className="w-3.5 h-3.5" />}
-            <span>{t.clients}</span>
-          </Link>
-        </div>
-
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-          <div className="p-6 sm:p-8 border-b border-slate-100">
-            <h1 className="text-xl font-bold text-slate-900 tracking-tight flex items-center gap-2">
-              <Users className="w-6 h-6 text-blue-600" />
-              <span>{t.createClient}</span>
-            </h1>
-            <p className="text-xs text-slate-500 mt-1">
-              Add a new client profile to {activeOrg?.name} to associate websites and monitoring.
-            </p>
-          </div>
-
-          <form onSubmit={handleSubmit} className="p-6 sm:p-8 space-y-6">
-            {error && (
-              <div className="p-4 rounded-lg bg-red-50 border border-red-200 text-red-700 text-xs flex items-center gap-2">
-                <AlertCircle className="w-4 h-4 flex-shrink-0" />
-                <span>{error}</span>
-              </div>
-            )}
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden p-6 sm:p-8">
+          <form onSubmit={handleSubmit} className="space-y-6">
+            {error && <ErrorState error={error} className="mb-4" />}
 
             <div>
-              <label className="block text-xs font-semibold text-slate-700 uppercase mb-2">
+              <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
                 {t.clientName} <span className="text-red-500">*</span>
               </label>
               <input
                 type="text"
+                name="name"
                 required
+                disabled={loading}
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 placeholder="e.g. Acme Corporation"
-                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all"
+                className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all disabled:opacity-50"
               />
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
               <div>
-                <label className="block text-xs font-semibold text-slate-700 uppercase mb-2">
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
                   {t.contactName}
                 </label>
                 <input
                   type="text"
+                  name="contact_name"
+                  disabled={loading}
                   value={contactName}
                   onChange={(e) => setContactName(e.target.value)}
                   placeholder="e.g. John Doe"
-                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all"
+                  className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all disabled:opacity-50"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-700 uppercase mb-2">
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
                   {t.contactEmail}
                 </label>
                 <input
                   type="email"
+                  name="contact_email"
+                  disabled={loading}
                   value={contactEmail}
                   onChange={(e) => setContactEmail(e.target.value)}
                   placeholder="e.g. client@acme.com"
-                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all"
+                  className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all disabled:opacity-50"
                 />
               </div>
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-slate-700 uppercase mb-2">
+              <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
                 {t.website}
               </label>
               <input
                 type="url"
+                name="website"
+                disabled={loading}
                 value={website}
                 onChange={(e) => setWebsite(e.target.value)}
                 placeholder="https://acme.com"
-                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all"
+                className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all disabled:opacity-50"
               />
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-slate-700 uppercase mb-2">
+              <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
                 {t.notes}
               </label>
               <textarea
                 rows={3}
+                disabled={loading}
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
-                placeholder="Internal client notes or SLA agreements..."
-                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all"
+                placeholder="Internal client notes, SLAs, maintenance contact numbers..."
+                className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all disabled:opacity-50"
               />
             </div>
 
             <div className="pt-4 flex items-center justify-end gap-3 border-t border-slate-100">
-              <Link
-                href="/clients"
-                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-800 transition-colors"
-              >
-                {t.cancel}
+              <Link href="/clients">
+                <Button variant="ghost" size="sm" disabled={loading}>
+                  {t.cancel}
+                </Button>
               </Link>
-              <button
-                type="submit"
-                disabled={loading}
-                className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg text-xs font-semibold shadow-sm transition-colors"
-              >
-                {loading ? t.loading : t.createClient}
-              </button>
+              <Button type="submit" variant="primary" size="md" loading={loading}>
+                {t.createClient}
+              </Button>
             </div>
           </form>
         </div>
-      </main>
-    </div>
+      </div>
+    </AppLayout>
   );
 }
-

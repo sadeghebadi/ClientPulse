@@ -3,17 +3,34 @@
 import React, { useState, useEffect, use } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Header } from "@/components/Header";
+import { AppLayout } from "@/components/AppLayout";
 import { useAuth } from "@/lib/auth-context";
 import { useI18n } from "@/lib/i18n";
 import { apiFetch } from "@/lib/api";
-import { Globe, ArrowLeft, ArrowRight, AlertCircle, AlertTriangle } from "lucide-react";
+import { Globe, AlertTriangle } from "lucide-react";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { Button } from "@/components/ui/Button";
+import { ErrorState } from "@/components/ui/ErrorState";
+import { TableSkeleton } from "@/components/ui/LoadingSkeleton";
+import { useToast } from "@/components/ui/Toast";
+
+interface AssetResponse {
+  asset: {
+    id: string;
+    name: string;
+    url: string;
+    type: string;
+    environment: string;
+    description?: string;
+  };
+}
 
 export default function EditAssetPage({ params }: { params: Promise<{ id: string }> }) {
   const resolvedParams = use(params);
   const router = useRouter();
   const { user, activeOrg } = useAuth();
-  const { t, isRTL } = useI18n();
+  const { t } = useI18n();
+  const toast = useToast();
 
   const [name, setName] = useState("");
   const [url, setURL] = useState("");
@@ -23,21 +40,21 @@ export default function EditAssetPage({ params }: { params: Promise<{ id: string
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<any>(null);
   const [warning, setWarning] = useState<string | null>(null);
 
   useEffect(() => {
     async function loadAsset() {
       try {
         setLoading(true);
-        const data = await apiFetch<{ asset: any }>(`/api/v1/assets/${resolvedParams.id}`);
+        const data = await apiFetch<AssetResponse>(`/api/v1/assets/${resolvedParams.id}`);
         setName(data.asset.name || "");
         setURL(data.asset.url || "");
         setType(data.asset.type || "website");
         setEnvironment(data.asset.environment || "production");
         setDescription(data.asset.description || "");
-      } catch (err: any) {
-        setError(err?.message || "Failed to load asset");
+      } catch (err) {
+        setError(err);
       } finally {
         setLoading(false);
       }
@@ -49,12 +66,14 @@ export default function EditAssetPage({ params }: { params: Promise<{ id: string
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (saving) return; // Prevent duplicate submission
+
     if (!name.trim()) {
-      setError("Asset name is required");
+      setError(new Error(t.assetName + " is required"));
       return;
     }
     if (!url.trim()) {
-      setError("Asset URL is required");
+      setError(new Error(t.url + " is required"));
       return;
     }
 
@@ -63,7 +82,11 @@ export default function EditAssetPage({ params }: { params: Promise<{ id: string
       setError(null);
       setWarning(null);
 
-      const res = await apiFetch<{ asset: any; warning?: string; warning_message?: string }>(`/api/v1/assets/${resolvedParams.id}`, {
+      const res = await apiFetch<{
+        asset: { id: string; name: string };
+        warning?: string;
+        warning_message?: string;
+      }>(`/api/v1/assets/${resolvedParams.id}`, {
         method: "PATCH",
         body: JSON.stringify({
           name: name.trim(),
@@ -75,106 +98,102 @@ export default function EditAssetPage({ params }: { params: Promise<{ id: string
       });
 
       if (res.warning === "DUPLICATE_URL") {
-        setWarning(res.warning_message || t.duplicateUrlWarning);
+        toast.warning(res.warning_message || t.duplicateUrlWarning);
+      } else {
+        toast.success("Asset details updated successfully");
       }
 
       router.push(`/assets/${resolvedParams.id}`);
-    } catch (err: any) {
-      setError(err?.message || "Failed to update asset");
+    } catch (err) {
+      setError(err);
       setSaving(false);
     }
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col">
-      <Header />
+    <AppLayout>
+      <div className="max-w-3xl mx-auto">
+        <PageHeader
+          title={t.editAsset}
+          description="Update asset name, target URL, type, and environment specifications."
+          icon={<Globe className="w-5 h-5" />}
+          breadcrumbs={[
+            { label: t.assets, href: "/assets" },
+            { label: name || t.assetDetails, href: `/assets/${resolvedParams.id}` },
+            { label: t.editAsset },
+          ]}
+        />
 
-      <main className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-8 flex-1 w-full">
-        <div className="mb-6">
-          <Link
-            href={`/assets/${resolvedParams.id}`}
-            className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500 hover:text-slate-800 transition-colors"
-          >
-            {isRTL ? <ArrowRight className="w-3.5 h-3.5" /> : <ArrowLeft className="w-3.5 h-3.5" />}
-            <span>{t.assetDetails}</span>
-          </Link>
-        </div>
-
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-          <div className="p-6 sm:p-8 border-b border-slate-100">
-            <h1 className="text-xl font-bold text-slate-900 tracking-tight flex items-center gap-2">
-              <Globe className="w-6 h-6 text-blue-600" />
-              <span>{t.editAsset}</span>
-            </h1>
-          </div>
-
-          {loading ? (
-            <div className="p-12 text-center text-slate-500 text-sm">{t.loading}</div>
-          ) : (
-            <form onSubmit={handleSubmit} className="p-6 sm:p-8 space-y-6">
-              {error && (
-                <div className="p-4 rounded-lg bg-red-50 border border-red-200 text-red-700 text-xs flex items-center gap-2">
-                  <AlertCircle className="w-4 h-4 flex-shrink-0" />
-                  <span>{error}</span>
-                </div>
-              )}
+        {loading ? (
+          <TableSkeleton rows={4} cols={2} />
+        ) : (
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden p-6 sm:p-8">
+            <form onSubmit={handleSubmit} className="space-y-6">
+              {error && <ErrorState error={error} className="mb-4" />}
 
               {warning && (
-                <div className="p-4 rounded-lg bg-amber-50 border border-amber-200 text-amber-700 text-xs flex items-center gap-2">
-                  <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+                <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-xs flex items-center gap-2.5">
+                  <AlertTriangle className="w-4 h-4 shrink-0 text-amber-600" />
                   <span>{warning}</span>
                 </div>
               )}
 
               <div>
-                <label className="block text-xs font-semibold text-slate-700 uppercase mb-2">
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
                   {t.assetName} <span className="text-red-500">*</span>
                 </label>
                 <input
                   type="text"
                   required
+                  disabled={saving}
                   value={name}
                   onChange={(e) => setName(e.target.value)}
-                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all"
+                  className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all disabled:opacity-50"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-700 uppercase mb-2">
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
                   {t.url} <span className="text-red-500">*</span>
                 </label>
                 <input
                   type="url"
                   required
+                  disabled={saving}
                   value={url}
                   onChange={(e) => setURL(e.target.value)}
-                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all"
+                  className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all font-mono disabled:opacity-50"
                 />
+                <p className="text-[11px] text-slate-500 mt-1.5">
+                  Must be an accessible HTTP or HTTPS URL (ports 80 or 443). SSRF restrictions apply.
+                </p>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 uppercase mb-2">
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
                     {t.type}
                   </label>
                   <select
+                    disabled={saving}
                     value={type}
                     onChange={(e) => setType(e.target.value)}
-                    className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
                   >
-                    <option value="website">Website</option>
-                    <option value="api">API</option>
+                    <option value="website">Website (HTML / Webpage)</option>
+                    <option value="api">API Endpoint (JSON)</option>
                   </select>
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 uppercase mb-2">
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
                     {t.environment}
                   </label>
                   <select
+                    disabled={saving}
                     value={environment}
                     onChange={(e) => setEnvironment(e.target.value)}
-                    className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
                   >
                     <option value="production">{t.production}</option>
                     <option value="staging">{t.staging}</option>
@@ -184,37 +203,32 @@ export default function EditAssetPage({ params }: { params: Promise<{ id: string
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-700 uppercase mb-2">
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
                   {t.description}
                 </label>
                 <textarea
                   rows={3}
+                  disabled={saving}
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
-                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all"
+                  className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all disabled:opacity-50"
                 />
               </div>
 
               <div className="pt-4 flex items-center justify-end gap-3 border-t border-slate-100">
-                <Link
-                  href={`/assets/${resolvedParams.id}`}
-                  className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-800 transition-colors"
-                >
-                  {t.cancel}
+                <Link href={`/assets/${resolvedParams.id}`}>
+                  <Button variant="ghost" size="sm" disabled={saving}>
+                    {t.cancel}
+                  </Button>
                 </Link>
-                <button
-                  type="submit"
-                  disabled={saving}
-                  className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg text-xs font-semibold shadow-sm transition-colors"
-                >
-                  {saving ? t.loading : t.saveChanges}
-                </button>
+                <Button type="submit" variant="primary" size="md" loading={saving}>
+                  {t.saveChanges}
+                </Button>
               </div>
             </form>
-          )}
-        </div>
-      </main>
-    </div>
+          </div>
+        )}
+      </div>
+    </AppLayout>
   );
 }
-

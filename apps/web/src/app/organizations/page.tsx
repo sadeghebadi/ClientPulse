@@ -1,24 +1,32 @@
 "use client";
 
 import React, { useState } from "react";
-import { Header } from "@/components/Header";
+import { AppLayout } from "@/components/AppLayout";
 import { useAuth } from "@/lib/auth-context";
 import { useI18n } from "@/lib/i18n";
 import { apiFetch } from "@/lib/api";
 import { Building, Plus, Check, Shield } from "lucide-react";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { Button } from "@/components/ui/Button";
+import { Badge } from "@/components/ui/Badge";
+import { ErrorState } from "@/components/ui/ErrorState";
+import { TableSkeleton } from "@/components/ui/LoadingSkeleton";
+import { useToast } from "@/components/ui/Toast";
 
 export default function OrganizationsPage() {
   const { user, activeOrg, memberships, switchOrganization, refreshUser, loading } = useAuth();
-  const { t, isRTL } = useI18n();
+  const { t } = useI18n();
+  const toast = useToast();
 
   const [newOrgName, setNewOrgName] = useState("");
   const [newOrgSlug, setNewOrgSlug] = useState("");
   const [createLoading, setCreateLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [switchingID, setSwitchingID] = useState<string | null>(null);
+  const [error, setError] = useState<any>(null);
 
   const handleCreateOrg = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newOrgName.trim()) return;
+    if (!newOrgName.trim() || createLoading) return;
 
     setCreateLoading(true);
     setError(null);
@@ -26,84 +34,75 @@ export default function OrganizationsPage() {
       await apiFetch("/api/v1/organizations", {
         method: "POST",
         body: JSON.stringify({
-          name: newOrgName,
-          slug: newOrgSlug || undefined,
+          name: newOrgName.trim(),
+          slug: newOrgSlug.trim() || undefined,
         }),
       });
 
+      toast.success(`Organization "${newOrgName}" created successfully`);
       setNewOrgName("");
       setNewOrgSlug("");
       await refreshUser();
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Failed to create organization");
+    } catch (err) {
+      setError(err);
     } finally {
       setCreateLoading(false);
     }
   };
 
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-slate-50 flex flex-col">
-        <Header />
-        <div className="flex-1 flex items-center justify-center p-4">
-          <p className="text-xs text-slate-500">{t.loading}</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (!user) {
-    return (
-      <div className="min-h-screen bg-slate-50 flex flex-col">
-        <Header />
-        <div className="flex-1 flex items-center justify-center p-4">
-          <div className="bg-white border border-slate-200 rounded-xl p-8 max-w-sm text-center">
-            <p className="text-sm text-slate-700 mb-4">Please log in to manage your organizations.</p>
-            <a href="/login" className="px-4 py-2 bg-blue-600 text-white rounded-lg text-xs font-semibold">
-              {t.login}
-            </a>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  const handleSwitch = async (orgID: string, name: string) => {
+    try {
+      setSwitchingID(orgID);
+      await switchOrganization(orgID);
+      toast.success(`Switched active workspace to "${name}"`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to switch organization");
+    } finally {
+      setSwitchingID(null);
+    }
+  };
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col">
-      <Header />
-      <main className="max-w-4xl mx-auto px-4 sm:px-6 py-8 w-full flex-1">
-        <div className="flex items-center justify-between mb-8">
-          <div>
-            <h1 className="text-2xl font-bold text-slate-900 tracking-tight">{t.myOrganizations}</h1>
-            <p className="text-xs text-slate-500 mt-1">
-              Switch between workspaces or provision a new agency organization.
-            </p>
-          </div>
-        </div>
+    <AppLayout>
+      <PageHeader
+        title={t.myOrganizations}
+        description="Switch between active agency workspaces or provision a new isolated organization."
+        icon={<Building className="w-5 h-5" />}
+      />
 
+      {error && <ErrorState error={error} className="mb-6" />}
+
+      {loading ? (
+        <TableSkeleton rows={3} cols={3} />
+      ) : (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
           {/* Organization List */}
           <div className="md:col-span-2 space-y-4">
             {memberships.map((m) => {
               const isActive = activeOrg?.id === m.organization_id;
+              const isSwitching = switchingID === m.organization_id;
               return (
                 <div
                   key={m.id}
-                  className={`bg-white border rounded-xl p-5 shadow-sm transition-all flex items-center justify-between ${
-                    isActive ? "border-blue-500 ring-1 ring-blue-500" : "border-slate-200 hover:border-slate-300"
+                  className={`bg-white border rounded-2xl p-5 sm:p-6 shadow-sm transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-4 ${
+                    isActive
+                      ? "border-blue-500 ring-2 ring-blue-500/20"
+                      : "border-slate-200 hover:border-slate-300"
                   }`}
                 >
-                  <div className="flex items-center gap-3.5">
+                  <div className="flex items-center gap-4">
                     <div
-                      className={`w-10 h-10 rounded-lg flex items-center justify-center font-bold text-sm ${
-                        isActive ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-600"
+                      className={`w-11 h-11 rounded-xl flex items-center justify-center font-bold text-sm shrink-0 ${
+                        isActive ? "bg-blue-600 text-white shadow-md" : "bg-slate-100 text-slate-600"
                       }`}
                     >
                       <Building className="w-5 h-5" />
                     </div>
                     <div>
                       <div className="flex items-center gap-2">
-                        <h3 className="text-sm font-bold text-slate-900">{m.org_name || "Agency Workspace"}</h3>
+                        <h3 className="text-base font-bold text-slate-900">
+                          {m.org_name || "Agency Workspace"}
+                        </h3>
                         {isActive && (
                           <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
                             <Check className="w-3 h-3" />
@@ -111,27 +110,28 @@ export default function OrganizationsPage() {
                           </span>
                         )}
                       </div>
-                      <div className="flex items-center gap-2 mt-1">
-                        <span className="text-[11px] text-slate-500 font-mono">slug: {m.org_slug}</span>
+                      <div className="flex items-center gap-2.5 mt-1 text-xs">
+                        <span className="text-slate-500 font-mono">slug: {m.org_slug}</span>
                         <span className="text-slate-300">•</span>
-                        <span className="text-[11px] font-semibold text-slate-600 flex items-center gap-1">
-                          <Shield className="w-3 h-3 text-slate-400" />
-                          {m.role}
-                        </span>
+                        <Badge variant={m.role} />
                       </div>
                     </div>
                   </div>
 
                   <div>
                     {!isActive ? (
-                      <button
-                        onClick={() => switchOrganization(m.organization_id)}
-                        className="px-3 py-1.5 bg-slate-100 hover:bg-blue-50 hover:text-blue-600 text-slate-700 text-xs font-semibold rounded-lg transition-colors border border-slate-200"
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        loading={isSwitching}
+                        onClick={() => handleSwitch(m.organization_id, m.org_name || "")}
                       >
                         {t.switchOrg}
-                      </button>
+                      </Button>
                     ) : (
-                      <span className="text-xs font-medium text-slate-400">Current</span>
+                      <span className="text-xs font-bold text-blue-600 px-3 py-1 bg-blue-50 rounded-lg">
+                        Active Workspace
+                      </span>
                     )}
                   </div>
                 </div>
@@ -140,58 +140,64 @@ export default function OrganizationsPage() {
           </div>
 
           {/* Create New Org Card */}
-          <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm h-fit">
+          <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm h-fit">
             <div className="flex items-center gap-2 mb-4">
               <Plus className="w-4 h-4 text-blue-600" />
               <h2 className="text-sm font-bold text-slate-900">{t.createOrganization}</h2>
             </div>
 
-            {error && (
-              <div className="mb-3 p-2.5 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">
-                {error}
-              </div>
-            )}
-
-            <form onSubmit={handleCreateOrg} className="space-y-3.5">
+            <form onSubmit={handleCreateOrg} className="space-y-4">
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
                   {t.orgNameLabel}
                 </label>
                 <input
                   type="text"
+                  name="name"
                   required
+                  disabled={createLoading}
                   value={newOrgName}
-                  onChange={(e) => setNewOrgName(e.target.value)}
-                  className="w-full px-3 py-1.5 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder={isRTL ? "مثال: استودیو دیزاین نوین" : "e.g. Modern Web Studio"}
+                  onChange={(e) => {
+                    setNewOrgName(e.target.value);
+                    if (!newOrgSlug) {
+                      setNewOrgSlug(
+                        e.target.value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")
+                      );
+                    }
+                  }}
+                  className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all disabled:opacity-50"
+                  placeholder="e.g. Apex Agency"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  {t.orgSlugLabel} (Optional)
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                  {t.orgSlugLabel}
                 </label>
                 <input
                   type="text"
+                  name="slug"
+                  disabled={createLoading}
                   value={newOrgSlug}
                   onChange={(e) => setNewOrgSlug(e.target.value)}
-                  className="w-full px-3 py-1.5 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
-                  placeholder="modern-web-studio"
+                  className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all font-mono disabled:opacity-50"
+                  placeholder="apex-agency"
                 />
               </div>
 
-              <button
+              <Button
                 type="submit"
-                disabled={createLoading}
-                className="w-full py-2 px-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs rounded-lg shadow-sm transition-colors disabled:opacity-50"
+                variant="primary"
+                size="md"
+                loading={createLoading}
+                className="w-full"
               >
-                {createLoading ? t.loading : t.createOrganization}
-              </button>
+                {t.createOrganization}
+              </Button>
             </form>
           </div>
         </div>
-      </main>
-    </div>
+      )}
+    </AppLayout>
   );
 }
-

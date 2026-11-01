@@ -460,18 +460,18 @@ interface I18nContextType {
 const I18nContext = createContext<I18nContextType | null>(null);
 
 export function I18nProvider({ children }: { children: React.ReactNode }) {
-  const [locale, setLocale] = useState<Locale>("en");
-  const [mounted, setMounted] = useState(false);
+  const [locale, setLocale] = useState<Locale>(() => {
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("clientpulse_locale") as Locale;
+      if (saved === "en" || saved === "fa") return saved;
+    }
+    return "en";
+  });
 
   useEffect(() => {
-    // Initial mount sync from localStorage
-    const saved = localStorage.getItem("clientpulse_locale") as Locale;
-    const initialLocale = saved === "en" || saved === "fa" ? saved : "en";
-    setLocale(initialLocale);
-    document.documentElement.lang = initialLocale;
-    document.documentElement.dir = initialLocale === "fa" ? "rtl" : "ltr";
-    setMounted(true);
-  }, []);
+    document.documentElement.lang = locale;
+    document.documentElement.dir = locale === "fa" ? "rtl" : "ltr";
+  }, [locale]);
 
   const changeLocale = (newLocale: Locale) => {
     setLocale(newLocale);

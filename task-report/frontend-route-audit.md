@@ -73,3 +73,4 @@ With the audit complete and recorded in `task/TASK-003.2-frontend-audit.md` and 
 4. Dashboard redesign with 6 core real metrics & failure focus
 5. Client, Asset & Monitor UX stabilization (humanized SSRF, threshold explanations, modals, toasts)
 6. Playwright E2E functional verification
+

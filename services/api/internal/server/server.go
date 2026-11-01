@@ -48,7 +48,7 @@ func New(cfg *config.Config, log *slog.Logger, deps Dependencies) *Server {
 	// Build global middleware chain
 	var handler http.Handler = mux
 
-	allowedOrigins := []string{cfg.AppBaseURL, "http://localhost:3000"}
+	allowedOrigins := []string{cfg.AppBaseURL, "http://localhost:3000", "http://localhost:3001"}
 
 	// CSRF validation for mutating cookie-authenticated requests (runs after AuthMiddleware)
 	handler = CSRFProtection(cfg, allowedOrigins)(handler)

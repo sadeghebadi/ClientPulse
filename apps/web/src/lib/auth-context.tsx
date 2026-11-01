@@ -1,6 +1,7 @@
 "use client";
 
 import React, { createContext, useContext, useState, useEffect, useCallback } from "react";
+import { useRouter, usePathname } from "next/navigation";
 import { apiFetch } from "./api";
 
 export interface User {
@@ -43,6 +44,8 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | null>(null);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
+  const router = useRouter();
+  const pathname = usePathname();
   const [user, setUser] = useState<User | null>(null);
   const [activeOrg, setActiveOrg] = useState<Organization | null>(null);
   const [role, setRole] = useState<string | null>(null);
@@ -98,10 +101,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (isMounted) setLoading(false);
       });
 
+    // Listen for session expired events
+    const handleSessionExpired = () => {
+      setUser(null);
+      setActiveOrg(null);
+      setRole(null);
+      setMemberships([]);
+      router.push("/login?session_expired=true");
+    };
+
+    window.addEventListener("clientpulse:session_expired", handleSessionExpired);
+
     return () => {
       isMounted = false;
+      window.removeEventListener("clientpulse:session_expired", handleSessionExpired);
     };
-  }, []);
+  }, [router]);
 
   const logout = async () => {
     try {
@@ -123,6 +138,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       body: JSON.stringify({ organization_id: orgID }),
     });
     await refreshUser();
+    // If user is currently on an ID-specific detail route, redirect to root or list to avoid cross-tenant 404s
+    if (pathname && /\/(clients|assets|monitors)\/[a-zA-Z0-9_-]+/.test(pathname)) {
+      router.push("/");
+    }
   };
 
   return (

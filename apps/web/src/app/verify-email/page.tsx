@@ -3,11 +3,12 @@
 import React, { useState, useEffect, Suspense } from "react";
 import Link from "next/link";
 import { useSearchParams, useRouter } from "next/navigation";
-import { Header } from "@/components/Header";
+import { AppLayout } from "@/components/AppLayout";
 import { useAuth } from "@/lib/auth-context";
 import { useI18n } from "@/lib/i18n";
 import { apiFetch } from "@/lib/api";
 import { MailCheck, CheckCircle2, AlertCircle } from "lucide-react";
+import { Button } from "@/components/ui/Button";
 
 function VerifyEmailContent() {
   const router = useRouter();
@@ -17,15 +18,17 @@ function VerifyEmailContent() {
   const { user, refreshUser } = useAuth();
   const { t } = useI18n();
 
-  const [status, setStatus] = useState<"pending" | "success" | "error">(() => (token ? "pending" : "error"));
-  const [errorMessage, setErrorMessage] = useState<string | null>(() => (token ? null : "No verification token provided in URL."));
+  const [status, setStatus] = useState<"pending" | "success" | "error">(() =>
+    token ? "pending" : "error"
+  );
+  const [errorMessage, setErrorMessage] = useState<string | null>(() =>
+    token ? null : "No verification token provided in URL."
+  );
   const [resending, setResending] = useState(false);
   const [resendSuccess, setResendSuccess] = useState(false);
 
   useEffect(() => {
-    if (!token) {
-      return;
-    }
+    if (!token) return;
 
     let isMounted = true;
     apiFetch("/api/v1/auth/verify-email", {
@@ -64,51 +67,57 @@ function VerifyEmailContent() {
   };
 
   return (
-    <div className="text-center py-4">
+    <div className="text-center py-4 space-y-4">
       {status === "pending" && (
         <div>
-          <div className="w-12 h-12 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-4 animate-pulse">
+          <div className="w-12 h-12 bg-blue-100 text-blue-600 rounded-2xl flex items-center justify-center mx-auto mb-4 animate-pulse">
             <MailCheck className="w-6 h-6" />
           </div>
-          <p className="text-sm text-slate-700">{t.verifyEmailPending}</p>
+          <p className="text-sm font-semibold text-slate-700">{t.verifyEmailPending}</p>
         </div>
       )}
 
       {status === "success" && (
         <div>
-          <div className="w-12 h-12 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-4">
+          <div className="w-12 h-12 bg-emerald-100 text-emerald-600 rounded-2xl flex items-center justify-center mx-auto mb-4">
             <CheckCircle2 className="w-6 h-6" />
           </div>
-          <h3 className="text-base font-bold text-slate-900 mb-2">{t.verifyEmailSuccess}</h3>
+          <h3 className="text-base font-bold text-slate-900 mb-1">{t.verifyEmailSuccess}</h3>
           <p className="text-xs text-slate-600 mb-6">Your email address has been verified.</p>
-          <button
+          <Button
+            variant="primary"
+            size="lg"
             onClick={() => router.push("/")}
-            className="w-full py-2.5 px-4 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-sm rounded-lg shadow-sm transition-colors"
+            className="w-full"
           >
             {t.verifyEmailBtn}
-          </button>
+          </Button>
         </div>
       )}
 
       {status === "error" && (
         <div>
-          <div className="w-12 h-12 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto mb-4">
+          <div className="w-12 h-12 bg-rose-100 text-rose-600 rounded-2xl flex items-center justify-center mx-auto mb-4">
             <AlertCircle className="w-6 h-6" />
           </div>
-          <h3 className="text-base font-bold text-slate-900 mb-2">Verification Failed</h3>
-          <p className="text-xs text-red-600 mb-6">{errorMessage || "Invalid or expired link."}</p>
+          <h3 className="text-base font-bold text-slate-900 mb-1">Verification Failed</h3>
+          <p className="text-xs text-rose-600 mb-6">{errorMessage || "Invalid or expired link."}</p>
 
           {user && (
             <div className="space-y-3">
-              <button
+              <Button
+                variant="outline"
+                size="md"
                 onClick={handleResend}
-                disabled={resending}
-                className="w-full py-2.5 px-4 bg-slate-100 hover:bg-slate-200 text-slate-800 font-semibold text-xs rounded-lg transition-colors"
+                loading={resending}
+                className="w-full"
               >
-                {resending ? t.loading : t.resendVerification}
-              </button>
+                {t.resendVerification}
+              </Button>
               {resendSuccess && (
-                <p className="text-xs text-emerald-600">Verification email sent! Check your inbox.</p>
+                <p className="text-xs text-emerald-600 font-semibold">
+                  Verification email sent! Check your inbox.
+                </p>
               )}
             </div>
           )}
@@ -128,17 +137,16 @@ export default function VerifyEmailPage() {
   const { t } = useI18n();
 
   return (
-    <div className="min-h-screen flex flex-col bg-slate-50">
-      <Header />
-      <div className="flex-1 flex items-center justify-center p-4">
-        <div className="w-full max-w-md bg-white border border-slate-200 rounded-2xl p-8 shadow-sm">
-          <div className="flex items-center gap-3 mb-6">
-            <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
+    <AppLayout>
+      <div className="flex-1 flex items-center justify-center py-12 px-4">
+        <div className="w-full max-w-md bg-white border border-slate-200 rounded-3xl p-8 sm:p-10 shadow-lg">
+          <div className="flex items-center gap-3.5 mb-6">
+            <div className="w-11 h-11 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center shadow-inner">
               <MailCheck className="w-5 h-5" />
             </div>
             <div>
-              <h2 className="text-xl font-bold text-slate-900">{t.verifyEmailTitle}</h2>
-              <p className="text-xs text-slate-500">{t.tagline}</p>
+              <h2 className="text-xl font-extrabold text-slate-900 tracking-tight">{t.verifyEmailTitle}</h2>
+              <p className="text-xs text-slate-500 font-medium">{t.tagline}</p>
             </div>
           </div>
 
@@ -147,6 +155,6 @@ export default function VerifyEmailPage() {
           </Suspense>
         </div>
       </div>
-    </div>
+    </AppLayout>
   );
 }
