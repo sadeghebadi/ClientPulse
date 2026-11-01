@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import { I18nProvider } from "@/lib/i18n";
+import { AuthProvider } from "@/lib/auth-context";
 
 export const metadata: Metadata = {
   title: "ClientPulse — Website Monitoring & Client Care Reports",
@@ -13,10 +15,13 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" dir="ltr">
-      <body className="antialiased flex flex-col min-h-screen">
-        {children}
+      <body className="antialiased flex flex-col min-h-screen bg-slate-50 text-slate-900">
+        <I18nProvider>
+          <AuthProvider>
+            {children}
+          </AuthProvider>
+        </I18nProvider>
       </body>
     </html>
   );
 }
-

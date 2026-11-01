@@ -6,7 +6,12 @@
 - **Protocol:** HTTP/1.1 or HTTP/2 over TLS in production.
 - **Request / Response Format:** `application/json; charset=utf-8`.
 - **Date/Time:** ISO 8601 UTC format (e.g. `2026-10-31T14:00:00Z`).
-- **Correlation ID:** Every request receives or generates an `X-Request-ID` header, returned in responses and attached to log entries.
+- **Correlation ID:** Every request receives or generates an `X-Request-ID` header, returned in responses and attached to structured log entries.
+- **Authentication:** HttpOnly, SameSite=Lax, Secure (prod) session cookies (`clientpulse_session`), or `Authorization: Bearer <token>`.
+- **CSRF Protection:** State-mutating requests (`POST`, `PUT`, `PATCH`, `DELETE`) authenticated via cookie must present the `X-CSRF-Token` header matching the `clientpulse_csrf` cookie value.
+- **Tenant Context:** Tenant ID is resolved by backend middleware from verified memberships, or explicitly passed via `X-Organization-ID` header (validated on every request against memberships).
+
+---
 
 ## 2. Standard Error Response
 
@@ -24,75 +29,145 @@ All API errors return a standardized JSON structure:
 ```
 
 Common error codes:
-- `VALIDATION_FAILED` (400)
+- `INVALID_REQUEST` / `VALIDATION_FAILED` (400)
+- `INVALID_CREDENTIALS` (401)
 - `UNAUTHORIZED` (401)
-- `FORBIDDEN` (403)
+- `FORBIDDEN` / `CSRF_VALIDATION_FAILED` (403)
 - `NOT_FOUND` (404)
 - `RATE_LIMIT_EXCEEDED` (429)
 - `INTERNAL_ERROR` (500)
 - `SERVICE_UNAVAILABLE` (503)
 
-## 3. Foundation Endpoints (Phase 0)
+---
+
+## 3. Infrastructure & Health Endpoints
 
 ### Liveness Probe
 `GET /health/live`
-- Returns 200 OK when the HTTP server process is running and accepting connections.
-- Response:
-```json
-{
-  "status": "ok",
-  "service": "clientpulse-api",
-  "version": "1.0.0",
-  "timestamp": "2026-10-31T14:00:00Z"
-}
-```
+- Returns 200 OK when the HTTP server process is running.
 
 ### Readiness Probe
 `GET /health/ready`
-- Checks connectivity to downstream dependencies (PostgreSQL database pool).
-- Returns 200 OK when healthy, or 503 Service Unavailable if downstream dependencies fail.
-- Response (200):
-```json
-{
-  "status": "ok",
-  "service": "clientpulse-api",
-  "database": "connected",
-  "timestamp": "2026-10-31T14:00:00Z"
-}
-```
+- Checks connectivity to the PostgreSQL database pool. Returns 200 OK when healthy, 503 when disconnected.
 
-### Worker Health Probe
+### Worker Liveness Probe
 `GET /health/worker`
-- Queries persistent worker heartbeats stored in PostgreSQL (`worker_heartbeats`).
-- Returns HTTP 200 OK when an active worker heartbeat was recorded within `WORKER_HEARTBEAT_TIMEOUT_SECONDS` (default: 10s).
-- Returns HTTP 503 Service Unavailable when the worker heartbeat is stale, missing, or stopped.
+- Verifies background worker heartbeats in the database. Returns 200 OK when worker heartbeat is within timeout threshold.
 
-Healthy Response (200 OK):
+### Service Info
+`GET /api/v1/info`
+- Returns service identity, environment, and current phase.
+
+---
+
+## 4. Authentication Endpoints
+
+### Register User & Provision Agency
+`POST /api/v1/auth/signup`
+- **Body:**
 ```json
 {
-  "status": "ok",
-  "service": "clientpulse-worker",
-  "worker_id": "worker-3e7deaa90cac-1",
-  "hostname": "3e7deaa90cac",
-  "last_heartbeat_at": "2026-10-31T15:43:46Z",
-  "age_seconds": 0.16,
-  "timeout_seconds": 10,
-  "timestamp": "2026-10-31T15:43:46Z"
+  "email": "user@agency.com",
+  "password": "SecurePassword123!",
+  "display_name": "Jane Doe",
+  "organization_name": "Apex Agency"
 }
 ```
+- **Responses:**
+  - `201 Created`: Sets `clientpulse_session` and `clientpulse_csrf` cookies. Returns user object, initial organization, role (`owner`), and CSRF token.
+  - `400 Bad Request`: Validation failure or duplicate email.
 
-Unhealthy Response (503 Service Unavailable):
+### User Login
+`POST /api/v1/auth/login`
+- **Rate Limit:** 10 requests / minute / IP.
+- **Body:**
 ```json
 {
-  "status": "unhealthy",
-  "service": "clientpulse-worker",
-  "worker_id": "worker-3e7deaa90cac-1",
-  "hostname": "3e7deaa90cac",
-  "last_heartbeat_at": "2026-10-31T15:27:56Z",
-  "age_seconds": 30.03,
-  "timeout_seconds": 10,
-  "timestamp": "2026-10-31T15:28:26Z",
-  "error": "worker heartbeat is stale"
+  "email": "user@agency.com",
+  "password": "SecurePassword123!"
 }
 ```
+- **Responses:**
+  - `200 OK`: Sets `clientpulse_session` and `clientpulse_csrf` cookies. Returns user, active organization, role, and CSRF token.
+  - `401 Unauthorized`: Invalid credentials (anti-enumeration: generic message).
 
+### User Logout
+`POST /api/v1/auth/logout`
+- Revokes active session in PostgreSQL and clears cookies (`MaxAge: -1`).
+- **Response:** `200 OK`.
+
+### Current Authenticated User & Workspace
+`GET /api/v1/auth/me`
+- Requires authentication.
+- Returns user identity, active organization, caller role, and list of memberships.
+
+### Verify Email
+`POST /api/v1/auth/verify-email`
+- **Body:** `{"token": "raw-verification-token"}` (or `?token=...`).
+- Marks user's email as verified and invalidates token.
+
+### Resend Verification Email
+`POST /api/v1/auth/resend-verification`
+- Requires authentication. Generates a fresh verification token and dispatches email via Mailpit/SMTP.
+
+### Forgot Password
+`POST /api/v1/auth/forgot-password`
+- **Rate Limit:** 5 requests / minute / IP.
+- **Body:** `{"email": "user@agency.com"}`.
+- Generates a 30-minute single-use token and sends reset instructions. Always returns generic success to prevent email enumeration.
+
+### Reset Password
+`POST /api/v1/auth/reset-password`
+- **Body:** `{"token": "raw-token", "password": "NewSecurePassword123!"}`.
+- Validates password strength (>= 12 chars), hashes with Argon2id, marks token used, and invalidates all active sessions.
+
+### Change Password
+`POST /api/v1/auth/change-password`
+- Requires authentication.
+- **Body:** `{"current_password": "...", "new_password": "..."}`.
+- Verifies current password, updates to new Argon2id hash, and revokes prior sessions.
+
+---
+
+## 5. Multi-Tenant Organization Endpoints
+
+### List User Organizations
+`GET /api/v1/organizations`
+- Returns all organizations the user belongs to.
+
+### Create Organization
+`POST /api/v1/organizations`
+- **Body:** `{"name": "New Agency", "slug": "new-agency", "locale": "en", "timezone": "UTC"}`.
+- Provisions new tenant and assigns creator as `owner`.
+
+### Select Active Organization
+`POST /api/v1/organizations/select`
+- **Body:** `{"organization_id": "<uuid>"}`.
+- Validates user membership in target organization. Updates session's active organization.
+
+### Get Current Organization Settings
+`GET /api/v1/organizations/current`
+- Tenant-scoped. Returns organization details and caller's role.
+
+### Update Organization Settings
+`PATCH /api/v1/organizations/current`
+- Requires `admin` or `owner` role.
+- **Body:** `{"name": "Updated Name", "locale": "fa", "timezone": "Asia/Tehran"}`.
+
+### List Organization Members
+`GET /api/v1/organizations/current/members`
+- Tenant-scoped. Returns all members with their roles and user info.
+
+### Add Member to Organization
+`POST /api/v1/organizations/current/members`
+- Requires `admin` or `owner` role. Admin cannot grant `owner` role.
+- **Body:** `{"email": "teammate@agency.com", "role": "member"}`.
+
+### Update Member Role
+`PATCH /api/v1/organizations/current/members/{userID}`
+- Requires `owner` role. Cannot demote the last remaining owner.
+- **Body:** `{"role": "admin"}`.
+
+### Remove Member
+`DELETE /api/v1/organizations/current/members/{userID}`
+- Requires `admin` or `owner` role (or self-removal). Admin cannot remove an Owner. Cannot remove the last remaining owner.

@@ -10,29 +10,45 @@ import (
 
 	"clientpulse/services/api/internal/config"
 	"clientpulse/services/api/internal/health"
+	"clientpulse/services/api/internal/rate"
+	"clientpulse/services/api/internal/tenant"
 )
+
+// Dependencies bundles all injected dependencies for the HTTP server.
+type Dependencies struct {
+	HealthHdr        *health.Handler
+	AuthHdr          *AuthHandler
+	OrgHdr           *OrgHandler
+	AuthMiddleware   *AuthMiddleware
+	TenantMiddleware *TenantMiddleware
+}
 
 // Server encapsulates the HTTP server, configuration, and dependencies.
 type Server struct {
 	httpServer *http.Server
 	cfg        *config.Config
 	logger     *slog.Logger
-	healthHdr  *health.Handler
+	deps       Dependencies
 }
 
 // New constructs a configured Server instance.
-func New(cfg *config.Config, log *slog.Logger, healthHdr *health.Handler) *Server {
+func New(cfg *config.Config, log *slog.Logger, deps Dependencies) *Server {
 	s := &Server{
-		cfg:       cfg,
-		logger:    log,
-		healthHdr: healthHdr,
+		cfg:    cfg,
+		logger: log,
+		deps:   deps,
 	}
 
 	mux := http.NewServeMux()
 	s.registerRoutes(mux)
 
-	// Build middleware chain
+	// Build global middleware chain
 	var handler http.Handler = mux
+
+	// CSRF validation for mutating cookie-authenticated requests
+	handler = CSRFProtection(handler)
+
+	// CORS handler
 	handler = CORS([]string{cfg.AppBaseURL, "http://localhost:3000"})(handler)
 	handler = SecurityHeaders(handler)
 	handler = RequestLogger(log)(handler)
@@ -51,23 +67,76 @@ func New(cfg *config.Config, log *slog.Logger, healthHdr *health.Handler) *Serve
 }
 
 func (s *Server) registerRoutes(mux *http.ServeMux) {
-	// Health and probe endpoints
-	mux.HandleFunc("GET /health/live", s.healthHdr.Live)
-	mux.HandleFunc("GET /health/ready", s.healthHdr.Ready)
-	mux.HandleFunc("GET /health/worker", s.healthHdr.Worker)
+	// Rate limiters for sensitive endpoints
+	loginLimiter := rate.NewLimiter(10, 1*time.Minute)
+	recoveryLimiter := rate.NewLimiter(5, 1*time.Minute)
 
-	// API v1 base info endpoint (foundation verification)
+	// 1. Health and probe endpoints (public)
+	if s.deps.HealthHdr != nil {
+		mux.HandleFunc("GET /health/live", s.deps.HealthHdr.Live)
+		mux.HandleFunc("GET /health/ready", s.deps.HealthHdr.Ready)
+		mux.HandleFunc("GET /health/worker", s.deps.HealthHdr.Worker)
+	}
+
+	// 2. Base info endpoint
 	mux.HandleFunc("GET /api/v1/info", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"service":     "ClientPulse API",
 			"version":     "1.0.0",
-			"phase":       "Phase 0 Foundation",
+			"phase":       "Phase 1 Authentication & Multi-Tenancy",
 			"environment": s.cfg.AppEnv,
 			"timestamp":   time.Now().UTC().Format(time.RFC3339),
 		})
 	})
+
+	if s.deps.AuthHdr == nil || s.deps.OrgHdr == nil || s.deps.AuthMiddleware == nil || s.deps.TenantMiddleware == nil {
+		return
+	}
+
+	// 3. Public Authentication Routes
+	mux.Handle("POST /api/v1/auth/signup", http.HandlerFunc(s.deps.AuthHdr.Signup))
+	mux.Handle("POST /api/v1/auth/login", RateLimit(loginLimiter, "login")(http.HandlerFunc(s.deps.AuthHdr.Login)))
+	mux.Handle("POST /api/v1/auth/forgot-password", RateLimit(recoveryLimiter, "forgot-password")(http.HandlerFunc(s.deps.AuthHdr.ForgotPassword)))
+	mux.Handle("POST /api/v1/auth/reset-password", http.HandlerFunc(s.deps.AuthHdr.ResetPassword))
+	mux.Handle("POST /api/v1/auth/verify-email", http.HandlerFunc(s.deps.AuthHdr.VerifyEmail))
+
+	// Helper wrapper for authenticated routes
+	authed := func(h http.HandlerFunc) http.Handler {
+		return s.deps.AuthMiddleware.Authenticate(RequireAuth(h))
+	}
+
+	// 4. Authenticated User Routes
+	mux.Handle("POST /api/v1/auth/logout", authed(s.deps.AuthHdr.Logout))
+	mux.Handle("GET /api/v1/auth/me", authed(s.deps.AuthHdr.Me))
+	mux.Handle("POST /api/v1/auth/resend-verification", authed(s.deps.AuthHdr.ResendVerification))
+	mux.Handle("POST /api/v1/auth/change-password", authed(s.deps.AuthHdr.ChangePassword))
+
+	// 5. Organization Management (User Scope)
+	mux.Handle("GET /api/v1/organizations", authed(s.deps.OrgHdr.ListUserOrganizations))
+	mux.Handle("POST /api/v1/organizations", authed(s.deps.OrgHdr.CreateOrganization))
+	mux.Handle("POST /api/v1/organizations/select", authed(s.deps.OrgHdr.SelectOrganization))
+
+	// Helper wrapper for active tenant-scoped routes
+	tenantScoped := func(h http.HandlerFunc, minRole string) http.Handler {
+		chain := http.Handler(h)
+		if minRole != "" {
+			chain = RequireRole(minRole)(chain)
+		}
+		chain = RequireTenant(chain)
+		chain = s.deps.TenantMiddleware.ResolveTenant(chain)
+		chain = RequireAuth(chain)
+		return s.deps.AuthMiddleware.Authenticate(chain)
+	}
+
+	// 6. Active Organization Scoped Routes
+	mux.Handle("GET /api/v1/organizations/current", tenantScoped(s.deps.OrgHdr.GetCurrent, ""))
+	mux.Handle("PATCH /api/v1/organizations/current", tenantScoped(s.deps.OrgHdr.UpdateCurrent, tenant.RoleAdmin))
+	mux.Handle("GET /api/v1/organizations/current/members", tenantScoped(s.deps.OrgHdr.ListMembers, ""))
+	mux.Handle("POST /api/v1/organizations/current/members", tenantScoped(s.deps.OrgHdr.AddMember, tenant.RoleAdmin))
+	mux.Handle("PATCH /api/v1/organizations/current/members/{userID}", tenantScoped(s.deps.OrgHdr.UpdateMemberRole, tenant.RoleOwner))
+	mux.Handle("DELETE /api/v1/organizations/current/members/{userID}", tenantScoped(s.deps.OrgHdr.RemoveMember, tenant.RoleAdmin))
 }
 
 // Start listens and serves incoming HTTP requests.
@@ -88,4 +157,3 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	s.logger.Info("shutting down HTTP API server")
 	return s.httpServer.Shutdown(ctx)
 }
-

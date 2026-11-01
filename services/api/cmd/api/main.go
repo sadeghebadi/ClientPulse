@@ -13,13 +13,15 @@ import (
 	"clientpulse/services/api/internal/database"
 	"clientpulse/services/api/internal/health"
 	"clientpulse/services/api/internal/logger"
+	"clientpulse/services/api/internal/mail"
+	"clientpulse/services/api/internal/repository"
 	"clientpulse/services/api/internal/server"
+	"clientpulse/services/api/internal/service"
 )
 
 func main() {
 	cfg, err := config.Load()
 	if err != nil {
-		// Cannot use structured logger yet if config load fails
 		println("fatal: failed to load configuration:", err.Error())
 		os.Exit(1)
 	}
@@ -40,7 +42,6 @@ func main() {
 	})
 	if err != nil {
 		log.Error("failed to connect to database", "error", err)
-		// We still start the server so /health/live works and /health/ready accurately reports 503
 	} else {
 		defer db.Close()
 	}
@@ -55,8 +56,41 @@ func main() {
 	workerTimeout := time.Duration(cfg.WorkerHeartbeatTimeoutSeconds) * time.Second
 	healthHdr := health.NewHandler(db, workerChecker, workerTimeout, "1.0.0")
 
+	// Assemble server dependencies
+	var deps server.Dependencies
+	deps.HealthHdr = healthHdr
+
+	if db != nil && db.Pool != nil {
+		userRepo := repository.NewUserRepository(db.Pool)
+		sessionRepo := repository.NewSessionRepository(db.Pool)
+		orgRepo := repository.NewOrganizationRepository(db.Pool)
+		tokenRepo := repository.NewTokenRepository(db.Pool)
+		auditRepo := repository.NewAuditRepository(db.Pool)
+
+		var mailer mail.EmailSender
+		if cfg.SMTPHost != "" {
+			mailer = mail.NewSMTPMailer(mail.SMTPConfig{
+				Host:     cfg.SMTPHost,
+				Port:     cfg.SMTPPort,
+				Username: cfg.SMTPUsername,
+				Password: cfg.SMTPPassword,
+				From:     cfg.EmailFrom,
+			})
+		} else {
+			mailer = mail.NewMockMailer()
+		}
+
+		authService := service.NewAuthService(userRepo, sessionRepo, orgRepo, tokenRepo, auditRepo, mailer, cfg)
+		orgService := service.NewOrgService(orgRepo, userRepo, sessionRepo, auditRepo, cfg)
+
+		deps.AuthHdr = server.NewAuthHandler(authService, cfg.IsProduction())
+		deps.OrgHdr = server.NewOrgHandler(orgService)
+		deps.AuthMiddleware = server.NewAuthMiddleware(sessionRepo, userRepo, cfg)
+		deps.TenantMiddleware = server.NewTenantMiddleware(orgRepo, sessionRepo)
+	}
+
 	// Initialize HTTP server
-	srv := server.New(cfg, log, healthHdr)
+	srv := server.New(cfg, log, deps)
 
 	// Run server in background goroutine
 	serverErrChan := make(chan error, 1)
@@ -89,4 +123,3 @@ func main() {
 
 	log.Info("API service shutdown completed successfully")
 }
-
