@@ -72,4 +72,57 @@ clientpulse/
 | `repository` | PostgreSQL data access with `WithTenantTx` and Row-Level Security (RLS) enforcement |
 | `server` | HTTP routing, session cookie auth, tenant resolution, RBAC, CSRF, rate limit middlewares |
 | `service` | Business logic for Authentication, User Accounts, Organizations, Memberships, and Roles |
+| `ssrf` | Multi-layer outbound SSRF protection, IP classification, DNS rebinding defense & socket pinning |
+| `checker` | Protocol check engine (HTTP GET/HEAD, SSL certificate lifecycle, JSON Pointer, DNS) |
 | `tenant` | TenantContext, UserContext, and RBAC permission evaluation (`HasRole`) |
+| `worker` | Monitoring scheduler daemon, atomic job claiming, drift prevention & check persistence |
+
+---
+
+## 4. Monitoring Engine & Scheduler Architecture
+
+ClientPulse implements a distributed, drift-free scheduler using PostgreSQL as the single source of truth:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant W as Worker Daemon (services/api/cmd/worker)
+    participant DB as PostgreSQL (claim_due_monitors)
+    participant SG as SSRF Guard & Dialer
+    participant Target as Monitored Target Server
+
+    loop Every 2 Seconds
+        W->>DB: Call claim_due_monitors(worker_id, batch_size=10, lease_seconds=60)
+        Note over DB: Atomically claims due monitors<br/>FOR UPDATE OF m SKIP LOCKED<br/>Sets lease_expires_at & active worker_id
+        DB-->>W: Returns batch of ClaimedMonitorJobs
+        
+        par For each claimed monitor in worker pool
+            W->>SG: Resolve DNS and validate public IP
+            alt Prohibited IP or Private Range
+                SG-->>W: SSRF Blocked Error
+            else Public IP Validated
+                SG->>Target: Outbound HTTP/HTTPS check (Pin IP, keep SNI)
+                Target-->>SG: HTTP Response + TLS Peer Certificates
+                SG-->>W: Check Execution Result (Latency, Status, TLS, Body)
+            end
+            W->>DB: Persist CheckResult & Update next_check_at (Drift-free)
+        end
+    end
+```
+
+### 4.1 Atomic Job Claiming (`claim_due_monitors`)
+- Stored function defined with `SECURITY DEFINER` and search path restriction to allow background workers to claim due monitors across tenants without granting broad RLS bypasses to the application runtime user.
+- Employs `SELECT ... FOR UPDATE OF m SKIP LOCKED` to allow multiple concurrent worker instances to scale horizontally without duplicate executions.
+- Sets an execution lease (`lease_expires_at = NOW() + INTERVAL '60 seconds'`). Abandoned or crashed jobs whose leases expire are automatically reclaimed by the next available worker.
+- Short-lived database transaction: The database connection is held only during the atomic claim query. All network I/O, DNS resolution, and outbound HTTP checks execute outside database transactions.
+
+### 4.2 Drift Prevention & Misfire Policy
+- Scheduled check intervals must not drift forward based on slow network latency. The scheduler calculates `next_check_at = scheduled_at + interval`.
+- **Misfire Skip Policy:** If a monitor's scheduled time fell significantly behind while the worker was offline or restarting (`next_check_at < NOW()`), the scheduler advances `next_check_at = NOW() + interval` instead of scheduling a stampede of historical catch-up runs.
+
+### 4.3 SSRF Guard & Outbound Connection Pinning
+- **DNS Rebinding Defense:** Target hostnames are resolved before connection initiation. Every resolved A and AAAA record is inspected against a comprehensive blacklist of private, loopback, link-local, multicast, CGNAT, and cloud metadata CIDRs.
+- **Socket IP Pinning:** The exact public IP address validated by the SSRF guard is passed to `net.Dialer.DialContext`. The outbound TCP connection connects directly to that IP, preventing DNS rebinding race conditions.
+- **SNI Preservation:** The original target hostname is preserved in `tls.Config.ServerName` and the HTTP `Host` header for accurate virtual hosting and TLS certificate verification.
+- **Redirect Isolation:** The HTTP client validates every HTTP redirect target through the full SSRF pipeline before following. Redirects to internal or prohibited addresses are rejected immediately.
+- **Proxy Neutralization:** Custom HTTP transports set `Proxy = nil` to guarantee environment proxy variables do not bypass security controls.

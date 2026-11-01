@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"clientpulse/services/api/internal/checker"
 	"clientpulse/services/api/internal/config"
 	"clientpulse/services/api/internal/database"
 	"clientpulse/services/api/internal/health"
@@ -17,6 +18,7 @@ import (
 	"clientpulse/services/api/internal/repository"
 	"clientpulse/services/api/internal/server"
 	"clientpulse/services/api/internal/service"
+	"clientpulse/services/api/internal/ssrf"
 )
 
 func main() {
@@ -66,6 +68,12 @@ func main() {
 		orgRepo := repository.NewOrganizationRepository(db.Pool)
 		tokenRepo := repository.NewTokenRepository(db.Pool)
 		auditRepo := repository.NewAuditRepository(db.Pool)
+		clientRepo := repository.NewClientRepository(db.Pool)
+		assetRepo := repository.NewAssetRepository(db.Pool)
+		monitorRepo := repository.NewMonitorRepository(db.Pool)
+		resultRepo := repository.NewCheckResultRepository(db.Pool)
+		ssrfGuard := ssrf.NewGuard(nil)
+		chk := checker.NewChecker(ssrfGuard, "api-manual-worker")
 
 		var mailer mail.EmailSender
 		if cfg.SMTPHost != "" {
@@ -85,6 +93,9 @@ func main() {
 
 		deps.AuthHdr = server.NewAuthHandler(authService, cfg.IsProduction())
 		deps.OrgHdr = server.NewOrgHandler(orgService)
+		deps.ClientHdr = server.NewClientHandler(clientRepo, auditRepo)
+		deps.AssetHdr = server.NewAssetHandler(assetRepo, auditRepo, ssrfGuard, cfg.AppEnv)
+		deps.MonitorHdr = server.NewMonitorHandler(monitorRepo, resultRepo, assetRepo, auditRepo, chk, ssrfGuard)
 		deps.AuthMiddleware = server.NewAuthMiddleware(sessionRepo, userRepo, cfg)
 		deps.TenantMiddleware = server.NewTenantMiddleware(orgRepo, sessionRepo)
 	}

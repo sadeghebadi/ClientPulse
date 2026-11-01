@@ -162,20 +162,27 @@ docker compose config
 ```text
 clientpulse/
 ├── apps/
-│   └── web/                     # Next.js 14 frontend (TypeScript, Tailwind, RTL)
+│   └── web/                     # Next.js 16 frontend (TypeScript, Tailwind, EN/FA RTL)
 ├── services/
 │   └── api/                     # Go backend & worker
 │       ├── cmd/
 │       │   ├── api/             # HTTP API entrypoint
-│       │   ├── worker/          # Background worker entrypoint
+│       │   ├── worker/          # Monitoring execution & heartbeat daemon
 │       │   └── migrate/         # Migration runner CLI
 │       └── internal/
+│           ├── auth/            # Argon2id password hashing, tokens, HMAC pepper
+│           ├── checker/         # HTTP, SSL, JSON Pointer, DNS check engine
 │           ├── config/          # Environment configuration loading & validation
 │           ├── database/        # PostgreSQL connection pool (pgxpool)
 │           ├── health/          # Liveness, readiness, worker health handlers
 │           ├── logger/          # Structured JSON logging (slog) with Request ID
 │           ├── migrate/         # SQL migration engine
-│           └── server/          # HTTP server, routing, security middlewares
+│           ├── repository/      # RLS-enforced repositories (Client, Asset, Monitor, Results)
+│           ├── server/          # HTTP server, routing, RBAC, CSRF, auth & verified email middlewares
+│           ├── service/         # Auth & Organization domain logic
+│           ├── ssrf/            # Dedicated SSRF guard, DNS inspection & IP pinning
+│           ├── tenant/          # Tenant and user context helpers
+│           └── worker/          # Distributed scheduler, atomic job claiming & drift prevention
 ├── migrations/                  # Versioned SQL migrations (.up.sql / .down.sql)
 ├── deploy/
 │   ├── docker/                  # Multi-stage Dockerfiles (api, worker, web)
@@ -194,5 +201,7 @@ clientpulse/
 ## 7. Current Project Phase
 
 - **Phase 0 — Repository Audit & Foundation:** ✅ COMPLETE
-- **Phase 1 — Auth & Multi-Tenancy:** ⏳ PENDING REVIEW & AUTHORIZATION
+- **Phase 1 — Auth & Multi-Tenancy:** ✅ COMPLETE
+- **Phase 2 — Clients, Assets & Monitoring Core (TASK-003):** ✅ COMPLETE
+- **Phase 3 — Incidents & Heartbeats:** ⏳ NEXT UPCOMING PHASE
 

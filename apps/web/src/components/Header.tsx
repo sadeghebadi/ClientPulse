@@ -45,6 +45,20 @@ export function Header() {
 
               {/* Navigation links for active tenant */}
               <Link
+                href="/clients"
+                className="hidden md:flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:text-blue-600 hover:bg-slate-50 rounded-md transition-colors"
+              >
+                <span>{t.clients}</span>
+              </Link>
+
+              <Link
+                href="/monitors"
+                className="hidden md:flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:text-blue-600 hover:bg-slate-50 rounded-md transition-colors"
+              >
+                <span>{t.monitors}</span>
+              </Link>
+
+              <Link
                 href="/settings/members"
                 className="hidden md:flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-50 rounded-md transition-colors"
               >

@@ -176,3 +176,62 @@ RBAC is strictly enforced on the API backend via middleware (`RequireRole(minRol
 - `Access-Control-Allow-Credentials: true`
 - `Access-Control-Allow-Headers: Content-Type, Authorization, X-Request-ID, X-CSRF-Token, X-Organization-ID`
 
+---
+
+## 5. Server-Side Request Forgery (SSRF) Protection
+
+Because ClientPulse allows users to configure arbitrary HTTP/HTTPS endpoints for automated uptime monitoring, SSRF is a critical threat vector. A defense-in-depth security guard (`services/api/internal/ssrf`) is enforced across both the API server (at creation/update time) and the monitoring worker (at execution time).
+
+### 5.1 Scheme and Port Restrictions
+- **Allowed Schemes:** `http://` and `https://` only. All other URI schemes (`file://`, `gopher://`, `ftp://`, `ldap://`, `dict://`) are rejected.
+- **Allowed Ports:** Standard ports `80` (HTTP) and `443` (HTTPS). Non-standard ports (e.g. `22`, `3306`, `5432`, `6379`, `8080`, `27017`) are blocked.
+- **Prohibited Hostnames:**
+  - `localhost` and all `*.localhost` subdomains.
+  - `.local`, `.internal`, `.lan`, `.home.arpa` internal zones.
+  - Metadata hostnames: `metadata.google.internal`, `instance-data`.
+  - Non-FQDN hostnames without valid public dots.
+  - URLs containing embedded credentials (userinfo `user:pass@host`).
+
+### 5.2 Prohibited IP Address Classification
+Every resolved IP address is classified against an explicit blocklist of non-public CIDR ranges:
+
+| Classification | Blocked CIDR Range(s) | Threat Vector |
+|---|---|---|
+| IPv4 Private Networks | `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16` | RFC 1918 internal services & databases |
+| IPv4 Loopback | `127.0.0.0/8` | Localhost services & IPC |
+| IPv4 Link-Local / Cloud Metadata | `169.254.0.0/16` | AWS/GCP/Azure IMDS endpoints |
+| IPv4 Carrier-Grade NAT | `100.64.0.0/10` | RFC 6598 ISP shared networks |
+| IPv4 Multicast & Reserved | `224.0.0.0/4`, `240.0.0.0/4`, `0.0.0.0/8` | Broadcast / future use attacks |
+| IPv6 Loopback | `::1/128` | Localhost loopback |
+| IPv6 Unique Local (ULA) | `fc00::/7` | RFC 4193 private IPv6 services |
+| IPv6 Link-Local | `fe80::/10` | Link-local host discovery |
+| IPv6 Cloud Metadata | `fd00:ec2::254/128` | AWS Nitro IMDSv2 IPv6 |
+| IPv4-Mapped IPv6 | `::ffff:0:0/96` (and `::ffff:127.0.0.1`) | Bypass via dual-stack encapsulation |
+
+### 5.3 DNS Rebinding Defense & Socket Pinning
+1. Target hostnames are resolved using `net.DefaultResolver.LookupIPAddr`.
+2. If **any** returned IP address belongs to a prohibited CIDR range, the target is rejected immediately.
+3. The first validated public IP is pinned directly to the outbound TCP socket via a custom `SafeDialContext`.
+4. The HTTP transport bypasses secondary OS DNS lookups during TCP handshake (`dialer.DialContext(ctx, "tcp", net.JoinHostPort(pinnedIP.String(), port))`).
+5. The original hostname is explicitly passed to `tls.Config.ServerName` and HTTP `Host` headers to guarantee valid TLS verification and HTTP vhost routing.
+6. `http.Client.CheckRedirect` runs the full SSRF validation pipeline on every redirect URL before following. Redirects to private IPs or metadata endpoints are blocked.
+7. `http.Transport.Proxy` is explicitly set to `nil` to prevent environment proxy variables (`HTTP_PROXY`, `ALL_PROXY`) from intercepting or bypassing SSRF guards.
+
+### 5.4 Response Safety Limits
+- **Maximum Response Body Inspection:** 256 KB (`io.LimitReader(resp.Body, 256*1024)`). Prevents memory exhaustion attacks via streaming responses.
+- **Content-Type Validation:** Expected text searches require textual MIME types (`text/`, `application/json`, `application/xml`). Binary responses are never matched.
+- **Sensitive Data Redaction:** Raw response bodies are never logged or stored in PostgreSQL. Only latency, HTTP status code, TLS metadata, and safe error codes are persisted.
+
+---
+
+## 6. Email Verification Requirement on Sensitive Operations
+
+As mandated by PRD **FR-AUTH-01**, unverified accounts have restricted access:
+- Authentication, logging in, changing password, and viewing dashboard metrics are allowed.
+- All state-mutating agency operations are protected by `RequireVerifiedEmail` middleware:
+  - Client creation, update, and archiving (`POST/PATCH/DELETE /api/v1/clients/*`)
+  - Asset creation, update, and archiving (`POST/PATCH/DELETE /api/v1/assets/*`)
+  - Monitor creation, update, deletion, pause, resume, and on-demand testing (`POST/PATCH/DELETE /api/v1/monitors/*`)
+  - Organization member additions and role changes (`POST/PATCH/DELETE /api/v1/organizations/current/members/*`)
+- Unverified requests to these endpoints are rejected with `403 Forbidden` (`code: EMAIL_NOT_VERIFIED`). The UI displays an email verification banner guiding the user to check their email.
+

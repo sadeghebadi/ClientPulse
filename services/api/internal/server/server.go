@@ -19,6 +19,9 @@ type Dependencies struct {
 	HealthHdr        *health.Handler
 	AuthHdr          *AuthHandler
 	OrgHdr           *OrgHandler
+	ClientHdr        *ClientHandler
+	AssetHdr         *AssetHandler
+	MonitorHdr       *MonitorHandler
 	AuthMiddleware   *AuthMiddleware
 	TenantMiddleware *TenantMiddleware
 }
@@ -141,13 +144,61 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 		return s.deps.AuthMiddleware.Authenticate(chain)
 	}
 
+	// Helper wrapper for sensitive mutating tenant routes (requires email verification)
+	sensitiveTenantScoped := func(h http.HandlerFunc, minRole string) http.Handler {
+		chain := http.Handler(h)
+		chain = RequireVerifiedEmail(chain)
+		if minRole != "" {
+			chain = RequireRole(minRole)(chain)
+		}
+		chain = RequireTenant(chain)
+		chain = s.deps.TenantMiddleware.ResolveTenant(chain)
+		chain = RequireAuth(chain)
+		return s.deps.AuthMiddleware.Authenticate(chain)
+	}
+
 	// 6. Active Organization Scoped Routes
 	mux.Handle("GET /api/v1/organizations/current", tenantScoped(s.deps.OrgHdr.GetCurrent, ""))
-	mux.Handle("PATCH /api/v1/organizations/current", tenantScoped(s.deps.OrgHdr.UpdateCurrent, tenant.RoleAdmin))
+	mux.Handle("PATCH /api/v1/organizations/current", sensitiveTenantScoped(s.deps.OrgHdr.UpdateCurrent, tenant.RoleAdmin))
 	mux.Handle("GET /api/v1/organizations/current/members", tenantScoped(s.deps.OrgHdr.ListMembers, ""))
-	mux.Handle("POST /api/v1/organizations/current/members", tenantScoped(s.deps.OrgHdr.AddMember, tenant.RoleAdmin))
-	mux.Handle("PATCH /api/v1/organizations/current/members/{userID}", tenantScoped(s.deps.OrgHdr.UpdateMemberRole, tenant.RoleOwner))
-	mux.Handle("DELETE /api/v1/organizations/current/members/{userID}", tenantScoped(s.deps.OrgHdr.RemoveMember, tenant.RoleAdmin))
+	mux.Handle("POST /api/v1/organizations/current/members", sensitiveTenantScoped(s.deps.OrgHdr.AddMember, tenant.RoleAdmin))
+	mux.Handle("PATCH /api/v1/organizations/current/members/{userID}", sensitiveTenantScoped(s.deps.OrgHdr.UpdateMemberRole, tenant.RoleOwner))
+	mux.Handle("DELETE /api/v1/organizations/current/members/{userID}", sensitiveTenantScoped(s.deps.OrgHdr.RemoveMember, tenant.RoleAdmin))
+
+	// 7. Client Management Routes
+	if s.deps.ClientHdr != nil {
+		mux.Handle("GET /api/v1/clients", tenantScoped(s.deps.ClientHdr.List, ""))
+		mux.Handle("POST /api/v1/clients", sensitiveTenantScoped(s.deps.ClientHdr.Create, tenant.RoleMember))
+		mux.Handle("GET /api/v1/clients/{id}", tenantScoped(s.deps.ClientHdr.Get, ""))
+		mux.Handle("PATCH /api/v1/clients/{id}", sensitiveTenantScoped(s.deps.ClientHdr.Update, tenant.RoleMember))
+		mux.Handle("POST /api/v1/clients/{id}/archive", sensitiveTenantScoped(s.deps.ClientHdr.Archive, tenant.RoleAdmin))
+		mux.Handle("POST /api/v1/clients/{id}/restore", sensitiveTenantScoped(s.deps.ClientHdr.Restore, tenant.RoleAdmin))
+		mux.Handle("DELETE /api/v1/clients/{id}", sensitiveTenantScoped(s.deps.ClientHdr.Delete, tenant.RoleOwner))
+	}
+
+	// 8. Asset Management Routes
+	if s.deps.AssetHdr != nil {
+		mux.Handle("GET /api/v1/assets", tenantScoped(s.deps.AssetHdr.List, ""))
+		mux.Handle("POST /api/v1/assets", sensitiveTenantScoped(s.deps.AssetHdr.Create, tenant.RoleMember))
+		mux.Handle("GET /api/v1/assets/{id}", tenantScoped(s.deps.AssetHdr.Get, ""))
+		mux.Handle("PATCH /api/v1/assets/{id}", sensitiveTenantScoped(s.deps.AssetHdr.Update, tenant.RoleMember))
+		mux.Handle("POST /api/v1/assets/{id}/archive", sensitiveTenantScoped(s.deps.AssetHdr.Archive, tenant.RoleAdmin))
+		mux.Handle("POST /api/v1/assets/{id}/restore", sensitiveTenantScoped(s.deps.AssetHdr.Restore, tenant.RoleAdmin))
+	}
+
+	// 9. Monitor Management & Dashboard Routes
+	if s.deps.MonitorHdr != nil {
+		mux.Handle("GET /api/v1/monitors", tenantScoped(s.deps.MonitorHdr.List, ""))
+		mux.Handle("POST /api/v1/monitors", sensitiveTenantScoped(s.deps.MonitorHdr.Create, tenant.RoleMember))
+		mux.Handle("GET /api/v1/monitors/{id}", tenantScoped(s.deps.MonitorHdr.Get, ""))
+		mux.Handle("PATCH /api/v1/monitors/{id}", sensitiveTenantScoped(s.deps.MonitorHdr.Update, tenant.RoleMember))
+		mux.Handle("POST /api/v1/monitors/{id}/pause", sensitiveTenantScoped(s.deps.MonitorHdr.Pause, tenant.RoleMember))
+		mux.Handle("POST /api/v1/monitors/{id}/resume", sensitiveTenantScoped(s.deps.MonitorHdr.Resume, tenant.RoleMember))
+		mux.Handle("DELETE /api/v1/monitors/{id}", sensitiveTenantScoped(s.deps.MonitorHdr.Delete, tenant.RoleAdmin))
+		mux.Handle("POST /api/v1/monitors/{id}/test", sensitiveTenantScoped(s.deps.MonitorHdr.TestNow, tenant.RoleMember))
+		mux.Handle("GET /api/v1/monitors/{id}/history", tenantScoped(s.deps.MonitorHdr.History, ""))
+		mux.Handle("GET /api/v1/dashboard/stats", tenantScoped(s.deps.MonitorHdr.DashboardStats, ""))
+	}
 }
 
 // Start listens and serves incoming HTTP requests.

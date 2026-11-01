@@ -71,6 +71,11 @@ func createTestUserAndSession(t *testing.T, authService *service.AuthService, di
 		t.Fatalf("failed to create test user: %v", err)
 	}
 
+	// Mark user verified for RBAC/CSRF test operations
+	db := testhelper.GetTestDB(t)
+	_, _ = db.Pool.Exec(context.Background(), "UPDATE users SET email_verified_at = NOW() WHERE id = $1", res.User.ID)
+	db.Close()
+
 	return res.User, res.Organization.ID, res.RawSession, res.RawCSRF
 }
 

@@ -178,3 +178,233 @@ Common error codes:
 ### Remove Member
 `DELETE /api/v1/organizations/current/members/{userID}`
 - Requires `admin` or `owner` role (or self-removal). Admin cannot remove an Owner. Cannot remove the last remaining owner.
+
+---
+
+## 6. Client Management Endpoints
+
+All Client endpoints require authentication and membership in the active organization. Mutating operations (`POST`, `PATCH`, `DELETE`) require verified email and `admin` or `owner` role.
+
+### List Clients
+`GET /api/v1/clients?search=&status=`
+- **Query Parameters:**
+  - `search` (optional): Filter clients by name, contact name, contact email, or website.
+  - `status` (optional): `active` (default) or `archived`.
+- **Response `200 OK`:**
+```json
+{
+  "clients": [
+    {
+      "id": "c1f7a022-8b4e-4f51-b84e-289c029143ef",
+      "organization_id": "7b79a528-7fd8-4d5c-bd8d-7108170c9159",
+      "name": "Acme Corp",
+      "contact_name": "Alice Smith",
+      "contact_email": "alice@acme.com",
+      "website": "https://acme.com",
+      "notes": "Premium enterprise tier client",
+      "status": "active",
+      "created_at": "2026-11-01T05:00:00Z",
+      "updated_at": "2026-11-01T05:00:00Z",
+      "archived_at": null
+    }
+  ]
+}
+```
+
+### Create Client
+`POST /api/v1/clients`
+- Requires `admin` or `owner` role. Requires verified email.
+- **Body:**
+```json
+{
+  "name": "Acme Corp",
+  "contact_name": "Alice Smith",
+  "contact_email": "alice@acme.com",
+  "website": "https://acme.com",
+  "notes": "Notes about the client"
+}
+```
+- **Responses:**
+  - `201 Created`: Returns created client object.
+  - `400 Bad Request`: Validation failure (e.g. empty name, invalid website URL).
+
+### Get Client Details
+`GET /api/v1/clients/{clientID}`
+- Returns client object along with its associated assets and recent monitoring summary.
+- **Response `200 OK`:**
+```json
+{
+  "client": { ... },
+  "assets": [ ... ],
+  "monitors_summary": {
+    "total": 3,
+    "up": 2,
+    "down": 1,
+    "paused": 0
+  }
+}
+```
+
+### Update Client
+`PATCH /api/v1/clients/{clientID}`
+- Requires `admin` or `owner` role. Requires verified email.
+- **Body:** Partial update fields (`name`, `contact_name`, `contact_email`, `website`, `notes`).
+- **Response `200 OK`:** Returns updated client object.
+
+### Archive Client
+`DELETE /api/v1/clients/{clientID}`
+- Implements archive-first soft deletion. Marks client status as `archived` with `archived_at = NOW()`.
+- Automatically deactivates all child assets and pauses all associated monitors.
+- **Response `200 OK`:** `{"status": "archived"}`.
+
+### Restore Client
+`POST /api/v1/clients/{clientID}/restore`
+- Restores an archived client back to `active` status (`archived_at = NULL`).
+- **Response `200 OK`:** Returns restored client object.
+
+---
+
+## 7. Asset Management Endpoints
+
+Assets represent monitored websites, web apps, or APIs belonging to a Client. Mutating operations require verified email and `admin` or `owner` role.
+
+### List Assets for Client
+`GET /api/v1/clients/{clientID}/assets`
+- Returns all assets belonging to the client within the active organization.
+
+### Create Asset
+`POST /api/v1/clients/{clientID}/assets`
+- Server-side validates parent client ownership within active organization.
+- Performs SSRF pre-validation on the asset URL. Rejects private, loopback, or cloud metadata addresses.
+- Detects duplicate URLs within the active organization and returns a non-blocking `warning` in the response payload.
+- **Body:**
+```json
+{
+  "name": "Primary Production Website",
+  "url": "https://example.com",
+  "type": "website",
+  "environment": "production",
+  "description": "Public storefront"
+}
+```
+- **Response `201 Created`:**
+```json
+{
+  "asset": {
+    "id": "e4a1b023-9c5e-4a62-c95f-390d139254fa",
+    "organization_id": "7b79a528-7fd8-4d5c-bd8d-7108170c9159",
+    "client_id": "c1f7a022-8b4e-4f51-b84e-289c029143ef",
+    "name": "Primary Production Website",
+    "url": "https://example.com",
+    "type": "website",
+    "environment": "production",
+    "description": "Public storefront",
+    "is_active": true,
+    "created_at": "2026-11-01T05:00:00Z",
+    "updated_at": "2026-11-01T05:00:00Z"
+  },
+  "warning": null
+}
+```
+
+### Get Asset Details
+`GET /api/v1/assets/{assetID}`
+- Returns asset entity, associated monitors, and latest check results.
+
+### Update Asset
+`PATCH /api/v1/assets/{assetID}`
+- Requires `admin` or `owner` role. Requires verified email.
+- If `url` is changed, performs complete revalidation through the SSRF guard before persisting.
+- **Body:** Partial update fields (`name`, `url`, `type`, `environment`, `description`, `is_active`).
+
+### Archive Asset
+`DELETE /api/v1/assets/{assetID}`
+- Soft-archives asset (`is_active = false`, `archived_at = NOW()`).
+- Halts and pauses all associated scheduled monitoring jobs.
+
+---
+
+## 8. Monitor Configuration & Execution Endpoints
+
+Monitors perform automated availability, latency, SSL, and HTTP assertions against assets.
+
+### List Monitors for Asset
+`GET /api/v1/assets/{assetID}/monitors`
+- Returns all configured monitors for the asset.
+
+### List Organization Monitors
+`GET /api/v1/monitors`
+- Tenant-wide listing with latest check result and current status.
+
+### Create Monitor
+`POST /api/v1/assets/{assetID}/monitors`
+- Requires `admin` or `owner` role. Requires verified email.
+- Server-side validates interval (min 60s, default 300s), timeout (3–30s, default 10s), HTTP methods (`GET` or `HEAD`), redirect limit (max 5), and assertion rules.
+- Performs SSRF validation on target URL.
+- Computes initial `next_check_at = NOW()`.
+- **Body:**
+```json
+{
+  "name": "Homepage HTTPS Check",
+  "url_override": "",
+  "method": "GET",
+  "interval_seconds": 300,
+  "timeout_seconds": 10,
+  "expected_status_low": 200,
+  "expected_status_high": 399,
+  "follow_redirects": true,
+  "max_redirects": 5,
+  "expected_text": "Welcome to Acme",
+  "json_pointer": "",
+  "is_active": true
+}
+```
+
+### Get Monitor Details
+`GET /api/v1/monitors/{monitorID}`
+- Returns monitor configuration, parent asset and client details, latest check result, and remaining SSL certificate validity.
+
+### Update Monitor
+`PATCH /api/v1/monitors/{monitorID}`
+- Requires `admin` or `owner` role. Requires verified email.
+- Server-side validates updated parameters. If URL override changes, executes SSRF revalidation.
+
+### Pause Monitor
+`POST /api/v1/monitors/{monitorID}/pause`
+- Pauses scheduling (`is_active = false`, `status = paused`). Releases any active worker lease.
+
+### Resume Monitor
+`POST /api/v1/monitors/{monitorID}/resume`
+- Resumes scheduling (`is_active = true`, `status = pending`). Sets `next_check_at = NOW()`.
+
+### Delete Monitor
+`DELETE /api/v1/monitors/{monitorID}`
+- Soft-deletes monitor (`is_active = false`, `archived_at = NOW()`).
+
+### Test Now (On-Demand Execution)
+`POST /api/v1/monitors/{monitorID}/test`
+- Authenticated, organization-scoped, rate-limited (max 5 requests / min / IP).
+- Executes live check synchronously through the SSRF-guarded engine.
+- Records result with `execution_type = manual`. Manual checks are excluded from ordinary scheduled uptime metrics.
+- Returns comprehensive execution diagnostics: HTTP status code, latency, SSL validity days, DNS resolution time, and matched assertions.
+
+### Execution History
+`GET /api/v1/monitors/{monitorID}/history?limit=50&offset=0`
+- Returns paginated check execution history for the monitor with TLS metadata and safe error classifications.
+
+---
+
+## 9. Dashboard Endpoints
+
+### Agency Overview Stats
+`GET /api/v1/dashboard/stats`
+- Returns high-level metrics for the active organization:
+  - `total_clients`
+  - `total_assets`
+  - `total_monitors`
+  - `active_monitors`
+  - `up_monitors`
+  - `down_monitors`
+  - `paused_monitors`
+  - `ssl_expiring_soon` (certificates expiring within 30 days)
+  - `recent_results`: Last 10 check results across all tenant monitors.

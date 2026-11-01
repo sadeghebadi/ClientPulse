@@ -12,6 +12,9 @@ import (
 	"clientpulse/services/api/internal/database"
 	"clientpulse/services/api/internal/health"
 	"clientpulse/services/api/internal/logger"
+	"clientpulse/services/api/internal/repository"
+	"clientpulse/services/api/internal/ssrf"
+	"clientpulse/services/api/internal/worker"
 )
 
 func main() {
@@ -66,9 +69,36 @@ func main() {
 	}
 	regCancel()
 
+	// Set up monitoring repositories and scheduler
+	monitorRepo := repository.NewMonitorRepository(db.Pool)
+	resultRepo := repository.NewCheckResultRepository(db.Pool)
+	ssrfGuard := ssrf.NewGuard(nil)
+
+	scheduler := worker.NewScheduler(
+		db.Pool,
+		monitorRepo,
+		resultRepo,
+		ssrfGuard,
+		worker.SchedulerConfig{
+			WorkerID:    workerID,
+			Concurrency: cfg.WorkerConcurrency,
+			PollPeriod:  1 * time.Second,
+		},
+		log,
+	)
+
 	// Set up cancellation context for graceful shutdown
 	workerCtx, workerCancel := context.WithCancel(context.Background())
 	defer workerCancel()
+
+	// Launch monitoring scheduler daemon
+	schedulerErrChan := make(chan error, 1)
+	go func() {
+		if err := scheduler.Run(workerCtx); err != nil {
+			log.Error("scheduler daemon error", "error", err)
+			schedulerErrChan <- err
+		}
+	}()
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)

@@ -101,3 +101,36 @@ func RequireAuth(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r)
 	})
 }
+
+// RequireVerifiedEmail ensures that the authenticated user has verified their email address
+// before executing sensitive operational actions (PRD FR-AUTH-01).
+func RequireVerifiedEmail(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		u := tenant.GetUserContext(r.Context())
+		if u == nil {
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			w.WriteHeader(http.StatusUnauthorized)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": map[string]interface{}{
+					"code":    "UNAUTHORIZED",
+					"message": "Authentication is required to access this resource.",
+				},
+			})
+			return
+		}
+
+		if !u.EmailVerified {
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			w.WriteHeader(http.StatusForbidden)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": map[string]interface{}{
+					"code":    "EMAIL_NOT_VERIFIED",
+					"message": "Email address must be verified before performing sensitive operations.",
+				},
+			})
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
