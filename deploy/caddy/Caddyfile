@@ -1,22 +1,26 @@
 # Caddy reverse proxy configuration for ClientPulse local development
 :80 {
-    # API and Health endpoints reverse proxied to Go API server
-    handle /api/* {
-        reverse_proxy api:8080
-    }
+	# API and Health endpoints reverse proxied to Go API server
+	handle /api/* {
+		reverse_proxy api:8080
+	}
 
-    handle /health/* {
-        reverse_proxy api:8080
-    }
+	handle /health/* {
+		reverse_proxy api:8080
+	}
 
-    # All other routes served by Next.js frontend
-    handle /* {
-        reverse_proxy web:3000
-    }
+	# All other routes served by Next.js frontend
+	handle /* {
+		reverse_proxy web:3000
+	}
 
-    log {
-        output stdout
-        format json
-    }
+	log {
+		output stdout
+		format filter {
+			wrap json
+			fields {
+				request>uri regexp (cp_sh_[a-zA-Z0-9_\-]+|cp_hb_[a-zA-Z0-9_\-]+) [REDACTED]
+			}
+		}
+	}
 }
-

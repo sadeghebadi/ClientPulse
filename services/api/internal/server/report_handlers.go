@@ -51,6 +51,9 @@ func NewReportHandler(
 
 // DefaultPreviousMonth calculates the start and end of previous calendar month in the specified timezone.
 func DefaultPreviousMonth(tzName string) (time.Time, time.Time, string) {
+	if tzName == "" {
+		tzName = "UTC"
+	}
 	loc, err := time.LoadLocation(tzName)
 	if err != nil {
 		loc = time.UTC
@@ -101,7 +104,11 @@ func (h *ReportHandler) Preview(w http.ResponseWriter, r *http.Request) {
 		pEnd = e.UTC()
 		tzName = "UTC"
 	} else {
-		pStart, pEnd, tzName = DefaultPreviousMonth("UTC")
+		orgTz, err := h.repo.GetOrganizationTimezone(r.Context(), tc.OrganizationID)
+		if err != nil || orgTz == "" {
+			orgTz = "UTC"
+		}
+		pStart, pEnd, tzName = DefaultPreviousMonth(orgTz)
 	}
 
 	if !pEnd.After(pStart) {
@@ -164,7 +171,11 @@ func (h *ReportHandler) Create(w http.ResponseWriter, r *http.Request) {
 		pEnd = e.UTC()
 		tzName = "UTC"
 	} else {
-		pStart, pEnd, tzName = DefaultPreviousMonth("UTC")
+		orgTz, err := h.repo.GetOrganizationTimezone(r.Context(), tc.OrganizationID)
+		if err != nil || orgTz == "" {
+			orgTz = "UTC"
+		}
+		pStart, pEnd, tzName = DefaultPreviousMonth(orgTz)
 	}
 
 	if !pEnd.After(pStart) {

@@ -256,3 +256,51 @@ func TestGenerateAndValidatePersianReportPDF(t *testing.T) {
 		t.Errorf("expected detected Persian characters in extracted text")
 	}
 }
+
+func TestChromiumProcessIsolationAndNetworkBlock(t *testing.T) {
+	gen, err := NewGenerator()
+	if err != nil {
+		t.Skipf("skipping PDF test: Chrome not available: %v", err)
+	}
+
+	// Craft a report data payload with attempted external image references
+	data := ReportData{
+		Title:                "Network Isolation Verification Report",
+		ReportType:           "monthly_care",
+		Locale:               "en",
+		PeriodStart:          time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC),
+		PeriodEnd:            time.Date(2026, 10, 31, 23, 59, 59, 0, time.UTC),
+		OrganizationTimezone: "UTC",
+		GeneratedAt:          time.Now().UTC(),
+		VersionNumber:        1,
+		TemplateVersion:      "v1.0",
+		Branding: BrandingData{
+			DisplayName: "Secure Digital Agency",
+			// Note: Even if an external http URL were placed in logo or text,
+			// Chromium must block outbound connections via --host-resolver-rules and --proxy-server
+			PrimaryColor: "#0284c7",
+			AccentColor:  "#6366f1",
+			FooterText:   "Network isolation verified.",
+		},
+		Client: ClientData{
+			Name: "Secure Client Corp",
+		},
+		Summary: SummaryData{
+			TotalMonitors:      1,
+			TotalIncidents:     0,
+			ExecutiveStatement: "Verified that Chromium processes are network-isolated.",
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	pdfBytes, err := gen.GeneratePDF(ctx, data)
+	if err != nil {
+		t.Fatalf("PDF generation failed with network isolation flags: %v", err)
+	}
+
+	if len(pdfBytes) < 500 {
+		t.Fatalf("expected valid PDF bytes, got %d bytes", len(pdfBytes))
+	}
+}

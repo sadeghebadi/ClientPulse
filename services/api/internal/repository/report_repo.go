@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -94,9 +95,16 @@ func (r *ReportRepository) CreateReport(
 		return nil, fmt.Errorf("failed serializing report snapshot: %w", err)
 	}
 
+	lockKey := fmt.Sprintf("report_ver:%s:%s:%s:%s", orgID, clientID, periodStart.Format(time.RFC3339), periodEnd.Format(time.RFC3339))
+
 	var rep Report
 	err = WithTenantTx(ctx, r.pool, orgID, func(tx pgx.Tx) error {
-		// Determine next version number atomically for this exact client & period
+		// 1. Acquire transaction-level advisory lock to serialize concurrent report version generation
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, lockKey); err != nil {
+			return fmt.Errorf("failed acquiring advisory lock for report versioning: %w", err)
+		}
+
+		// 2. Determine next version number atomically for this exact client & period
 		var nextVersion int
 		err := tx.QueryRow(ctx, `
 			SELECT COALESCE(MAX(version_number), 0) + 1
@@ -424,7 +432,45 @@ func (r *ReportRepository) LookupReportByShareToken(ctx context.Context, plainte
 	return &v, key, nil
 }
 
+// GetOrganizationTimezone retrieves the organization's configured IANA timezone, defaulting to UTC.
+func (r *ReportRepository) GetOrganizationTimezone(ctx context.Context, orgID string) (string, error) {
+	var tz string
+	err := r.pool.QueryRow(ctx, `SELECT COALESCE(timezone, 'UTC') FROM organizations WHERE id = $1`, orgID).Scan(&tz)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "UTC", nil
+		}
+		return "UTC", err
+	}
+	if tz == "" {
+		return "UTC", nil
+	}
+	return tz, nil
+}
+
 // CalculateReportData performs deterministic aggregation of monitoring, maintenance, incident, and heartbeat data.
+//
+// Formula & Methodology Specification:
+// 1. Monitoring Eligible Period (Monitored Sec):
+//    The actual time window within [PeriodStart, PeriodEnd] during which the monitor was eligible to run checks.
+//    - CovStart = max(PeriodStart, Monitor.CreatedAt)
+//    - CovEnd = min(PeriodEnd, Asset.ArchivedAt if archived, DeactivationTime if deactivated)
+//    - Paused periods (tracked via audit logs and status) are strictly subtracted from the eligible window.
+// 2. Monitoring Coverage Percentage:
+//    Proportion of expected scheduled checks actually executed and recorded:
+//    Coverage% = (Executed Scheduled Checks / Expected Scheduled Checks) * 100.
+//    - Expected Checks = Eligible Seconds / Monitor.IntervalSeconds.
+//    - Executed Scheduled Checks include both successful and failed checks (since monitoring actively occurred).
+//    - Missing scheduled checks (e.g. worker outages) directly reduce coverage.
+//    - Paused intervals are excluded from expected checks.
+// 3. Uptime Percentage:
+//    Proportion of eligible monitored time during which the service was healthy:
+//    Uptime% = ((Eligible Seconds - Outage Seconds) / Eligible Seconds) * 100.
+//    - Outage Seconds include overlapping confirmed incident intervals and executed failed checks.
+//    - Failed executed checks do NOT count as uptime.
+//    - Paused periods are strictly excluded from the uptime denominator.
+//    - If 0 scheduled checks were executed or eligible seconds == 0, Uptime is null (InsufficientData = true).
+// 4. Manual checks and synthetic tests are strictly excluded from all uptime and coverage calculations.
 func (r *ReportRepository) CalculateReportData(ctx context.Context, orgID, clientID string, periodStart, periodEnd time.Time, orgTimezone, locale string) (*pdf.ReportData, error) {
 	if !periodEnd.After(periodStart) {
 		return nil, ErrInvalidPeriod
@@ -495,9 +541,10 @@ func (r *ReportRepository) CalculateReportData(ctx context.Context, orgID, clien
 		assetRows, err := tx.Query(ctx, `
 			SELECT id, name, type, url, environment, is_active
 			FROM assets
-			WHERE client_id = $1 AND organization_id = $2 AND archived_at IS NULL
+			WHERE client_id = $1 AND organization_id = $2
+			  AND (archived_at IS NULL OR archived_at >= $3)
 			ORDER BY name ASC
-		`, clientID, orgID)
+		`, clientID, orgID, periodStart)
 		if err != nil {
 			return fmt.Errorf("failed querying assets: %w", err)
 		}
@@ -524,71 +571,163 @@ func (r *ReportRepository) CalculateReportData(ctx context.Context, orgID, clien
 
 		// 4. Fetch Monitors and Calculate Scheduled Uptime & Latency
 		monitorRows, err := tx.Query(ctx, `
-			SELECT m.id, m.asset_id, m.created_at, m.status, m.is_active,
-			       a.name AS asset_name, a.url AS asset_url
+			SELECT m.id, m.asset_id, m.created_at, m.updated_at, m.status, m.is_active, m.interval_seconds,
+			       a.name AS asset_name, a.url AS asset_url, a.archived_at AS asset_archived_at
 			FROM monitors m
 			JOIN assets a ON a.id = m.asset_id AND a.organization_id = m.organization_id
-			WHERE a.client_id = $1 AND m.organization_id = $2 AND a.archived_at IS NULL
-		`, clientID, orgID)
+			WHERE a.client_id = $1 AND m.organization_id = $2
+			  AND (a.archived_at IS NULL OR a.archived_at >= $3)
+			  AND m.created_at <= $4
+		`, clientID, orgID, periodStart, periodEnd)
 		if err != nil {
 			return fmt.Errorf("failed querying monitors: %w", err)
 		}
 		defer monitorRows.Close()
 
 		type monMeta struct {
-			id        string
-			assetID   string
-			createdAt time.Time
-			status    string
-			isActive  bool
-			assetName string
-			assetURL  string
+			id              string
+			assetID         string
+			createdAt       time.Time
+			updatedAt       time.Time
+			status          string
+			isActive        bool
+			intervalSeconds int
+			assetName       string
+			assetURL        string
+			assetArchivedAt *time.Time
 		}
 		var mons []monMeta
 		for monitorRows.Next() {
 			var m monMeta
-			if err := monitorRows.Scan(&m.id, &m.assetID, &m.createdAt, &m.status, &m.isActive, &m.assetName, &m.assetURL); err != nil {
+			if err := monitorRows.Scan(
+				&m.id, &m.assetID, &m.createdAt, &m.updatedAt, &m.status, &m.isActive, &m.intervalSeconds,
+				&m.assetName, &m.assetURL, &m.assetArchivedAt,
+			); err != nil {
 				return err
 			}
 			mons = append(mons, m)
 		}
 		monitorRows.Close()
 
-		totalPeriodSec := int64(periodEnd.Sub(periodStart).Seconds())
-		if totalPeriodSec <= 0 {
-			totalPeriodSec = 1
-		}
-
 		var uptimeSum float64
 		var uptimeCount int
 
 		for _, m := range mons {
+			// CovStart accounts for monitor creation during the reporting period
 			covStart := periodStart
 			if m.createdAt.After(covStart) {
 				covStart = m.createdAt
 			}
+
+			// CovEnd accounts for monitor deletion / asset archiving during the period
 			covEnd := periodEnd
+			if m.assetArchivedAt != nil && m.assetArchivedAt.Before(covEnd) {
+				covEnd = *m.assetArchivedAt
+			}
+			if !m.isActive && m.status != "paused" && m.updatedAt.After(covStart) && m.updatedAt.Before(covEnd) {
+				covEnd = m.updatedAt
+			}
 
-			var monitoredSec int64
+			// Calculate paused duration within [covStart, covEnd]
+			var pausedSec int64
+			auditRows, aErr := tx.Query(ctx, `
+				SELECT action, created_at
+				FROM audit_logs
+				WHERE organization_id = $1 AND entity_type = 'monitor' AND entity_id = $2
+				  AND action IN ('monitor.paused', 'monitor.resumed')
+				ORDER BY created_at ASC
+			`, orgID, m.id)
+			if aErr == nil {
+				type pauseEvent struct {
+					action string
+					at     time.Time
+				}
+				var events []pauseEvent
+				for auditRows.Next() {
+					var pe pauseEvent
+					if err := auditRows.Scan(&pe.action, &pe.at); err == nil {
+						events = append(events, pe)
+					}
+				}
+				auditRows.Close()
+
+				var activePauseStart *time.Time
+				for _, ev := range events {
+					if ev.action == "monitor.paused" {
+						pauseTime := ev.at
+						activePauseStart = &pauseTime
+					} else if ev.action == "monitor.resumed" && activePauseStart != nil {
+						pStart := *activePauseStart
+						pEnd := ev.at
+						activePauseStart = nil
+						if pStart.Before(covStart) {
+							pStart = covStart
+						}
+						if pEnd.After(covEnd) {
+							pEnd = covEnd
+						}
+						if pEnd.After(pStart) {
+							pausedSec += int64(pEnd.Sub(pStart).Seconds())
+						}
+					}
+				}
+				if activePauseStart != nil {
+					pStart := *activePauseStart
+					pEnd := covEnd
+					if pStart.Before(covStart) {
+						pStart = covStart
+					}
+					if pEnd.After(pStart) {
+						pausedSec += int64(pEnd.Sub(pStart).Seconds())
+					}
+				}
+			}
+
+			// Fallback: If no audit log records exist and monitor status is paused
+			if pausedSec == 0 && (m.status == "paused" || (!m.isActive && m.updatedAt.After(covStart))) {
+				pStart := m.updatedAt
+				if pStart.Before(covStart) {
+					pStart = covStart
+				}
+				if covEnd.After(pStart) {
+					pausedSec = int64(covEnd.Sub(pStart).Seconds())
+				}
+			}
+
+			// Monitoring Eligible Period: Total unpaused active seconds
+			var unpausedSec int64
 			if covEnd.After(covStart) {
-				monitoredSec = int64(covEnd.Sub(covStart).Seconds())
+				rawSec := int64(covEnd.Sub(covStart).Seconds())
+				if pausedSec > rawSec {
+					pausedSec = rawSec
+				}
+				unpausedSec = rawSec - pausedSec
 			}
-			covPct := (float64(monitoredSec) / float64(totalPeriodSec)) * 100.0
-			if covPct > 100.0 {
-				covPct = 100.0
-			}
-			if covPct < 0.0 {
-				covPct = 0.0
+			if unpausedSec < 0 {
+				unpausedSec = 0
 			}
 
-			// Query scheduled check metrics
+			// Expected scheduled checks in eligible period (excluding paused periods)
+			intervalSec := int64(m.intervalSeconds)
+			if intervalSec <= 0 {
+				intervalSec = 300
+			}
+			var expectedChecks int64
+			if unpausedSec > 0 {
+				expectedChecks = int64(math.Round(float64(unpausedSec) / float64(intervalSec)))
+				if expectedChecks <= 0 {
+					expectedChecks = 1
+				}
+			}
+
+			// Query scheduled check metrics (strictly excluding manual checks)
 			var checkCount, failedCount int
 			var avgResp *float64
 			err := tx.QueryRow(ctx, `
 				SELECT 
 					COUNT(*),
 					COUNT(*) FILTER (WHERE result IN ('failure', 'timeout', 'blocked', 'error')),
-					AVG(response_time_ms) FILTER (WHERE result = 'success' AND response_time_ms > 0)
+					AVG(latency_ms) FILTER (WHERE result = 'success' AND latency_ms > 0)
 				FROM check_results
 				WHERE monitor_id = $1 AND organization_id = $2
 				  AND execution_type = 'scheduled'
@@ -602,7 +741,7 @@ func (r *ReportRepository) CalculateReportData(ctx context.Context, orgID, clien
 			var medianResp *int64
 			if checkCount > 0 {
 				_ = tx.QueryRow(ctx, `
-					SELECT PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY response_time_ms)::BIGINT
+					SELECT PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY latency_ms)::BIGINT
 					FROM check_results
 					WHERE monitor_id = $1 AND organization_id = $2
 					  AND execution_type = 'scheduled'
@@ -617,8 +756,8 @@ func (r *ReportRepository) CalculateReportData(ctx context.Context, orgID, clien
 				avgRespMs = &val
 			}
 
-			// Incident overlap outage
-			var outageSec int64
+			// Incident overlap outage: Confirmed incidents overlapping the report boundary
+			var incidentOutageSec int64
 			var incCount int
 			incRows, err := tx.Query(ctx, `
 				SELECT confirmed_at, resolved_at
@@ -637,27 +776,51 @@ func (r *ReportRepository) CalculateReportData(ctx context.Context, orgID, clien
 						if oStart.Before(covStart) {
 							oStart = covStart
 						}
-						oEnd := periodEnd
-						if rAt != nil && rAt.Before(periodEnd) {
+						// Open incident without resolution caps outage at covEnd
+						oEnd := covEnd
+						if rAt != nil && rAt.Before(covEnd) {
 							oEnd = *rAt
 						}
 						if oEnd.After(oStart) {
-							outageSec += int64(oEnd.Sub(oStart).Seconds())
+							incidentOutageSec += int64(oEnd.Sub(oStart).Seconds())
 						}
 					}
 				}
 				incRows.Close()
 			}
 
-			var uptimePct *float64
-			insufficientData := checkCount == 0
+			// Failed checks that were actually executed must reduce uptime
+			failedChecksOutageSec := int64(failedCount) * intervalSec
+			totalOutageSec := incidentOutageSec
+			if failedChecksOutageSec > totalOutageSec {
+				totalOutageSec = failedChecksOutageSec
+			}
+			if totalOutageSec > unpausedSec {
+				totalOutageSec = unpausedSec
+			}
 
-			if !insufficientData && monitoredSec > 0 {
-				if outageSec > monitoredSec {
-					outageSec = monitoredSec
+			// Monitoring Coverage: proportion of expected scheduled checks executed and recorded
+			var covPct float64
+			if expectedChecks > 0 {
+				covPct = (float64(checkCount) / float64(expectedChecks)) * 100.0
+				if covPct > 100.0 {
+					covPct = 100.0
 				}
-				upSec := monitoredSec - outageSec
-				pct := (float64(upSec) / float64(monitoredSec)) * 100.0
+				if covPct < 0.0 {
+					covPct = 0.0
+				}
+			}
+
+			// Uptime: proportion of eligible unpaused monitored time service was healthy
+			var uptimePct *float64
+			insufficientData := checkCount == 0 || unpausedSec == 0
+
+			if !insufficientData && unpausedSec > 0 {
+				healthySec := unpausedSec - totalOutageSec
+				if healthySec < 0 {
+					healthySec = 0
+				}
+				pct := (float64(healthySec) / float64(unpausedSec)) * 100.0
 				if pct > 100.0 {
 					pct = 100.0
 				}
@@ -866,11 +1029,11 @@ func (r *ReportRepository) CalculateReportData(ctx context.Context, orgID, clien
 			})
 		}
 
-		// 10. Limitation notice
+		// 10. Limitation notice & methodology disclosure
 		if locale == "fa" {
-			data.LimitationNotice = "محاسبه ضریب پایداری بر اساس تست‌های دوره‌ای برنامه‌ریزی‌شده و رخدادهای تأییدشده انجام گرفته است. تست‌های دستی و زمان‌های غیرفعال از محاسبات خارج شده‌اند. دریافت سیگنال سلامت به تنهایی صحت فایل بکاپ را تضمین نمی‌کند."
+			data.LimitationNotice = "شفاف‌سازی متدولوژی: درصد پایداری بر اساس زمان مجاز پایش و کسر زمان قطعی ناشی از رخدادهای تأییدشده محاسبه شده است. پوشش پایش نسبت تست‌های زمان‌بندی‌شده اجرا شده به تست‌های مورد انتظار است. دوره‌های تعلیق و تست‌های دستی به طور کامل از مخرج محاسبات پایداری حذف شده‌اند. سیگنال سلامت به تنهایی صحت بازگردانی بکاپ را اثبات نمی‌کند."
 		} else {
-			data.LimitationNotice = "Uptime and coverage metrics are derived from scheduled checks and verified incidents. Manual tests and paused periods are strictly excluded. Heartbeat receipt confirms task execution but does not independently verify backup restoration validity or completeness."
+			data.LimitationNotice = "Methodology Disclosure: Monitoring Eligible Period excludes paused intervals and periods prior to creation or after deactivation. Monitoring Coverage is (Executed Scheduled Checks / Expected Scheduled Checks) * 100; missing scheduled checks reduce coverage while executed failed checks count toward coverage. Uptime is ((Eligible Monitored Seconds - Outage Seconds) / Eligible Monitored Seconds) * 100; failed checks and confirmed incident outages reduce uptime. Paused periods and manual tests are strictly excluded from uptime denominators. Heartbeat receipt confirms task execution but does not verify backup restoration validity or completeness."
 		}
 
 		return nil

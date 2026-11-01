@@ -6,10 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"clientpulse/services/api/internal/pdf"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -248,6 +250,161 @@ func TestReportSnapshotVersioningAndImmutability(t *testing.T) {
 
 	if len(snap2.Maintenance) != 1 || snap2.Maintenance[0].Title != v2Title {
 		t.Fatalf("Report v2 did not reflect updated activity! Got: %s", snap2.Maintenance[0].Title)
+	}
+}
+
+func TestDatabaseLevelReportSnapshotProtection(t *testing.T) {
+	adminPool, appPool, _ := setupTestRoles(t)
+	ctx := context.Background()
+
+	slug := fmt.Sprintf("db-prot-org-%d", time.Now().UnixNano())
+	orgID, clientID := createTestOrgAndClient(t, adminPool, "Snapshot Protection Org", slug)
+	userID := createTestUser(t, adminPool, fmt.Sprintf("db-prot-%d@test.example", time.Now().UnixNano()))
+
+	reportRepo := NewReportRepository(appPool, NewBrandingRepository(appPool))
+
+	periodStart := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+	periodEnd := time.Date(2026, 8, 31, 23, 59, 59, 0, time.UTC)
+
+	calc, err := reportRepo.CalculateReportData(ctx, orgID, clientID, periodStart, periodEnd, "UTC", "en")
+	if err != nil {
+		t.Fatalf("failed calculating report: %v", err)
+	}
+
+	rep, err := reportRepo.CreateReport(ctx, orgID, clientID, "monthly_care", periodStart, periodEnd, "UTC", "en", "August Report", *calc, userID)
+	if err != nil {
+		t.Fatalf("failed creating report: %v", err)
+	}
+
+	// 1. Attempt unauthorized SQL mutation of snapshot_json using clientpulse_app runtime role
+	err = WithTenantTx(ctx, appPool, orgID, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `
+			UPDATE reports
+			SET snapshot_json = '{"tampered": true}'::jsonb
+			WHERE id = $1 AND organization_id = $2
+		`, rep.ID, orgID)
+		return err
+	})
+	if err == nil {
+		t.Fatalf("CRITICAL SECURITY DEFECT: clientpulse_app was able to mutate snapshot_json in PostgreSQL!")
+	}
+	if !strings.Contains(err.Error(), "immutable") {
+		t.Errorf("expected trigger immutability error message, got: %v", err)
+	}
+
+	// 2. Attempt unauthorized SQL deletion using clientpulse_app runtime role
+	err = WithTenantTx(ctx, appPool, orgID, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `
+			DELETE FROM reports
+			WHERE id = $1 AND organization_id = $2
+		`, rep.ID, orgID)
+		return err
+	})
+	if err == nil {
+		t.Fatalf("CRITICAL SECURITY DEFECT: clientpulse_app was able to delete historical report from PostgreSQL!")
+	}
+
+	// 3. Legitimate operation: Updating PDF storage key must succeed
+	pdfKey := fmt.Sprintf("reports/%s/%s_v1.pdf", orgID, rep.ID)
+	err = reportRepo.UpdateReportPDFStorageKey(ctx, orgID, rep.ID, pdfKey)
+	if err != nil {
+		t.Fatalf("legitimate UpdateReportPDFStorageKey failed: %v", err)
+	}
+
+	// Verify pdf_storage_key was updated
+	fetched, err := reportRepo.GetReport(ctx, orgID, rep.ID)
+	if err != nil {
+		t.Fatalf("failed fetching report after pdf key update: %v", err)
+	}
+	if fetched.PDFStorageKey == nil || *fetched.PDFStorageKey != pdfKey {
+		t.Errorf("expected pdf_storage_key %q, got %+v", pdfKey, fetched.PDFStorageKey)
+	}
+}
+
+func TestConcurrentReportVersioning(t *testing.T) {
+	adminPool, appPool, _ := setupTestRoles(t)
+	ctx := context.Background()
+
+	slug := fmt.Sprintf("concurrent-report-org-%d", time.Now().UnixNano())
+	orgID, clientID := createTestOrgAndClient(t, adminPool, "Concurrent Report Org", slug)
+	userID := createTestUser(t, adminPool, fmt.Sprintf("conc-u-%d@test.example", time.Now().UnixNano()))
+
+	reportRepo := NewReportRepository(appPool, NewBrandingRepository(appPool))
+
+	periodStart := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	periodEnd := time.Date(2026, 9, 30, 23, 59, 59, 0, time.UTC)
+
+	calc, err := reportRepo.CalculateReportData(ctx, orgID, clientID, periodStart, periodEnd, "UTC", "en")
+	if err != nil {
+		t.Fatalf("failed calculating report: %v", err)
+	}
+
+	const concurrencyCount = 10
+	var wg sync.WaitGroup
+	errCh := make(chan error, concurrencyCount)
+	versionCh := make(chan int, concurrencyCount)
+
+	startBarrier := make(chan struct{})
+
+	for i := 0; i < concurrencyCount; i++ {
+		wg.Add(1)
+		go func(workerID int) {
+			defer wg.Done()
+			<-startBarrier // Synchronize start of all 10 goroutines
+
+			rep, err := reportRepo.CreateReport(
+				ctx,
+				orgID,
+				clientID,
+				"monthly_care",
+				periodStart,
+				periodEnd,
+				"UTC",
+				"en",
+				fmt.Sprintf("Report Concurrent Run %d", workerID),
+				*calc,
+				userID,
+			)
+			if err != nil {
+				errCh <- fmt.Errorf("worker %d failed: %w", workerID, err)
+				return
+			}
+			versionCh <- rep.VersionNumber
+		}(i)
+	}
+
+	// Release all workers simultaneously
+	close(startBarrier)
+	wg.Wait()
+	close(errCh)
+	close(versionCh)
+
+	// Verify no errors occurred
+	var errs []error
+	for err := range errCh {
+		errs = append(errs, err)
+	}
+	if len(errs) > 0 {
+		t.Fatalf("concurrent CreateReport encountered %d errors: %v", len(errs), errs)
+	}
+
+	// Verify 10 distinct versions were assigned: 1..10
+	versions := make(map[int]bool)
+	for v := range versionCh {
+		if versions[v] {
+			t.Errorf("duplicate version number detected: %d", v)
+		}
+		versions[v] = true
+	}
+
+	if len(versions) != concurrencyCount {
+		t.Errorf("expected %d distinct versions, got %d: %+v", concurrencyCount, len(versions), versions)
+	}
+
+	for v := 1; v <= concurrencyCount; v++ {
+		if !versions[v] {
+			t.Errorf("missing expected sequential version %d", v)
+		}
 	}
 }
 

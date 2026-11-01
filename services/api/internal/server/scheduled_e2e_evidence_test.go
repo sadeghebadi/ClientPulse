@@ -140,10 +140,21 @@ func TestScheduledMonitoringEndToEndEvidence(t *testing.T) {
 	sched := worker.NewScheduler(workerPool, workerMonitorRepo, workerResultRepo, workerHbRepo, workerIncRepo, guard, schedCfg, nil)
 	sched.SetTestTransport(rewriter)
 
-	schedCtx, schedCancel := context.WithTimeout(ctx, 2*time.Second)
+	schedCtx, schedCancel := context.WithTimeout(ctx, 5*time.Second)
 	defer schedCancel()
 
-	// Run scheduler until timeout
+	// Cancel scheduler as soon as the test target receives a check request
+	go func() {
+		for i := 0; i < 50; i++ {
+			time.Sleep(100 * time.Millisecond)
+			if atomic.LoadInt64(&requestCount) > 0 {
+				schedCancel()
+				return
+			}
+		}
+	}()
+
+	// Run scheduler until target pinged or timeout
 	_ = sched.Run(schedCtx)
 
 	// 6. Verify Execution Evidence
@@ -185,7 +196,11 @@ func TestScheduledMonitoringEndToEndEvidence(t *testing.T) {
 	t.Logf("Check Started At:       %s", resultRow.StartedAt.Format(time.RFC3339))
 	t.Logf("Check Completed At:     %s", resultRow.CompletedAt.Format(time.RFC3339))
 	t.Logf("Check Latency:          %d ms", resultRow.LatencyMs)
-	t.Logf("HTTP Status Code:       %d", *resultRow.HTTPStatusCode)
+	var statusCode int
+	if resultRow.HTTPStatusCode != nil {
+		statusCode = *resultRow.HTTPStatusCode
+	}
+	t.Logf("HTTP Status Code:       %d", statusCode)
 	t.Logf("Check Result Outcome:   %s", resultRow.Result)
 	t.Logf("Worker Identifier:      %s", resultRow.WorkerID)
 	t.Logf("Execution Type:         %s", resultRow.ExecutionType)

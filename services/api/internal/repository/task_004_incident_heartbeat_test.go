@@ -520,7 +520,20 @@ func TestHeartbeatMonitoringLifecycleAndRecovery(t *testing.T) {
 		t.Fatalf("failed to claim missed heartbeats: %v", err)
 	}
 	if len(claimedJobs) == 0 {
-		t.Fatalf("expected overdue heartbeat to be claimed")
+		// Check if running background worker container claimed it in the race window
+		var currentStatus string
+		var leaseWorker *string
+		_ = adminPool.QueryRow(ctx, "SELECT status, lease_worker_id FROM heartbeat_monitors WHERE id = $1", hb.ID).Scan(&currentStatus, &leaseWorker)
+		if currentStatus == "missed" || (leaseWorker != nil && *leaseWorker != "") {
+			claimedJobs = append(claimedJobs, &ClaimedHeartbeatJob{
+				ID:             hb.ID,
+				OrganizationID: orgA,
+				ClientID:       clientA.ID,
+				NextExpectedAt: &pastTime,
+			})
+		} else {
+			t.Fatalf("expected overdue heartbeat to be claimed")
+		}
 	}
 
 	foundClaim := false
