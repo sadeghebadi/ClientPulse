@@ -276,7 +276,7 @@ func TestDatabaseLevelReportSnapshotProtection(t *testing.T) {
 		t.Fatalf("failed creating report: %v", err)
 	}
 
-	// 1. Attempt unauthorized SQL mutation of snapshot_json using clientpulse_app runtime role
+	// 1. Attempt unauthorized SQL mutation of snapshot_json using clientpulse_app runtime role (Ordinary value change)
 	err = WithTenantTx(ctx, appPool, orgID, func(tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, `
 			UPDATE reports
@@ -292,7 +292,36 @@ func TestDatabaseLevelReportSnapshotProtection(t *testing.T) {
 		t.Errorf("expected trigger immutability error message, got: %v", err)
 	}
 
-	// 2. Attempt unauthorized SQL deletion using clientpulse_app runtime role
+	// 2. Attempt unauthorized SQL mutation of other immutable fields (title, version_number)
+	err = WithTenantTx(ctx, appPool, orgID, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `
+			UPDATE reports
+			SET title = 'Tampered Title', version_number = 99
+			WHERE id = $1 AND organization_id = $2
+		`, rep.ID, orgID)
+		return err
+	})
+	if err == nil {
+		t.Fatalf("CRITICAL SECURITY DEFECT: clientpulse_app was able to mutate title/version in PostgreSQL!")
+	}
+	if !strings.Contains(err.Error(), "immutable") {
+		t.Errorf("expected trigger immutability error message, got: %v", err)
+	}
+
+	// 3. Attempt non-NULL to NULL mutation on protected column
+	err = WithTenantTx(ctx, appPool, orgID, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `
+			UPDATE reports
+			SET title = NULL
+			WHERE id = $1 AND organization_id = $2
+		`, rep.ID, orgID)
+		return err
+	})
+	if err == nil {
+		t.Fatalf("CRITICAL SECURITY DEFECT: clientpulse_app was able to mutate title to NULL in PostgreSQL!")
+	}
+
+	// 4. Attempt unauthorized SQL deletion using clientpulse_app runtime role
 	err = WithTenantTx(ctx, appPool, orgID, func(tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, `
 			DELETE FROM reports
@@ -304,7 +333,7 @@ func TestDatabaseLevelReportSnapshotProtection(t *testing.T) {
 		t.Fatalf("CRITICAL SECURITY DEFECT: clientpulse_app was able to delete historical report from PostgreSQL!")
 	}
 
-	// 3. Legitimate operation: Updating PDF storage key must succeed
+	// 5. Legitimate operation: Updating PDF storage key must succeed (NULL to non-NULL on allowed mutable column)
 	pdfKey := fmt.Sprintf("reports/%s/%s_v1.pdf", orgID, rep.ID)
 	err = reportRepo.UpdateReportPDFStorageKey(ctx, orgID, rep.ID, pdfKey)
 	if err != nil {

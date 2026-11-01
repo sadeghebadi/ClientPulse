@@ -80,6 +80,9 @@ type MonitorReportData struct {
 	TotalChecks         int      `json:"total_checks"`
 	FailedChecks        int      `json:"failed_checks"`
 	IncidentCount       int      `json:"incident_count"`
+	EligibleDurationSec int64    `json:"eligible_duration_sec"`
+	ObservedDurationSec int64    `json:"observed_duration_sec"`
+	UnknownDurationSec  int64    `json:"unknown_duration_sec"`
 	LimitationNotice    string   `json:"limitation_notice"`
 }
 

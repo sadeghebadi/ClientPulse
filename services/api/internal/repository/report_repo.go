@@ -8,7 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
+	"sort"
 	"strings"
 	"time"
 
@@ -628,8 +628,8 @@ func (r *ReportRepository) CalculateReportData(ctx context.Context, orgID, clien
 				covEnd = m.updatedAt
 			}
 
-			// Calculate paused duration within [covStart, covEnd]
-			var pausedSec int64
+			// Calculate paused spans within [covStart, covEnd]
+			var pausedSpans []timeSpan
 			auditRows, aErr := tx.Query(ctx, `
 				SELECT action, created_at
 				FROM audit_logs
@@ -667,7 +667,7 @@ func (r *ReportRepository) CalculateReportData(ctx context.Context, orgID, clien
 							pEnd = covEnd
 						}
 						if pEnd.After(pStart) {
-							pausedSec += int64(pEnd.Sub(pStart).Seconds())
+							pausedSpans = append(pausedSpans, timeSpan{start: pStart, end: pEnd})
 						}
 					}
 				}
@@ -678,26 +678,36 @@ func (r *ReportRepository) CalculateReportData(ctx context.Context, orgID, clien
 						pStart = covStart
 					}
 					if pEnd.After(pStart) {
-						pausedSec += int64(pEnd.Sub(pStart).Seconds())
+						pausedSpans = append(pausedSpans, timeSpan{start: pStart, end: pEnd})
 					}
 				}
 			}
 
 			// Fallback: If no audit log records exist and monitor status is paused
-			if pausedSec == 0 && (m.status == "paused" || (!m.isActive && m.updatedAt.After(covStart))) {
+			if len(pausedSpans) == 0 && (m.status == "paused" || (!m.isActive && m.updatedAt.After(covStart))) {
 				pStart := m.updatedAt
 				if pStart.Before(covStart) {
 					pStart = covStart
 				}
 				if covEnd.After(pStart) {
-					pausedSec = int64(covEnd.Sub(pStart).Seconds())
+					pausedSpans = append(pausedSpans, timeSpan{start: pStart, end: covEnd})
 				}
+			}
+			pausedSpans = unionTimeSpans(pausedSpans)
+
+			var pausedSec int64
+			for _, ps := range pausedSpans {
+				pausedSec += int64(ps.end.Sub(ps.start).Seconds())
 			}
 
 			// Monitoring Eligible Period: Total unpaused active seconds
 			var unpausedSec int64
 			if covEnd.After(covStart) {
 				rawSec := int64(covEnd.Sub(covStart).Seconds())
+				// Inclusive calendar boundaries ending at 23:59:59 account for the final second of the day
+				if covEnd.Second() == 59 {
+					rawSec++
+				}
 				if pausedSec > rawSec {
 					pausedSec = rawSec
 				}
@@ -707,39 +717,66 @@ func (r *ReportRepository) CalculateReportData(ctx context.Context, orgID, clien
 				unpausedSec = 0
 			}
 
-			// Expected scheduled checks in eligible period (excluding paused periods)
+			// Expected scheduled checks based on scheduler cadence and anchor
 			intervalSec := int64(m.intervalSeconds)
 			if intervalSec <= 0 {
 				intervalSec = 300
 			}
-			var expectedChecks int64
-			if unpausedSec > 0 {
-				expectedChecks = int64(math.Round(float64(unpausedSec) / float64(intervalSec)))
-				if expectedChecks <= 0 {
-					expectedChecks = 1
-				}
+			expectedChecks := calculateExpectedSlots(m.createdAt, covStart, covEnd, intervalSec, pausedSpans)
+			if expectedChecks <= 0 && unpausedSec > 0 {
+				expectedChecks = 1
 			}
 
 			// Query scheduled check metrics (strictly excluding manual checks)
-			var checkCount, failedCount int
-			var avgResp *float64
-			err := tx.QueryRow(ctx, `
-				SELECT 
-					COUNT(*),
-					COUNT(*) FILTER (WHERE result IN ('failure', 'timeout', 'blocked', 'error')),
-					AVG(latency_ms) FILTER (WHERE result = 'success' AND latency_ms > 0)
+			type scheduledCheckItem struct {
+				id        string
+				result    string
+				latencyMs int64
+				createdAt time.Time
+			}
+			var checks []scheduledCheckItem
+			checkRows, err := tx.Query(ctx, `
+				SELECT id, result, latency_ms, created_at
 				FROM check_results
 				WHERE monitor_id = $1 AND organization_id = $2
 				  AND execution_type = 'scheduled'
 				  AND created_at >= $3 AND created_at <= $4
-			`, m.id, orgID, covStart, covEnd).Scan(&checkCount, &failedCount, &avgResp)
+				ORDER BY created_at ASC
+			`, m.id, orgID, covStart, covEnd)
 			if err != nil {
 				return err
+			}
+			defer checkRows.Close()
+
+			var checkCount, failedCount int
+			var latencySum int64
+			var successfulChecks int
+			for checkRows.Next() {
+				var it scheduledCheckItem
+				if err := checkRows.Scan(&it.id, &it.result, &it.latencyMs, &it.createdAt); err != nil {
+					return err
+				}
+				checks = append(checks, it)
+				checkCount++
+				if it.result == "failure" || it.result == "timeout" || it.result == "blocked" || it.result == "error" {
+					failedCount++
+				}
+				if it.result == "success" && it.latencyMs > 0 {
+					latencySum += it.latencyMs
+					successfulChecks++
+				}
+			}
+			checkRows.Close()
+
+			var avgRespMs *int64
+			if successfulChecks > 0 {
+				avgVal := latencySum / int64(successfulChecks)
+				avgRespMs = &avgVal
 			}
 
 			// Median Latency query
 			var medianResp *int64
-			if checkCount > 0 {
+			if successfulChecks > 0 {
 				_ = tx.QueryRow(ctx, `
 					SELECT PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY latency_ms)::BIGINT
 					FROM check_results
@@ -750,14 +787,8 @@ func (r *ReportRepository) CalculateReportData(ctx context.Context, orgID, clien
 				`, m.id, orgID, covStart, covEnd).Scan(&medianResp)
 			}
 
-			var avgRespMs *int64
-			if avgResp != nil {
-				val := int64(*avgResp)
-				avgRespMs = &val
-			}
-
-			// Incident overlap outage: Confirmed incidents overlapping the report boundary
-			var incidentOutageSec int64
+			// Outage calculation: Mathematical union of incident durations and failed-check intervals
+			var rawOutages []timeSpan
 			var incCount int
 			incRows, err := tx.Query(ctx, `
 				SELECT confirmed_at, resolved_at
@@ -782,21 +813,69 @@ func (r *ReportRepository) CalculateReportData(ctx context.Context, orgID, clien
 							oEnd = *rAt
 						}
 						if oEnd.After(oStart) {
-							incidentOutageSec += int64(oEnd.Sub(oStart).Seconds())
+							rawOutages = append(rawOutages, timeSpan{start: oStart, end: oEnd})
 						}
 					}
 				}
 				incRows.Close()
 			}
 
-			// Failed checks that were actually executed must reduce uptime
-			failedChecksOutageSec := int64(failedCount) * intervalSec
-			totalOutageSec := incidentOutageSec
-			if failedChecksOutageSec > totalOutageSec {
-				totalOutageSec = failedChecksOutageSec
+			// Add failed check intervals (each failed check covers 1 interval slot)
+			for _, chk := range checks {
+				if chk.result == "failure" || chk.result == "timeout" || chk.result == "blocked" || chk.result == "error" {
+					fStart := chk.createdAt
+					fEnd := fStart.Add(time.Duration(intervalSec) * time.Second)
+					if fEnd.After(covEnd) {
+						fEnd = covEnd
+					}
+					if fEnd.After(fStart) {
+						rawOutages = append(rawOutages, timeSpan{start: fStart, end: fEnd})
+					}
+				}
 			}
-			if totalOutageSec > unpausedSec {
-				totalOutageSec = unpausedSec
+
+			// Merge outage intervals into a mathematical union (completely eliminating double-counting)
+			mergedOutages := unionTimeSpans(rawOutages)
+
+			var totalOutageSec int64
+			for _, o := range mergedOutages {
+				// Subtract any overlap with paused spans
+				oStart := o.start
+				oEnd := o.end
+				var pausedOverlap int64
+				for _, ps := range pausedSpans {
+					interStart := oStart
+					if ps.start.After(interStart) {
+						interStart = ps.start
+					}
+					interEnd := oEnd
+					if ps.end.Before(interEnd) {
+						interEnd = ps.end
+					}
+					if interEnd.After(interStart) {
+						pausedOverlap += int64(interEnd.Sub(interStart).Seconds())
+					}
+				}
+				spanSec := int64(oEnd.Sub(oStart).Seconds()) - pausedOverlap
+				if spanSec > 0 {
+					totalOutageSec += spanSec
+				}
+			}
+
+			// Observed Monitoring Time: Time interval supported by actual recorded check evidence
+			observedSec := int64(checkCount) * intervalSec
+			if observedSec > unpausedSec {
+				observedSec = unpausedSec
+			}
+			unknownSec := unpausedSec - observedSec
+			if unknownSec < 0 {
+				unknownSec = 0
+			}
+
+			// Outage cannot exceed observed time
+			outageInObservedSec := totalOutageSec
+			if outageInObservedSec > observedSec {
+				outageInObservedSec = observedSec
 			}
 
 			// Monitoring Coverage: proportion of expected scheduled checks executed and recorded
@@ -811,16 +890,17 @@ func (r *ReportRepository) CalculateReportData(ctx context.Context, orgID, clien
 				}
 			}
 
-			// Uptime: proportion of eligible unpaused monitored time service was healthy
+			// Observed Uptime: proportion of observed monitored time service was healthy
 			var uptimePct *float64
-			insufficientData := checkCount == 0 || unpausedSec == 0
+			insufficientData := checkCount == 0 || observedSec == 0
 
-			if !insufficientData && unpausedSec > 0 {
-				healthySec := unpausedSec - totalOutageSec
-				if healthySec < 0 {
-					healthySec = 0
+			var monNotice string
+			if !insufficientData && observedSec > 0 {
+				healthyObservedSec := observedSec - outageInObservedSec
+				if healthyObservedSec < 0 {
+					healthyObservedSec = 0
 				}
-				pct := (float64(healthySec) / float64(unpausedSec)) * 100.0
+				pct := (float64(healthyObservedSec) / float64(observedSec)) * 100.0
 				if pct > 100.0 {
 					pct = 100.0
 				}
@@ -830,6 +910,28 @@ func (r *ReportRepository) CalculateReportData(ctx context.Context, orgID, clien
 				uptimePct = &pct
 				uptimeSum += pct
 				uptimeCount++
+
+				observedDays := float64(observedSec) / 86400.0
+				unknownDays := float64(unknownSec) / 86400.0
+				if locale == "fa" {
+					if unknownSec > 0 {
+						monNotice = fmt.Sprintf("ضریب پایداری مشاهده‌شده: %.2f%% بر اساس %.1f روز شواهد پایش واقعی (%.1f روز فاقد داده / نامشخص از مخرج پایداری کسر شد).", pct, observedDays, unknownDays)
+					} else {
+						monNotice = fmt.Sprintf("ضریب پایداری مشاهده‌شده: %.2f%% در کل دوره پایش.", pct)
+					}
+				} else {
+					if unknownSec > 0 {
+						monNotice = fmt.Sprintf("Observed Uptime: %.2f%% across %.1f observed days of monitoring evidence (%.1f days missing / unmonitored time excluded from uptime calculation).", pct, observedDays, unknownDays)
+					} else {
+						monNotice = fmt.Sprintf("Observed Uptime: %.2f%% across full eligible monitoring period.", pct)
+					}
+				}
+			} else {
+				if locale == "fa" {
+					monNotice = "داده‌های پایش در این دوره کافی نیست. هیچ تست زمان‌بندی‌شده‌ای ثبت نشده است."
+				} else {
+					monNotice = "Insufficient monitoring data. No scheduled checks were executed or recorded for this period."
+				}
 			}
 
 			data.Monitors = append(data.Monitors, pdf.MonitorReportData{
@@ -845,6 +947,10 @@ func (r *ReportRepository) CalculateReportData(ctx context.Context, orgID, clien
 				TotalChecks:          checkCount,
 				FailedChecks:         failedCount,
 				IncidentCount:        incCount,
+				EligibleDurationSec:  unpausedSec,
+				ObservedDurationSec:  observedSec,
+				UnknownDurationSec:   unknownSec,
+				LimitationNotice:     monNotice,
 			})
 		}
 
@@ -1063,4 +1169,65 @@ func ifElse(cond bool, a, b string) string {
 		return a
 	}
 	return b
+}
+
+type timeSpan struct {
+	start time.Time
+	end   time.Time
+}
+
+func unionTimeSpans(spans []timeSpan) []timeSpan {
+	if len(spans) == 0 {
+		return nil
+	}
+	sort.Slice(spans, func(i, j int) bool {
+		return spans[i].start.Before(spans[j].start)
+	})
+	merged := []timeSpan{spans[0]}
+	for _, current := range spans[1:] {
+		last := &merged[len(merged)-1]
+		if !current.start.After(last.end) {
+			if current.end.After(last.end) {
+				last.end = current.end
+			}
+		} else {
+			merged = append(merged, current)
+		}
+	}
+	return merged
+}
+
+func calculateExpectedSlots(anchor, covStart, covEnd time.Time, intervalSec int64, pausedSpans []timeSpan) int64 {
+	if !covEnd.After(covStart) || intervalSec <= 0 {
+		return 0
+	}
+
+	var firstSlot time.Time
+	if !anchor.Before(covStart) {
+		firstSlot = anchor
+	} else {
+		offset := covStart.Sub(anchor)
+		intervalDur := time.Duration(intervalSec) * time.Second
+		rem := offset % intervalDur
+		if rem == 0 {
+			firstSlot = covStart
+		} else {
+			firstSlot = covStart.Add(intervalDur - rem)
+		}
+	}
+
+	var count int64
+	for slot := firstSlot; !slot.After(covEnd); slot = slot.Add(time.Duration(intervalSec) * time.Second) {
+		inPaused := false
+		for _, p := range pausedSpans {
+			if (slot.Equal(p.start) || slot.After(p.start)) && slot.Before(p.end) {
+				inPaused = true
+				break
+			}
+		}
+		if !inPaused {
+			count++
+		}
+	}
+	return count
 }

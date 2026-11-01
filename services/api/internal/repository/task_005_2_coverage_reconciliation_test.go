@@ -135,6 +135,13 @@ func TestScenario2_Active30DaysMissing5DaysChecks(t *testing.T) {
 	if m.TotalChecks != 25 {
 		t.Errorf("expected 25 total checks recorded, got %d", m.TotalChecks)
 	}
+	// Verify observed vs unknown time explicitly discloses observed-time denominator
+	if m.ObservedDurationSec != 25*86400 {
+		t.Errorf("expected 25 observed days (%d sec), got %d sec", 25*86400, m.ObservedDurationSec)
+	}
+	if m.UnknownDurationSec != 5*86400 {
+		t.Errorf("expected 5 unknown days (%d sec), got %d sec", 5*86400, m.UnknownDurationSec)
+	}
 }
 
 // TestScenario3_FailedExecutedChecksCountTowardCoverageNotUptime proves that failed checks
@@ -155,11 +162,11 @@ func TestScenario3_FailedExecutedChecksCountTowardCoverageNotUptime(t *testing.T
 
 	// 27 successful checks + 3 failed checks = 30 total executed checks
 	for day := 1; day <= 27; day++ {
-		checkTime := time.Date(2026, 6, day, 12, 0, 0, 0, time.UTC)
+		checkTime := time.Date(2026, 6, day, 0, 0, 0, 0, time.UTC)
 		insertScheduledCheckResult(t, adminPool, orgID, monID, checkTime, "success", 100)
 	}
 	for day := 28; day <= 30; day++ {
-		checkTime := time.Date(2026, 6, day, 12, 0, 0, 0, time.UTC)
+		checkTime := time.Date(2026, 6, day, 0, 0, 0, 0, time.UTC)
 		insertScheduledCheckResult(t, adminPool, orgID, monID, checkTime, "failure", 0)
 	}
 
@@ -472,5 +479,198 @@ func TestOpenIncidentBoundaryOverlap(t *testing.T) {
 	}
 	if m.IncidentCount != 1 {
 		t.Errorf("expected 1 incident, got %d", m.IncidentCount)
+	}
+}
+
+// TestFailedChecksOverlappingConfirmedIncident_NoDoubleCounting verifies that failed checks
+// occurring during a confirmed incident are merged and not double-counted in outage duration.
+func TestFailedChecksOverlappingConfirmedIncident_NoDoubleCounting(t *testing.T) {
+	adminPool, appPool, _ := setupTestRoles(t)
+	ctx := context.Background()
+
+	slug := fmt.Sprintf("scen-overlap-org-%d", time.Now().UnixNano())
+	orgID, clientID := createTestOrgAndClient(t, adminPool, "Overlap Org", slug)
+	assetID := createTestAsset(t, adminPool, orgID, clientID, "Overlap App")
+
+	periodStart := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	periodEnd := time.Date(2026, 6, 30, 23, 59, 59, 0, time.UTC)
+	intervalSec := 86400
+
+	monID := createTestMonitorWithInterval(t, adminPool, orgID, assetID, periodStart.Add(-24*time.Hour), intervalSec, "up", true)
+
+	// 28 successful checks + 2 failed checks on June 10 and June 11 = 30 checks total
+	for day := 1; day <= 30; day++ {
+		checkTime := time.Date(2026, 6, day, 0, 0, 0, 0, time.UTC)
+		res := "success"
+		if day == 10 || day == 11 {
+			res = "failure"
+		}
+		insertScheduledCheckResult(t, adminPool, orgID, monID, checkTime, res, 100)
+	}
+
+	// Confirmed incident spanning June 10 00:00:00 to June 12 00:00:00 (exact 2 days = 172,800s)
+	incConfirmedAt := time.Date(2026, 6, 10, 0, 0, 0, 0, time.UTC)
+	incResolvedAt := time.Date(2026, 6, 12, 0, 0, 0, 0, time.UTC)
+	_, err := adminPool.Exec(ctx, `
+		INSERT INTO incidents (organization_id, monitor_id, failure_category, status, summary, first_failure_at, confirmed_at, resolved_at)
+		VALUES ($1, $2, 'http_5xx', 'resolved', 'Outage 2 days', $3, $3, $4)
+	`, orgID, monID, incConfirmedAt, incResolvedAt)
+	if err != nil {
+		t.Fatalf("failed inserting resolved incident: %v", err)
+	}
+
+	reportRepo := NewReportRepository(appPool, NewBrandingRepository(appPool))
+	data, err := reportRepo.CalculateReportData(ctx, orgID, clientID, periodStart, periodEnd, "UTC", "en")
+	if err != nil {
+		t.Fatalf("failed calculating report: %v", err)
+	}
+
+	m := data.Monitors[0]
+	// If double counted: outage would be 2 days (incident) + 2 days (failed checks) = 4 days -> 26/30 = 86.67%
+	// With union merge: outage is exactly 2 days -> 28/30 = 93.33%
+	expectedUptime := (28.0 / 30.0) * 100.0 // 93.33%
+	if m.UptimePercentage == nil || math.Abs(*m.UptimePercentage-expectedUptime) > 0.5 {
+		t.Errorf("double-counting detected! Expected %.2f%% uptime, got %+v", expectedUptime, m.UptimePercentage)
+	}
+}
+
+// TestMultipleOverlappingIncidents_NoDoubleCounting verifies union calculation across overlapping incidents.
+func TestMultipleOverlappingIncidents_NoDoubleCounting(t *testing.T) {
+	adminPool, appPool, _ := setupTestRoles(t)
+	ctx := context.Background()
+
+	slug := fmt.Sprintf("scen-multi-inc-org-%d", time.Now().UnixNano())
+	orgID, clientID := createTestOrgAndClient(t, adminPool, "Multi Incident Org", slug)
+	assetID := createTestAsset(t, adminPool, orgID, clientID, "Multi Inc App")
+
+	periodStart := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	periodEnd := time.Date(2026, 6, 30, 23, 59, 59, 0, time.UTC)
+	intervalSec := 86400
+
+	monID := createTestMonitorWithInterval(t, adminPool, orgID, assetID, periodStart.Add(-24*time.Hour), intervalSec, "up", true)
+
+	for day := 1; day <= 30; day++ {
+		checkTime := time.Date(2026, 6, day, 12, 0, 0, 0, time.UTC)
+		insertScheduledCheckResult(t, adminPool, orgID, monID, checkTime, "success", 100)
+	}
+
+	// Incident 1: June 5 to June 8 (3 days)
+	// Incident 2: June 7 to June 10 (3 days)
+	// Union: June 5 to June 10 = exactly 5 days outage (NOT 3+3=6 days)
+	inc1Start := time.Date(2026, 6, 5, 0, 0, 0, 0, time.UTC)
+	inc1End := time.Date(2026, 6, 8, 0, 0, 0, 0, time.UTC)
+	inc2Start := time.Date(2026, 6, 7, 0, 0, 0, 0, time.UTC)
+	inc2End := time.Date(2026, 6, 10, 0, 0, 0, 0, time.UTC)
+
+	_, err := adminPool.Exec(ctx, `
+		INSERT INTO incidents (organization_id, monitor_id, failure_category, status, summary, first_failure_at, confirmed_at, resolved_at)
+		VALUES ($1, $2, 'http_5xx', 'resolved', 'Incident 1', $3, $3, $4),
+		       ($1, $2, 'http_5xx', 'resolved', 'Incident 2', $5, $5, $6)
+	`, orgID, monID, inc1Start, inc1End, inc2Start, inc2End)
+	if err != nil {
+		t.Fatalf("failed inserting overlapping incidents: %v", err)
+	}
+
+	reportRepo := NewReportRepository(appPool, NewBrandingRepository(appPool))
+	data, err := reportRepo.CalculateReportData(ctx, orgID, clientID, periodStart, periodEnd, "UTC", "en")
+	if err != nil {
+		t.Fatalf("failed calculating report: %v", err)
+	}
+
+	m := data.Monitors[0]
+	// 5 days outage out of 30 days = 25/30 = 83.33% uptime
+	expectedUptime := (25.0 / 30.0) * 100.0
+	if m.UptimePercentage == nil || math.Abs(*m.UptimePercentage-expectedUptime) > 0.5 {
+		t.Errorf("overlapping incident double counting! Expected %.2f%% uptime, got %+v", expectedUptime, m.UptimePercentage)
+	}
+}
+
+// TestFailedCheckOutsideConfirmedIncident verifies failed check outside incident is unioned.
+func TestFailedCheckOutsideConfirmedIncident(t *testing.T) {
+	adminPool, appPool, _ := setupTestRoles(t)
+	ctx := context.Background()
+
+	slug := fmt.Sprintf("scen-outside-org-%d", time.Now().UnixNano())
+	orgID, clientID := createTestOrgAndClient(t, adminPool, "Outside Inc Org", slug)
+	assetID := createTestAsset(t, adminPool, orgID, clientID, "Outside Inc App")
+
+	periodStart := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	periodEnd := time.Date(2026, 6, 30, 23, 59, 59, 0, time.UTC)
+	intervalSec := 86400
+
+	monID := createTestMonitorWithInterval(t, adminPool, orgID, assetID, periodStart.Add(-24*time.Hour), intervalSec, "up", true)
+
+	// Day 15 failure outside incident
+	for day := 1; day <= 30; day++ {
+		checkTime := time.Date(2026, 6, day, 12, 0, 0, 0, time.UTC)
+		res := "success"
+		if day == 15 {
+			res = "failure"
+		}
+		insertScheduledCheckResult(t, adminPool, orgID, monID, checkTime, res, 100)
+	}
+
+	// Incident: June 5 to June 7 (2 days)
+	incStart := time.Date(2026, 6, 5, 0, 0, 0, 0, time.UTC)
+	incEnd := time.Date(2026, 6, 7, 0, 0, 0, 0, time.UTC)
+	_, err := adminPool.Exec(ctx, `
+		INSERT INTO incidents (organization_id, monitor_id, failure_category, status, summary, first_failure_at, confirmed_at, resolved_at)
+		VALUES ($1, $2, 'http_5xx', 'resolved', 'Incident', $3, $3, $4)
+	`, orgID, monID, incStart, incEnd)
+	if err != nil {
+		t.Fatalf("failed inserting incident: %v", err)
+	}
+
+	reportRepo := NewReportRepository(appPool, NewBrandingRepository(appPool))
+	data, err := reportRepo.CalculateReportData(ctx, orgID, clientID, periodStart, periodEnd, "UTC", "en")
+	if err != nil {
+		t.Fatalf("failed calculating report: %v", err)
+	}
+
+	m := data.Monitors[0]
+	// Outage = 2 days (incident) + 1 day (failed check day 15) = 3 days outage -> 27/30 = 90.0% uptime
+	expectedUptime := (27.0 / 30.0) * 100.0
+	if m.UptimePercentage == nil || math.Abs(*m.UptimePercentage-expectedUptime) > 0.5 {
+		t.Errorf("expected %.2f%% uptime, got %+v", expectedUptime, m.UptimePercentage)
+	}
+}
+
+// TestMonthBoundaryAndNonDivisibleInterval verifies exact scheduler slot calculation across non-divisible interval boundaries.
+func TestMonthBoundaryAndNonDivisibleInterval(t *testing.T) {
+	adminPool, appPool, _ := setupTestRoles(t)
+	ctx := context.Background()
+
+	slug := fmt.Sprintf("scen-nondiv-org-%d", time.Now().UnixNano())
+	orgID, clientID := createTestOrgAndClient(t, adminPool, "NonDiv Org", slug)
+	assetID := createTestAsset(t, adminPool, orgID, clientID, "NonDiv App")
+
+	// 25-minute period: 00:00 to 00:25
+	periodStart := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	periodEnd := time.Date(2026, 6, 1, 0, 25, 0, 0, time.UTC)
+	intervalSec := 600 // 10 minutes -> slots at 00:00, 00:10, 00:20 (exactly 3 expected slots)
+
+	monID := createTestMonitorWithInterval(t, adminPool, orgID, assetID, periodStart, intervalSec, "up", true)
+
+	// Insert checks for the 3 expected slots
+	insertScheduledCheckResult(t, adminPool, orgID, monID, time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC), "success", 80)
+	insertScheduledCheckResult(t, adminPool, orgID, monID, time.Date(2026, 6, 1, 0, 10, 0, 0, time.UTC), "success", 85)
+	insertScheduledCheckResult(t, adminPool, orgID, monID, time.Date(2026, 6, 1, 0, 20, 0, 0, time.UTC), "success", 90)
+
+	reportRepo := NewReportRepository(appPool, NewBrandingRepository(appPool))
+	data, err := reportRepo.CalculateReportData(ctx, orgID, clientID, periodStart, periodEnd, "UTC", "en")
+	if err != nil {
+		t.Fatalf("failed calculating report: %v", err)
+	}
+
+	m := data.Monitors[0]
+	// 3 expected checks, 3 executed -> 100% coverage
+	if math.Abs(m.CoveragePercentage-100.0) > 0.01 {
+		t.Errorf("expected 100.0%% coverage for 3 exact slots in 25min window, got %.2f%%", m.CoveragePercentage)
+	}
+	if m.UptimePercentage == nil || math.Abs(*m.UptimePercentage-100.0) > 0.01 {
+		t.Errorf("expected 100.0%% uptime, got %+v", m.UptimePercentage)
+	}
+	if m.TotalChecks != 3 {
+		t.Errorf("expected 3 total checks, got %d", m.TotalChecks)
 	}
 }
