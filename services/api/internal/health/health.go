@@ -215,13 +215,13 @@ func (h *Handler) Scheduler(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, resp)
 	case SchedulerStateDegraded:
 		resp.Status = "degraded"
-		writeJSON(w, http.StatusOK, resp)
+		writeJSON(w, http.StatusServiceUnavailable, resp)
 	case SchedulerStateStale:
 		resp.Status = "stale"
 		writeJSON(w, http.StatusServiceUnavailable, resp)
 	default:
 		resp.Status = "unknown"
-		writeJSON(w, http.StatusOK, resp)
+		writeJSON(w, http.StatusServiceUnavailable, resp)
 	}
 }
 

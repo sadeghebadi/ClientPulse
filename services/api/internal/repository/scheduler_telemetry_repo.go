@@ -270,8 +270,8 @@ func (r *SchedulerTelemetryRepository) DiagnoseSchedulingState(ctx context.Conte
 	return &d, nil
 }
 
-// DetectStaleMonitors executes the security-definer stale monitor diagnostic function with dynamic per-monitor thresholds.
-func (r *SchedulerTelemetryRepository) DetectStaleMonitors(ctx context.Context, intervalMultiplier, minToleranceSeconds, limit int) ([]*StaleMonitorItem, error) {
+// DetectStaleMonitors executes the security-definer stale monitor diagnostic function with dynamic per-monitor thresholds and authoritative lease timeout.
+func (r *SchedulerTelemetryRepository) DetectStaleMonitors(ctx context.Context, intervalMultiplier, minToleranceSeconds, leaseTimeoutSeconds, limit int) ([]*StaleMonitorItem, error) {
 	if r == nil || r.pool == nil {
 		return nil, fmt.Errorf("database pool is nil")
 	}
@@ -282,6 +282,9 @@ func (r *SchedulerTelemetryRepository) DetectStaleMonitors(ctx context.Context, 
 	if minToleranceSeconds <= 0 {
 		minToleranceSeconds = 180
 	}
+	if leaseTimeoutSeconds <= 0 {
+		leaseTimeoutSeconds = 60
+	}
 	if limit <= 0 {
 		limit = 100
 	}
@@ -289,9 +292,9 @@ func (r *SchedulerTelemetryRepository) DetectStaleMonitors(ctx context.Context, 
 	query := `
 		SELECT monitor_id, organization_id, status, interval_seconds,
 		       next_check_at, last_checked_at, overdue_seconds, effective_threshold_seconds, is_first_check
-		FROM detect_stale_monitors($1, $2, $3)
+		FROM detect_stale_monitors($1, $2, $3, $4)
 	`
-	rows, err := r.pool.Query(ctx, query, intervalMultiplier, minToleranceSeconds, limit)
+	rows, err := r.pool.Query(ctx, query, intervalMultiplier, minToleranceSeconds, leaseTimeoutSeconds, limit)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query stale monitors: %w", err)
 	}

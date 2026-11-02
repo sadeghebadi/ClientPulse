@@ -96,6 +96,7 @@ func main() {
 			Concurrency:   cfg.WorkerConcurrency,
 			PollPeriod:    1 * time.Second,
 			RetentionDays: cfg.CheckResultRetentionDays,
+			LeaseTimeout:  time.Duration(cfg.MonitorLeaseTimeoutSeconds) * time.Second,
 		},
 		log,
 	)

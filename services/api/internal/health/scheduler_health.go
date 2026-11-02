@@ -139,7 +139,7 @@ func (e *SchedulerHealthEvaluator) Evaluate(inst *repository.SchedulerInstanceSt
 type SchedulerHealthService interface {
 	GetSchedulerStatus(ctx context.Context) (SchedulerTelemetrySnapshot, error)
 	GetSchedulerAggregateHealth(ctx context.Context) (*repository.SchedulerAggregateHealth, error)
-	GetStaleMonitors(ctx context.Context, intervalMultiplier, minToleranceSeconds, limit int) ([]*repository.StaleMonitorItem, error)
+	GetStaleMonitors(ctx context.Context, intervalMultiplier, minToleranceSeconds, leaseTimeoutSeconds, limit int) ([]*repository.StaleMonitorItem, error)
 	DiagnoseSchedulingState(ctx context.Context) (*repository.SchedulingStateDiagnostic, error)
 }
 
@@ -183,9 +183,9 @@ func (s *DefaultSchedulerHealthService) GetSchedulerAggregateHealth(ctx context.
 	return s.repo.GetSchedulerAggregateHealth(ctx, staleSec)
 }
 
-// GetStaleMonitors delegates to repository detect_stale_monitors with dynamic per-monitor thresholds.
-func (s *DefaultSchedulerHealthService) GetStaleMonitors(ctx context.Context, intervalMultiplier, minToleranceSeconds, limit int) ([]*repository.StaleMonitorItem, error) {
-	return s.repo.DetectStaleMonitors(ctx, intervalMultiplier, minToleranceSeconds, limit)
+// GetStaleMonitors delegates to repository detect_stale_monitors with dynamic per-monitor thresholds and authoritative lease timeout.
+func (s *DefaultSchedulerHealthService) GetStaleMonitors(ctx context.Context, intervalMultiplier, minToleranceSeconds, leaseTimeoutSeconds, limit int) ([]*repository.StaleMonitorItem, error) {
+	return s.repo.DetectStaleMonitors(ctx, intervalMultiplier, minToleranceSeconds, leaseTimeoutSeconds, limit)
 }
 
 // DiagnoseSchedulingState delegates to repository diagnose_monitor_scheduling_state.

@@ -39,7 +39,7 @@ func (m *mockSchedulerService) GetSchedulerAggregateHealth(ctx context.Context) 
 	}, nil
 }
 
-func (m *mockSchedulerService) GetStaleMonitors(ctx context.Context, intervalMultiplier, minToleranceSeconds, limit int) ([]*repository.StaleMonitorItem, error) {
+func (m *mockSchedulerService) GetStaleMonitors(ctx context.Context, intervalMultiplier, minToleranceSeconds, leaseTimeoutSeconds, limit int) ([]*repository.StaleMonitorItem, error) {
 	return nil, nil
 }
 
@@ -164,6 +164,50 @@ func TestHealthEndpoint_Scheduler(t *testing.T) {
 
 		if rr.Code != http.StatusServiceUnavailable {
 			t.Fatalf("expected 503 Service Unavailable, got %d", rr.Code)
+		}
+	})
+
+	t.Run("Scheduler Degraded Returns 503", func(t *testing.T) {
+		mockSched := &mockSchedulerService{
+			snap: &SchedulerTelemetrySnapshot{
+				State:   SchedulerStateDegraded,
+				Summary: "scheduler is experiencing repeated errors",
+			},
+		}
+		h := NewHandler(nil, nil, 10*time.Second, "1.0.0").WithSchedulerChecker(mockSched)
+		req := httptest.NewRequest(http.MethodGet, "/health/scheduler", nil)
+		rr := httptest.NewRecorder()
+		h.Scheduler(rr, req)
+
+		if rr.Code != http.StatusServiceUnavailable {
+			t.Fatalf("expected 503 Service Unavailable for Degraded state, got %d", rr.Code)
+		}
+		var resp SchedulerResponse
+		_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+		if resp.Status != "degraded" {
+			t.Fatalf("expected status degraded, got %s", resp.Status)
+		}
+	})
+
+	t.Run("Scheduler Unknown Returns 503", func(t *testing.T) {
+		mockSched := &mockSchedulerService{
+			snap: &SchedulerTelemetrySnapshot{
+				State:   SchedulerStateUnknown,
+				Summary: "no active scheduler instances registered",
+			},
+		}
+		h := NewHandler(nil, nil, 10*time.Second, "1.0.0").WithSchedulerChecker(mockSched)
+		req := httptest.NewRequest(http.MethodGet, "/health/scheduler", nil)
+		rr := httptest.NewRecorder()
+		h.Scheduler(rr, req)
+
+		if rr.Code != http.StatusServiceUnavailable {
+			t.Fatalf("expected 503 Service Unavailable for Unknown state, got %d", rr.Code)
+		}
+		var resp SchedulerResponse
+		_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+		if resp.Status != "unknown" {
+			t.Fatalf("expected status unknown, got %s", resp.Status)
 		}
 	})
 }

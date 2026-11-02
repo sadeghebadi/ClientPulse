@@ -66,6 +66,7 @@ type Config struct {
 	WorkerHeartbeatTimeoutSeconds int
 	MonitorDefaultIntervalSeconds int
 	MonitorDefaultTimeoutSeconds  int
+	MonitorLeaseTimeoutSeconds    int
 	CheckResultRetentionDays      int
 
 	// Admin Seed
@@ -115,6 +116,7 @@ func Load() (*Config, error) {
 		WorkerHeartbeatTimeoutSeconds:  getEnvAsInt("WORKER_HEARTBEAT_TIMEOUT_SECONDS", 10),
 		MonitorDefaultIntervalSeconds: getEnvAsInt("MONITOR_DEFAULT_INTERVAL_SECONDS", 300),
 		MonitorDefaultTimeoutSeconds:  getEnvAsInt("MONITOR_DEFAULT_TIMEOUT_SECONDS", 10),
+		MonitorLeaseTimeoutSeconds:    getEnvAsInt("MONITOR_LEASE_TIMEOUT_SECONDS", 60),
 		CheckResultRetentionDays:     getEnvAsInt("CHECK_RESULT_RETENTION_DAYS", 90),
 		PlatformAdminEmail:           getEnv("PLATFORM_ADMIN_EMAIL", "admin@clientpulse.local"),
 		PlatformAdminPassword:        getEnv("PLATFORM_ADMIN_PASSWORD", "dev-admin-password-change-me"),
@@ -159,6 +161,10 @@ func (c *Config) Validate() error {
 
 	if c.WorkerHeartbeatTimeoutSeconds <= 0 {
 		return fmt.Errorf("WORKER_HEARTBEAT_TIMEOUT_SECONDS must be greater than 0")
+	}
+
+	if c.MonitorLeaseTimeoutSeconds < 5 || c.MonitorLeaseTimeoutSeconds > 3600 {
+		c.MonitorLeaseTimeoutSeconds = 60
 	}
 
 	if c.TelegramPollTimeoutSeconds <= 0 {

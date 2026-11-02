@@ -110,8 +110,8 @@ func TestSchedulerObservabilityHardening(t *testing.T) {
 			RETURNING id
 		`, orgID, assetID).Scan(&mon3600Stale)
 
-		// Query dynamic stale monitors (multiplier 3, min tolerance 180s)
-		items, err := telemetryRepo.DetectStaleMonitors(ctx, 3, 180, 100)
+		// Query dynamic stale monitors (multiplier 3, min tolerance 180s, lease timeout 60s)
+		items, err := telemetryRepo.DetectStaleMonitors(ctx, 3, 180, 60, 100)
 		if err != nil {
 			t.Fatalf("DetectStaleMonitors failed: %v", err)
 		}

@@ -20,6 +20,7 @@ type SchedulerConfig struct {
 	Concurrency   int
 	PollPeriod    time.Duration
 	RetentionDays int
+	LeaseTimeout  time.Duration
 }
 
 type Scheduler struct {
@@ -36,6 +37,7 @@ type Scheduler struct {
 	concurrency   int
 	pollPeriod    time.Duration
 	retentionDays int
+	leaseTimeout  time.Duration
 	logger        *slog.Logger
 }
 
@@ -62,6 +64,9 @@ func NewScheduler(
 	if cfg.RetentionDays <= 0 {
 		cfg.RetentionDays = 90
 	}
+	if cfg.LeaseTimeout <= 0 {
+		cfg.LeaseTimeout = 60 * time.Second
+	}
 
 	chk := checker.NewChecker(guard, cfg.WorkerID)
 	instanceID := fmt.Sprintf("sched-%s-%d", cfg.WorkerID, time.Now().UnixNano()%1000000)
@@ -85,6 +90,7 @@ func NewScheduler(
 		concurrency:   cfg.Concurrency,
 		pollPeriod:    cfg.PollPeriod,
 		retentionDays: cfg.RetentionDays,
+		leaseTimeout:  cfg.LeaseTimeout,
 		logger:        logger,
 	}
 }
@@ -183,7 +189,8 @@ func (s *Scheduler) Run(ctx context.Context) error {
 			// Claim due website / API monitoring jobs
 			claimBatchSize := s.concurrency
 			claimCtx, claimCancel := context.WithTimeout(ctx, 5*time.Second)
-			jobs, err := s.monitorRepo.ClaimDueMonitors(claimCtx, s.workerID, claimBatchSize, 60)
+			leaseTimeoutSec := int(s.leaseTimeout.Seconds())
+			jobs, err := s.monitorRepo.ClaimDueMonitors(claimCtx, s.workerID, claimBatchSize, leaseTimeoutSec)
 			claimCancel()
 
 			pollEnd := time.Now().UTC()
@@ -210,7 +217,7 @@ func (s *Scheduler) Run(ctx context.Context) error {
 				// Run diagnostic check periodically (e.g. every 10 cycles when idle) or immediately if active monitors exist
 				if claimedCount == 0 && s.telemetryRepo != nil && pollCycleIndex%10 == 0 {
 					diagCtx, diagCancel := context.WithTimeout(ctx, 3*time.Second)
-					diag, diagErr := s.telemetryRepo.DiagnoseSchedulingState(diagCtx, 60)
+					diag, diagErr := s.telemetryRepo.DiagnoseSchedulingState(diagCtx, leaseTimeoutSec)
 					diagCancel()
 					if diagErr == nil && diag != nil {
 						if diag.MismatchCandidates > 0 {
