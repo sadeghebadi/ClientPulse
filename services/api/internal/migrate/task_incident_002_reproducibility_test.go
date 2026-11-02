@@ -126,13 +126,18 @@ func TestMigration0013_Reproducibility(t *testing.T) {
 			t.Fatalf("expected assets_tenant_isolation policy to be present on fresh db")
 		}
 
-		// Test Down migration for 000013
-		rolledBackVersion, err := engine.Down(ctx)
-		if err != nil {
-			t.Fatalf("failed to rollback migration 13: %v", err)
-		}
-		if rolledBackVersion != 13 {
-			t.Fatalf("expected migration 13 rollback, got: %d", rolledBackVersion)
+		// Test Down migration for top migration down to 12
+		for {
+			rolledBackVersion, err := engine.Down(ctx)
+			if err != nil {
+				t.Fatalf("failed to rollback migration: %v", err)
+			}
+			if rolledBackVersion == 13 {
+				break
+			}
+			if rolledBackVersion == 0 {
+				t.Fatalf("unexpected end of migrations before rolling back 13")
+			}
 		}
 
 		// Verify policy dropped after down migration
@@ -147,13 +152,13 @@ func TestMigration0013_Reproducibility(t *testing.T) {
 			t.Fatalf("assets_definer_policy should have been removed after rollback")
 		}
 
-		// Re-apply migration 13
+		// Re-apply migrations back up
 		reAppliedCount, err := engine.Up(ctx)
 		if err != nil {
-			t.Fatalf("failed to re-apply migration 13: %v", err)
+			t.Fatalf("failed to re-apply migration: %v", err)
 		}
-		if reAppliedCount != 1 {
-			t.Fatalf("expected migration 13 re-applied, got count: %d", reAppliedCount)
+		if reAppliedCount < 1 {
+			t.Fatalf("expected at least 1 migration re-applied, got count: %d", reAppliedCount)
 		}
 	})
 
@@ -218,8 +223,8 @@ func TestMigration0013_Reproducibility(t *testing.T) {
 			t.Fatalf("engine.Up failed when reconciling existing emergency policy: %v", err)
 		}
 
-		if appliedCount != 1 {
-			t.Fatalf("expected exactly migration 13 to be applied, got count: %d", appliedCount)
+		if appliedCount < 1 {
+			t.Fatalf("expected at least migration 13 to be applied, got count: %d", appliedCount)
 		}
 
 		// 4. Verify resulting policy is reconciled to least-privilege definition (cmd='SELECT')

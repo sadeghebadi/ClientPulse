@@ -13,12 +13,13 @@ type Pinger interface {
 	Ping(ctx context.Context) error
 }
 
-// Handler provides HTTP endpoints for liveness, readiness, and worker probes.
+// Handler provides HTTP endpoints for liveness, readiness, worker, and scheduler probes.
 type Handler struct {
-	db            Pinger
-	workerChecker WorkerHeartbeatChecker
-	workerTimeout time.Duration
-	version       string
+	db               Pinger
+	workerChecker    WorkerHeartbeatChecker
+	workerTimeout    time.Duration
+	schedulerChecker SchedulerHealthService
+	version          string
 }
 
 // NewHandler constructs a new health handler.
@@ -35,6 +36,12 @@ func NewHandler(db Pinger, workerChecker WorkerHeartbeatChecker, workerTimeout t
 		workerTimeout: workerTimeout,
 		version:       version,
 	}
+}
+
+// WithSchedulerChecker sets the optional scheduler health service.
+func (h *Handler) WithSchedulerChecker(sc SchedulerHealthService) *Handler {
+	h.schedulerChecker = sc
+	return h
 }
 
 // LiveResponse defines the payload for liveness check.
@@ -65,6 +72,7 @@ type WorkerResponse struct {
 	AgeSeconds      *float64 `json:"age_seconds,omitempty"`
 	TimeoutSeconds  int      `json:"timeout_seconds"`
 	Timestamp       string   `json:"timestamp"`
+	SchedulerStatus string   `json:"scheduler_status,omitempty"`
 	Error           string   `json:"error,omitempty"`
 }
 
@@ -159,7 +167,62 @@ func (h *Handler) Worker(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp.Status = "ok"
+	if h.schedulerChecker != nil {
+		schedSnap, _ := h.schedulerChecker.GetSchedulerStatus(ctx)
+		resp.SchedulerStatus = string(schedSnap.State)
+	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// SchedulerResponse defines the payload for scheduler status check.
+type SchedulerResponse struct {
+	Status    string                      `json:"status"`
+	Service   string                      `json:"service"`
+	Scheduler *SchedulerTelemetrySnapshot `json:"scheduler,omitempty"`
+	Timestamp string                      `json:"timestamp"`
+	Error     string                      `json:"error,omitempty"`
+}
+
+// Scheduler handles GET /health/scheduler.
+func (h *Handler) Scheduler(w http.ResponseWriter, r *http.Request) {
+	resp := SchedulerResponse{
+		Service:   "clientpulse-scheduler",
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+	}
+
+	if h.schedulerChecker == nil {
+		resp.Status = "unavailable"
+		resp.Error = "scheduler health checker not configured"
+		writeJSON(w, http.StatusServiceUnavailable, resp)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+
+	snap, err := h.schedulerChecker.GetSchedulerStatus(ctx)
+	if err != nil {
+		resp.Status = "unhealthy"
+		resp.Error = "failed to evaluate scheduler status: " + err.Error()
+		writeJSON(w, http.StatusServiceUnavailable, resp)
+		return
+	}
+
+	resp.Scheduler = &snap
+	switch snap.State {
+	case SchedulerStateHealthy:
+		resp.Status = "ok"
+		writeJSON(w, http.StatusOK, resp)
+	case SchedulerStateDegraded:
+		resp.Status = "degraded"
+		writeJSON(w, http.StatusOK, resp)
+	case SchedulerStateStale:
+		resp.Status = "stale"
+		writeJSON(w, http.StatusServiceUnavailable, resp)
+	default:
+		resp.Status = "unknown"
+		writeJSON(w, http.StatusOK, resp)
+	}
 }
 
 func writeJSON(w http.ResponseWriter, code int, data interface{}) {

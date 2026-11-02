@@ -54,14 +54,17 @@ func main() {
 	}
 
 	var workerChecker health.WorkerHeartbeatChecker
+	var schedulerService health.SchedulerHealthService
 	if db != nil && db.Pool != nil {
 		workerChecker = health.NewPGWorkerHeartbeat(db.Pool)
+		telemetryRepo := repository.NewSchedulerTelemetryRepository(db.Pool)
+		schedulerService = health.NewSchedulerHealthService(telemetryRepo, 1*time.Second)
 		log.Info("database connection pool initialized")
 	}
 
-	// Initialize health handler with persistent worker heartbeat checker
+	// Initialize health handler with persistent worker heartbeat checker and scheduler checker
 	workerTimeout := time.Duration(cfg.WorkerHeartbeatTimeoutSeconds) * time.Second
-	healthHdr := health.NewHandler(db, workerChecker, workerTimeout, "1.0.0")
+	healthHdr := health.NewHandler(db, workerChecker, workerTimeout, "1.0.0").WithSchedulerChecker(schedulerService)
 
 	// Assemble server dependencies
 	var deps server.Dependencies

@@ -96,6 +96,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 		mux.HandleFunc("GET /health/live", s.deps.HealthHdr.Live)
 		mux.HandleFunc("GET /health/ready", s.deps.HealthHdr.Ready)
 		mux.HandleFunc("GET /health/worker", s.deps.HealthHdr.Worker)
+		mux.HandleFunc("GET /health/scheduler", s.deps.HealthHdr.Scheduler)
 	}
 
 	// 2. Base info endpoint

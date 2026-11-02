@@ -28,8 +28,11 @@ type Scheduler struct {
 	resultRepo    *repository.CheckResultRepository
 	heartbeatRepo *repository.HeartbeatRepository
 	incidentRepo  *repository.IncidentRepository
+	telemetryRepo *repository.SchedulerTelemetryRepository
 	checker       *checker.Checker
 	workerID      string
+	instanceID    string
+	startedAt     time.Time
 	concurrency   int
 	pollPeriod    time.Duration
 	retentionDays int
@@ -61,6 +64,12 @@ func NewScheduler(
 	}
 
 	chk := checker.NewChecker(guard, cfg.WorkerID)
+	instanceID := fmt.Sprintf("sched-%s-%d", cfg.WorkerID, time.Now().UnixNano()%1000000)
+
+	var telemetryRepo *repository.SchedulerTelemetryRepository
+	if pool != nil {
+		telemetryRepo = repository.NewSchedulerTelemetryRepository(pool)
+	}
 
 	return &Scheduler{
 		pool:          pool,
@@ -68,13 +77,27 @@ func NewScheduler(
 		resultRepo:    resultRepo,
 		heartbeatRepo: heartbeatRepo,
 		incidentRepo:  incidentRepo,
+		telemetryRepo: telemetryRepo,
 		checker:       chk,
 		workerID:      cfg.WorkerID,
+		instanceID:    instanceID,
+		startedAt:     time.Now().UTC(),
 		concurrency:   cfg.Concurrency,
 		pollPeriod:    cfg.PollPeriod,
 		retentionDays: cfg.RetentionDays,
 		logger:        logger,
 	}
+}
+
+// WithTelemetryRepository sets a custom telemetry repository.
+func (s *Scheduler) WithTelemetryRepository(repo *repository.SchedulerTelemetryRepository) *Scheduler {
+	s.telemetryRepo = repo
+	return s
+}
+
+// InstanceID returns the unique instance identifier of the scheduler.
+func (s *Scheduler) InstanceID() string {
+	return s.instanceID
 }
 
 // SetTestTransport sets a custom transport on the internal checker for controlled testing.
@@ -117,54 +140,150 @@ func (s *Scheduler) Run(ctx context.Context) error {
 	// Initial prune at startup
 	go runPrune()
 
+	// Initial registration of scheduler instance in database
+	if s.telemetryRepo != nil {
+		regCtx, regCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_ = s.telemetryRepo.RegisterInstance(regCtx, s.instanceID, s.workerID, s.startedAt)
+		regCancel()
+	}
+
 	sem := make(chan struct{}, s.concurrency)
 	var wg sync.WaitGroup
 
 	ticker := time.NewTicker(s.pollPeriod)
 	defer ticker.Stop()
 
+	pollCycleIndex := 0
+
 	for {
 		select {
 		case <-ctx.Done():
 			s.logger.Info("scheduler received stop signal, draining active jobs...")
 			wg.Wait()
+			if s.telemetryRepo != nil {
+				stopCtx, stopCancel := context.WithTimeout(context.Background(), 3*time.Second)
+				_ = s.telemetryRepo.StopInstance(stopCtx, s.instanceID)
+				stopCancel()
+			}
 			s.logger.Info("all active monitoring jobs completed")
 			return nil
 
 		case <-pruneTicker.C:
 			go runPrune()
+			if s.telemetryRepo != nil {
+				pruneHistCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				_, _ = s.telemetryRepo.PruneCycleHistory(pruneHistCtx, 7) // 7-day retention for cycles
+				cancel()
+			}
 
 		case <-ticker.C:
+			pollCycleIndex++
+			pollStart := time.Now().UTC()
+
 			// Claim due website / API monitoring jobs
 			claimBatchSize := s.concurrency
 			claimCtx, claimCancel := context.WithTimeout(ctx, 5*time.Second)
 			jobs, err := s.monitorRepo.ClaimDueMonitors(claimCtx, s.workerID, claimBatchSize, 60)
 			claimCancel()
 
+			pollEnd := time.Now().UTC()
+			pollDurationMs := pollEnd.Sub(pollStart).Milliseconds()
+
+			var cycleErrCategory *string
+			var cycleErrMsg *string
+			isSuccess := (err == nil)
+			mismatchDetected := false
+			claimedCount := len(jobs)
+			completedChecks := 0
+			failedChecks := 0
+
 			if err != nil {
+				errCat := "db_claim_error"
+				errMsg := err.Error()
+				cycleErrCategory = &errCat
+				cycleErrMsg = &errMsg
 				if ctx.Err() == nil {
 					s.logger.Warn("failed to claim due monitors", "error", err)
 				}
-			} else if len(jobs) > 0 {
-				s.logger.Debug("claimed due monitoring jobs", "count", len(jobs))
-
-				for _, job := range jobs {
-					// Acquire concurrency slot
-					select {
-					case sem <- struct{}{}:
-					case <-ctx.Done():
-						return nil
+			} else {
+				// Diagnose potential silent mismatch conditions if claimedCount == 0
+				// Run diagnostic check periodically (e.g. every 10 cycles when idle) or immediately if active monitors exist
+				if claimedCount == 0 && s.telemetryRepo != nil && pollCycleIndex%10 == 0 {
+					diagCtx, diagCancel := context.WithTimeout(ctx, 3*time.Second)
+					diag, diagErr := s.telemetryRepo.DiagnoseSchedulingState(diagCtx, 60)
+					diagCancel()
+					if diagErr == nil && diag != nil {
+						if diag.MismatchCandidates > 0 {
+							mismatchDetected = true
+							s.logger.Error("scheduler silent candidate mismatch detected: due candidates exist but asset join returned none",
+								"total_candidates", diag.TotalCandidates,
+								"eligible_joined", diag.EligibleJoined,
+								"leased_count", diag.LeasedCount,
+								"mismatch_candidates", diag.MismatchCandidates,
+							)
+						}
 					}
-
-					wg.Add(1)
-					go func(j *repository.ClaimedMonitorJob) {
-						defer func() {
-							<-sem
-							wg.Done()
-						}()
-						s.processJob(ctx, j)
-					}(job)
 				}
+
+				if len(jobs) > 0 {
+					s.logger.Debug("claimed due monitoring jobs", "count", len(jobs))
+
+					var jobWg sync.WaitGroup
+					var jobMu sync.Mutex
+
+					for _, job := range jobs {
+						// Acquire concurrency slot
+						select {
+						case sem <- struct{}{}:
+						case <-ctx.Done():
+							return nil
+						}
+
+						wg.Add(1)
+						jobWg.Add(1)
+						go func(j *repository.ClaimedMonitorJob) {
+							defer func() {
+								<-sem
+								wg.Done()
+								jobWg.Done()
+							}()
+							success := s.processJob(ctx, j)
+							jobMu.Lock()
+							if success {
+								completedChecks++
+							} else {
+								failedChecks++
+							}
+							jobMu.Unlock()
+						}(job)
+					}
+					jobWg.Wait()
+				}
+			}
+
+			// Record cycle telemetry
+			if s.telemetryRepo != nil {
+				// Record historical entry only on events/errors/mismatches or sampled every 60 cycles (~1 min at 1s period)
+				shouldRecordHistory := (!isSuccess) || (claimedCount > 0) || mismatchDetected || (pollCycleIndex%60 == 0)
+
+				recCtx, recCancel := context.WithTimeout(context.Background(), 3*time.Second)
+				_ = s.telemetryRepo.RecordPollCycle(recCtx, repository.RecordCycleParams{
+					InstanceID:           s.instanceID,
+					WorkerID:             s.workerID,
+					StartedAt:            s.startedAt,
+					PollStartedAt:        pollStart,
+					PollCompletedAt:      pollEnd,
+					DurationMs:           pollDurationMs,
+					DueMonitorsCount:     claimedCount, // Safe lower bound of due monitors
+					ClaimedMonitorsCount: claimedCount,
+					CompletedChecksCount: completedChecks,
+					FailedChecksCount:    failedChecks,
+					MismatchDetected:     mismatchDetected,
+					ErrorCategory:        cycleErrCategory,
+					ErrorMessage:         cycleErrMsg,
+					IsSuccess:            isSuccess,
+				}, shouldRecordHistory)
+				recCancel()
 			}
 
 			// Claim and process overdue heartbeat monitors
@@ -247,7 +366,7 @@ func (s *Scheduler) handleMissedHeartbeat(ctx context.Context, job *repository.C
 }
 
 // processJob executes a single monitor check and persists the result.
-func (s *Scheduler) processJob(ctx context.Context, job *repository.ClaimedMonitorJob) {
+func (s *Scheduler) processJob(ctx context.Context, job *repository.ClaimedMonitorJob) bool {
 	checkTimeout := time.Duration(job.TimeoutSeconds+5) * time.Second
 	checkCtx, cancel := context.WithTimeout(ctx, checkTimeout)
 	defer cancel()
@@ -341,5 +460,6 @@ func (s *Scheduler) processJob(ctx context.Context, job *repository.ClaimedMonit
 			)
 		}
 	}
+	return isSuccess
 }
 
