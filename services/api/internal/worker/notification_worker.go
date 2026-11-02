@@ -16,6 +16,19 @@ import (
 	"clientpulse/services/api/internal/repository"
 )
 
+// Delivery Guarantee Contract:
+// - Multi-tenant Durable Queue with At-Least-Once Delivery.
+// - Fan-out and queue insertions are strictly idempotent per domain event and destination.
+// - External delivery providers (Telegram Bot API, SMTP Relays) do not participate in two-phase distributed transactions.
+// - Delivery states:
+//     * queued: Persisted in PostgreSQL, awaiting worker claim.
+//     * sending: Claimed by a worker instance using SELECT FOR UPDATE SKIP LOCKED.
+//     * sent: External provider accepted transmission (HTTP 200 OK / SMTP 250 OK).
+//             Note: Provider acceptance guarantees provider receipt, not inbox/device display.
+//     * failed: Permanent error (invalid recipient, bot blocked) or exhausted retry budget.
+//     * retrying: Transient error (rate limit, network timeout) with exponential backoff and jitter.
+//     * uncertain: Worker process crashed or lost connectivity in-flight after transmitting;
+//                  the outcome cannot be proven without external verification, avoiding silent duplicates.
 type NotificationWorker struct {
 	repo           *repository.NotificationDestRepository
 	telegramSender telegram.TelegramSender
@@ -170,20 +183,20 @@ func (w *NotificationWorker) Deliver(ctx context.Context, d *repository.Notifica
 	case "email":
 		return w.deliverEmail(ctx, d)
 	default:
-		return w.repo.MarkDeliveryFailed(ctx, d.ID, fmt.Sprintf("unsupported destination type: %s", d.DestinationType), 0, true)
+		return w.repo.MarkDeliveryFailed(ctx, d.ID, w.workerID, fmt.Sprintf("unsupported destination type: %s", d.DestinationType), 0, true)
 	}
 }
 
 func (w *NotificationWorker) deliverTelegram(ctx context.Context, d *repository.NotificationDelivery) error {
 	if w.telegramSender == nil {
 		err := fmt.Errorf("telegram sender adapter is not configured")
-		_ = w.repo.MarkDeliveryFailed(ctx, d.ID, err.Error(), 1*time.Minute, false)
+		_ = w.repo.MarkDeliveryFailed(ctx, d.ID, w.workerID, err.Error(), 1*time.Minute, false)
 		return err
 	}
 
 	chatID, err := strconv.ParseInt(d.Recipient, 10, 64)
 	if err != nil {
-		_ = w.repo.MarkDeliveryFailed(ctx, d.ID, fmt.Sprintf("invalid telegram chat ID '%s': %v", d.Recipient, err), 0, true)
+		_ = w.repo.MarkDeliveryFailed(ctx, d.ID, w.workerID, fmt.Sprintf("invalid telegram chat ID '%s': %v", d.Recipient, err), 0, true)
 		return err
 	}
 
@@ -191,7 +204,7 @@ func (w *NotificationWorker) deliverTelegram(ctx context.Context, d *repository.
 
 	sendErr := w.telegramSender.SendMessage(ctx, chatID, text, "HTML")
 	if sendErr == nil {
-		return w.repo.MarkDeliverySent(ctx, d.ID)
+		return w.repo.MarkDeliverySent(ctx, d.ID, w.workerID)
 	}
 
 	// Classify error
@@ -201,25 +214,25 @@ func (w *NotificationWorker) deliverTelegram(ctx context.Context, d *repository.
 	if isRateLimit(sendErr, &rateErr) {
 		jitter := time.Duration(rand.Intn(1000)) * time.Millisecond
 		backoff := rateErr.RetryAfter + jitter
-		_ = w.repo.MarkDeliveryFailed(ctx, d.ID, rateErr.Error(), backoff, false)
+		_ = w.repo.MarkDeliveryFailed(ctx, d.ID, w.workerID, rateErr.Error(), backoff, false)
 		return sendErr
 	}
 
 	if isPermanentTelegram(sendErr, &permErr) {
-		_ = w.repo.MarkDeliveryFailed(ctx, d.ID, permErr.Error(), 0, true)
+		_ = w.repo.MarkDeliveryFailed(ctx, d.ID, w.workerID, permErr.Error(), 0, true)
 		return sendErr
 	}
 
 	// Temporary network / internal error: exponential backoff + jitter
 	backoff := calculateBackoff(d.RetryCount)
-	_ = w.repo.MarkDeliveryFailed(ctx, d.ID, sendErr.Error(), backoff, false)
+	_ = w.repo.MarkDeliveryFailed(ctx, d.ID, w.workerID, sendErr.Error(), backoff, false)
 	return sendErr
 }
 
 func (w *NotificationWorker) deliverEmail(ctx context.Context, d *repository.NotificationDelivery) error {
 	if w.emailSender == nil {
 		err := fmt.Errorf("email sender adapter is not configured")
-		_ = w.repo.MarkDeliveryFailed(ctx, d.ID, err.Error(), 1*time.Minute, false)
+		_ = w.repo.MarkDeliveryFailed(ctx, d.ID, w.workerID, err.Error(), 1*time.Minute, false)
 		return err
 	}
 
@@ -232,12 +245,12 @@ func (w *NotificationWorker) deliverEmail(ctx context.Context, d *repository.Not
 
 	sendErr := w.emailSender.SendEmail(ctx, d.Recipient, rendered.Subject, rendered.HTMLBody, rendered.TextBody)
 	if sendErr == nil {
-		return w.repo.MarkDeliverySent(ctx, d.ID)
+		return w.repo.MarkDeliverySent(ctx, d.ID, w.workerID)
 	}
 
 	permanent := isPermanentEmailError(sendErr)
 	backoff := calculateBackoff(d.RetryCount)
-	_ = w.repo.MarkDeliveryFailed(ctx, d.ID, sendErr.Error(), backoff, permanent)
+	_ = w.repo.MarkDeliveryFailed(ctx, d.ID, w.workerID, sendErr.Error(), backoff, permanent)
 	return sendErr
 }
 

@@ -17,6 +17,24 @@ func NewNotificationEventRepository(pool *pgxpool.Pool) *NotificationEventReposi
 	return &NotificationEventRepository{pool: pool}
 }
 
+// CreateEvent creates an immutable notification event with tenant RLS context.
+func (r *NotificationEventRepository) CreateEvent(
+	ctx context.Context,
+	orgID, eventType string,
+	incidentID, monitorID, heartbeatID, clientID *string,
+	idempotencyKey string,
+	payload map[string]interface{},
+) (*NotificationEvent, bool, error) {
+	var ev *NotificationEvent
+	var created bool
+	err := WithTenantTx(ctx, r.pool, orgID, func(tx pgx.Tx) error {
+		var err error
+		ev, created, err = r.CreateEventTx(ctx, tx, orgID, eventType, incidentID, monitorID, heartbeatID, clientID, idempotencyKey, payload)
+		return err
+	})
+	return ev, created, err
+}
+
 // CreateEventTx creates an immutable notification event within an existing transaction.
 // It uses idempotency_key to prevent duplicate events. Returns (event, created, err).
 func (r *NotificationEventRepository) CreateEventTx(

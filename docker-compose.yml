@@ -42,6 +42,11 @@ services:
       EMAIL_PROVIDER: ${EMAIL_PROVIDER:-none}
       SMTP_HOST: mailpit
       SMTP_PORT: "1025"
+      SMTP_FROM_EMAIL: ${SMTP_FROM_EMAIL:-notifications@clientpulse.local}
+      SMTP_FROM_NAME: ${SMTP_FROM_NAME:-ClientPulse Alerts}
+      SMTP_TLS_MODE: ${SMTP_TLS_MODE:-none}
+      TELEGRAM_BOT_USERNAME: ${TELEGRAM_BOT_USERNAME:-ClientPulseAlertsBot}
+      TELEGRAM_MODE: ${TELEGRAM_MODE:-mock}
       STORAGE_PROVIDER: ${STORAGE_PROVIDER:-local}
       STORAGE_LOCAL_DIR: /app/data/storage
       WORKER_HEARTBEAT_TIMEOUT_SECONDS: "${WORKER_HEARTBEAT_TIMEOUT_SECONDS:-10}"
@@ -75,6 +80,14 @@ services:
       WORKER_HEARTBEAT_TIMEOUT_SECONDS: "${WORKER_HEARTBEAT_TIMEOUT_SECONDS:-10}"
       CHECK_RESULT_RETENTION_DAYS: "${CHECK_RESULT_RETENTION_DAYS:-90}"
       DEFAULT_TIMEZONE: ${DEFAULT_TIMEZONE:-UTC}
+      EMAIL_PROVIDER: ${EMAIL_PROVIDER:-none}
+      SMTP_HOST: mailpit
+      SMTP_PORT: "1025"
+      SMTP_FROM_EMAIL: ${SMTP_FROM_EMAIL:-notifications@clientpulse.local}
+      SMTP_FROM_NAME: ${SMTP_FROM_NAME:-ClientPulse Alerts}
+      SMTP_TLS_MODE: ${SMTP_TLS_MODE:-none}
+      TELEGRAM_BOT_USERNAME: ${TELEGRAM_BOT_USERNAME:-ClientPulseAlertsBot}
+      TELEGRAM_MODE: ${TELEGRAM_MODE:-mock}
     restart: unless-stopped
     networks:
       - clientpulse-network

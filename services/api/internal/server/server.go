@@ -278,6 +278,15 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 		mux.Handle("POST /api/v1/notifications/destinations/{id}/test", sensitiveTenantScoped(s.deps.NotificationHdr.TestDestination, tenant.RoleAdmin))
 		mux.Handle("GET /api/v1/notifications/history", tenantScoped(s.deps.NotificationHdr.ListHistory, ""))
 
+		// Email Ownership Verification & Resend
+		mux.HandleFunc("POST /api/v1/notifications/destinations/verify-email", s.deps.NotificationHdr.VerifyEmailDestination)
+		mux.HandleFunc("GET /api/v1/notifications/destinations/verify-email", s.deps.NotificationHdr.VerifyEmailDestination)
+		mux.Handle("POST /api/v1/notifications/destinations/{id}/resend-verification", sensitiveTenantScoped(s.deps.NotificationHdr.ResendEmailVerification, tenant.RoleAdmin))
+
+		// Telegram Group Approval & Cancellation
+		mux.Handle("POST /api/v1/notifications/destinations/{id}/approve-group", sensitiveTenantScoped(s.deps.NotificationHdr.ApproveGroupDestination, tenant.RoleAdmin))
+		mux.Handle("POST /api/v1/notifications/destinations/{id}/cancel-group", sensitiveTenantScoped(s.deps.NotificationHdr.CancelGroupDestination, tenant.RoleAdmin))
+
 		// Public webhook for incoming Telegram updates
 		mux.HandleFunc("POST /api/v1/integrations/telegram/webhook", s.deps.NotificationHdr.TelegramWebhook)
 	}

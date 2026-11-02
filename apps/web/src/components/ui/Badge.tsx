@@ -258,7 +258,7 @@ export function Badge({ variant, label, children, showIcon = true, className = "
       return (
         <span className={`inline-flex items-center gap-1 text-emerald-600 font-semibold text-xs ${className}`}>
           {showIcon && <CheckCircle2 className="w-3.5 h-3.5" />}
-          <span>{label || t.success}</span>
+          <span>{label || children || t.success}</span>
         </span>
       );
 

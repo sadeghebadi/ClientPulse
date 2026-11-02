@@ -277,3 +277,49 @@ func renderGenericTest(p map[string]interface{}, appBaseURL string, isFA bool) R
 	return RenderedEmail{Subject: subject, HTMLBody: baseHTML("ltr", "en", subject, content), TextBody: "ClientPulse test notification delivered successfully."}
 }
 
+// RenderEmailVerification renders the ownership verification email for an alert destination.
+func RenderEmailVerification(token, appBaseURL, locale string) RenderedEmail {
+	if appBaseURL == "" {
+		appBaseURL = "http://localhost:3000"
+	}
+	appBaseURL = strings.TrimRight(appBaseURL, "/")
+	verifyURL := fmt.Sprintf("%s/settings/notifications?verify_email=%s", appBaseURL, token)
+
+	isFA := strings.ToLower(locale) == "fa"
+	if isFA {
+		subject := "🔐 تایید آدرس ایمیل برای هشدارهای ClientPulse"
+		content := fmt.Sprintf(`
+      <h2 style="color: #0284c7; margin-top: 0;">🔐 تایید مالکیت آدرس ایمیل</h2>
+      <p>درخواستی برای دریافت هشدارهای نظارتی سازمان شما به این نشانی ایمیل در سامانه <strong>ClientPulse</strong> ثبت شده است.</p>
+      <p>جهت فعال‌سازی این مقصد و شروع دریافت اعلان‌ها، روی دکمه زیر کلیک کنید (این پیوند تا ۲۴ ساعت معتبر است):</p>
+      <div style="margin: 24px 0;">
+        <a href="%s" style="background-color: #0284c7; color: #ffffff; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: 600; display: inline-block;">تایید و فعال‌سازی ایمیل</a>
+      </div>
+      <p style="font-size: 13px; color: #64748b;">اگر دکمه بالا کار نمی‌کند، پیوند زیر را در مرورگر کپی کنید:<br><code style="word-break: break-all;">%s</code></p>
+      <p style="font-size: 12px; color: #94a3b8; margin-top: 24px;">اگر شما این درخواست را ارسال نکرده‌اید، نیازی به انجام کاری نیست؛ این ایمیل فعال نخواهد شد.</p>
+    `, verifyURL, verifyURL)
+		return RenderedEmail{
+			Subject:  subject,
+			HTMLBody: baseHTML("rtl", "fa", subject, content),
+			TextBody: fmt.Sprintf("تایید ایمیل ClientPulse: برای فعال‌سازی نشانی ایمیل به این پیوند مراجعه نمایید: %s", verifyURL),
+		}
+	}
+
+	subject := "🔐 Verify your email address for ClientPulse alerts"
+	content := fmt.Sprintf(`
+    <h2 style="color: #0284c7; margin-top: 0;">🔐 Verify Alert Destination Email</h2>
+    <p>A request was made to add this email address as an alert destination in <strong>ClientPulse</strong>.</p>
+    <p>To confirm ownership and activate alert delivery, click the button below (link expires in 24 hours):</p>
+    <div style="margin: 24px 0;">
+      <a href="%s" style="background-color: #0284c7; color: #ffffff; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: 600; display: inline-block;">Verify & Activate Email</a>
+    </div>
+    <p style="font-size: 13px; color: #64748b;">If the button above does not work, copy and paste this link into your browser:<br><code style="word-break: break-all;">%s</code></p>
+    <p style="font-size: 12px; color: #94a3b8; margin-top: 24px;">If you did not request this notification destination, you can safely ignore this email; no alerts will be sent.</p>
+  `, verifyURL, verifyURL)
+	return RenderedEmail{
+		Subject:  subject,
+		HTMLBody: baseHTML("ltr", "en", subject, content),
+		TextBody: fmt.Sprintf("Verify ClientPulse Email: Visit %s to activate your alert destination.", verifyURL),
+	}
+}
+

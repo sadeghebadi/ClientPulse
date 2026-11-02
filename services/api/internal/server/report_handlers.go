@@ -23,6 +23,7 @@ import (
 type ReportHandler struct {
 	repo         *repository.ReportRepository
 	brandingRepo *repository.BrandingRepository
+	eventRepo    *repository.NotificationEventRepository
 	storage      storage.Storage
 	pdfGen       *pdf.Generator
 	logger       *slog.Logger
@@ -32,6 +33,7 @@ type ReportHandler struct {
 func NewReportHandler(
 	repo *repository.ReportRepository,
 	brandingRepo *repository.BrandingRepository,
+	eventRepo *repository.NotificationEventRepository,
 	st storage.Storage,
 	pdfGen *pdf.Generator,
 	logger *slog.Logger,
@@ -42,6 +44,7 @@ func NewReportHandler(
 	return &ReportHandler{
 		repo:         repo,
 		brandingRepo: brandingRepo,
+		eventRepo:    eventRepo,
 		storage:      st,
 		pdfGen:       pdfGen,
 		logger:       logger,
@@ -348,6 +351,32 @@ func (h *ReportHandler) GeneratePDF(w http.ResponseWriter, r *http.Request) {
 
 	// Update DB
 	_ = h.repo.UpdateReportPDFStorageKey(r.Context(), tc.OrganizationID, rep.ID, storageKey)
+
+	// Emit report.ready notification event idempotently (only after PDF generation & storage succeeded)
+	if h.eventRepo != nil {
+		idempotencyKey := fmt.Sprintf("report.ready:%s:%s:v%d", tc.OrganizationID, rep.ID, rep.VersionNumber)
+		payload := map[string]interface{}{
+			"report_id":   rep.ID,
+			"title":       rep.Title,
+			"client_id":   rep.ClientID,
+			"version":     rep.VersionNumber,
+			"storage_key": storageKey,
+			"size_bytes":  len(pdfBytes),
+		}
+		_, _, notifErr := h.eventRepo.CreateEvent(
+			r.Context(),
+			tc.OrganizationID,
+			"report.ready",
+			nil, nil, nil, &rep.ClientID,
+			idempotencyKey,
+			payload,
+		)
+		if notifErr != nil {
+			h.logger.Error("failed emitting report.ready event", "report_id", rep.ID, "error", notifErr)
+		} else {
+			h.logger.Info("emitted report.ready event", "report_id", rep.ID, "version", rep.VersionNumber)
+		}
+	}
 
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{

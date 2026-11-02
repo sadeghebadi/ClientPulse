@@ -77,22 +77,28 @@ func TestTelegramDestinationBinding_PrivateAndGroup(t *testing.T) {
 	}
 
 	// 2. Bind group chat
-	groupDest, err := notifRepo.ConnectTelegramDestination(ctx, orgID, userID, "telegram_group", "DevOps Alerts Group", -1001234567890, 11223344, nil)
+	groupChatID := -int64(2000000000 + time.Now().UnixNano()%100000000)
+	groupDest, err := notifRepo.ConnectTelegramDestination(ctx, orgID, userID, "telegram_group", "DevOps Alerts Group", groupChatID, 11223344, nil)
 	if err != nil {
 		t.Fatalf("failed connecting group telegram destination: %v", err)
 	}
-	if groupDest.TelegramChatID == nil || *groupDest.TelegramChatID != -1001234567890 {
-		t.Errorf("expected group chat ID -1001234567890, got %v", groupDest.TelegramChatID)
+	if groupDest.TelegramChatID == nil || *groupDest.TelegramChatID != groupChatID {
+		t.Errorf("expected group chat ID %d, got %v", groupChatID, groupDest.TelegramChatID)
 	}
 
 	// 3. Bind email destination
-	emailDest, err := notifRepo.CreateEmailDestination(ctx, orgID, userID, "alerts@binding-org.com", "DevOps Email", map[string]bool{
+	emailDest, rawVerifyToken, err := notifRepo.CreateEmailDestination(ctx, orgID, userID, "alerts@binding-org.com", "DevOps Email", map[string]bool{
 		"incident.opened":   true,
 		"incident.resolved": true,
 		"heartbeat.missed":  false,
 	})
 	if err != nil {
 		t.Fatalf("failed creating email destination: %v", err)
+	}
+	// Verify email destination so it is active
+	_, err = notifRepo.ConsumeEmailVerificationToken(ctx, rawVerifyToken)
+	if err != nil {
+		t.Fatalf("failed verifying email destination: %v", err)
 	}
 
 	// 4. List all destinations for org
@@ -145,7 +151,8 @@ func TestNotificationEvent_FanOutAndDeduplication(t *testing.T) {
 		t.Fatalf("failed creating dest1: %v", err)
 	}
 
-	dest2, err := notifRepo.ConnectTelegramDestination(ctx, orgID, userID, "telegram_group", "Alerts 2", -222222, 222, nil)
+	dest2ChatID := -int64(222222000 + time.Now().UnixNano()%100000)
+	dest2, err := notifRepo.ConnectTelegramDestination(ctx, orgID, userID, "telegram_group", "Alerts 2", dest2ChatID, 222, nil)
 	if err != nil {
 		t.Fatalf("failed creating dest2: %v", err)
 	}
@@ -310,7 +317,7 @@ func TestDeliveryRetryAndTerminalFailure(t *testing.T) {
 	}
 
 	// 1. Temporary failure -> marks 'retrying' with backoff
-	err = workerNotifRepo.MarkDeliveryFailed(ctx, deliv.ID, "Temporary network timeout", 5*time.Second, false)
+	err = workerNotifRepo.MarkDeliveryFailed(ctx, deliv.ID, "worker-test-1", "Temporary network timeout", 5*time.Second, false)
 	if err != nil {
 		t.Fatalf("MarkDeliveryFailed failed: %v", err)
 	}
@@ -324,7 +331,7 @@ func TestDeliveryRetryAndTerminalFailure(t *testing.T) {
 	}
 
 	// 2. Permanent failure (e.g. 403 Bot blocked) -> immediately marks terminal 'failed'
-	err = workerNotifRepo.MarkDeliveryFailed(ctx, deliv.ID, "HTTP 403 Bot was blocked by user", 0, true)
+	err = workerNotifRepo.MarkDeliveryFailed(ctx, deliv.ID, "worker-test-1", "HTTP 403 Bot was blocked by user", 0, true)
 	if err != nil {
 		t.Fatalf("MarkDeliveryFailed permanent failed: %v", err)
 	}

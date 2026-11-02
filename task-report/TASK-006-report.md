@@ -197,7 +197,7 @@ When deploying to production in TASK-007, provide the following environment vari
 ```bash
 # Telegram Bot Configuration
 TELEGRAM_BOT_TOKEN="<PRODUCTION_BOT_TOKEN_FROM_BOTFATHER>"
-TELEGRAM_BOT_USERNAME="ClientPulseBot"
+TELEGRAM_BOT_USERNAME="ClientPulseAlertsBot"
 TELEGRAM_WEBHOOK_SECRET="<SECURE_RANDOM_WEBHOOK_SECRET>"
 TELEGRAM_MODE="webhook"
 

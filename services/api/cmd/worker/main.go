@@ -101,19 +101,25 @@ func main() {
 
 	// Set up notification delivery worker
 	notifRepo := repository.NewNotificationDestRepository(db.Pool)
-	telegramClient := telegram.NewClient(cfg.TelegramBotToken, "", nil)
+	var telegramSender telegram.TelegramSender
+	if cfg.TelegramBotToken != "" {
+		telegramSender = telegram.NewClient(cfg.TelegramBotToken, "", nil)
+	} else {
+		log.Info("telegram bot token not configured; running in mock telegram mode")
+		telegramSender = telegram.NewMockSender()
+	}
 	emailClient := email.NewClient(email.SMTPConfig{
 		Host:      cfg.SMTPHost,
 		Port:      cfg.SMTPPort,
 		Username:  cfg.SMTPUsername,
 		Password:  cfg.SMTPPassword,
-		FromEmail: cfg.EmailFrom,
+		FromEmail: cfg.SMTPFromEmail,
 		FromName:  cfg.SMTPFromName,
 		TLSMode:   cfg.SMTPTLSMode,
 	})
 	notifWorker := worker.NewNotificationWorker(
 		notifRepo,
-		telegramClient,
+		telegramSender,
 		emailClient,
 		cfg.AppBaseURL,
 		workerID,

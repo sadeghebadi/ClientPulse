@@ -38,7 +38,8 @@ type Config struct {
 	SMTPPort      int
 	SMTPUsername  string
 	SMTPPassword  string
-	EmailFrom     string
+	SMTPFromEmail string
+	EmailFrom     string // Deprecated: alias for SMTPFromEmail
 	SMTPFromName  string
 	SMTPTLSMode   string
 
@@ -89,7 +90,8 @@ func Load() (*Config, error) {
 		SMTPPort:                     getEnvAsInt("SMTP_PORT", 1025),
 		SMTPUsername:                 getEnv("SMTP_USERNAME", ""),
 		SMTPPassword:                 getEnv("SMTP_PASSWORD", ""),
-		EmailFrom:                    getEnv("EMAIL_FROM", "notifications@clientpulse.local"),
+		SMTPFromEmail:                getEnv("SMTP_FROM_EMAIL", getEnv("EMAIL_FROM", "notifications@clientpulse.local")),
+		EmailFrom:                    getEnv("SMTP_FROM_EMAIL", getEnv("EMAIL_FROM", "notifications@clientpulse.local")),
 		SMTPFromName:                 getEnv("SMTP_FROM_NAME", "ClientPulse Alerts"),
 		SMTPTLSMode:                  getEnv("SMTP_TLS_MODE", "none"),
 		StorageProvider:              getEnv("STORAGE_PROVIDER", "local"),
@@ -153,6 +155,26 @@ func (c *Config) Validate() error {
 		}
 		if strings.Contains(c.TokenHashPepper, "dev-token-pepper") || len(c.TokenHashPepper) < 32 {
 			return fmt.Errorf("production TOKEN_HASH_PEPPER must be at least 32 characters and cannot use default dev pepper")
+		}
+		if c.EmailProvider == "smtp" {
+			if strings.ToLower(c.SMTPTLSMode) == "none" {
+				return fmt.Errorf("production SMTP_TLS_MODE cannot be 'none'; must be 'starttls' or 'tls'")
+			}
+			if c.SMTPHost == "" || c.SMTPHost == "mailpit" || c.SMTPHost == "localhost" || c.SMTPHost == "127.0.0.1" {
+				return fmt.Errorf("production SMTP_HOST must be a valid external SMTP server (not %s)", c.SMTPHost)
+			}
+			if c.SMTPPort <= 0 {
+				return fmt.Errorf("production SMTP_PORT must be a valid port number")
+			}
+			if c.SMTPUsername == "" {
+				return fmt.Errorf("production SMTP_USERNAME is required")
+			}
+			if c.SMTPPassword == "" {
+				return fmt.Errorf("production SMTP_PASSWORD is required")
+			}
+			if c.SMTPFromEmail == "" || !strings.Contains(c.SMTPFromEmail, "@") {
+				return fmt.Errorf("production SMTP_FROM_EMAIL must be a valid email address")
+			}
 		}
 	}
 

@@ -14,48 +14,58 @@ import (
 )
 
 var (
-	ErrTokenInvalidOrExpired = errors.New("connection token is invalid, expired, or already used")
-	ErrDestinationNotFound   = errors.New("notification destination not found")
-	ErrDuplicateDestination  = errors.New("destination is already connected")
+	ErrTokenInvalidOrExpired   = errors.New("connection token is invalid, expired, or already used")
+	ErrDestinationNotFound     = errors.New("notification destination not found")
+	ErrDuplicateDestination    = errors.New("destination is already connected")
+	ErrGroupAlreadyBound       = errors.New("telegram group is already connected to an organization")
+	ErrVerificationRateLimited = errors.New("please wait at least 60 seconds before requesting another verification email")
+	ErrSenderNotAuthorized     = errors.New("telegram sender is not authorized for this connection code")
 )
 
 type NotificationDestination struct {
-	ID               string          `json:"id"`
-	OrganizationID   string          `json:"organization_id"`
-	DestinationType  string          `json:"destination_type"`
-	Name             string          `json:"name"`
-	TelegramChatID   *int64          `json:"telegram_chat_id,omitempty"`
-	TelegramUserID   *int64          `json:"telegram_user_id,omitempty"`
-	TelegramUsername *string         `json:"telegram_username,omitempty"`
-	EmailAddress     *string         `json:"email_address,omitempty"`
-	UserID           *string         `json:"user_id,omitempty"`
-	Status           string          `json:"status"`
-	IsEnabled        bool            `json:"is_enabled"`
-	CreatedAt        time.Time       `json:"created_at"`
-	UpdatedAt        time.Time       `json:"updated_at"`
-	LastVerifiedAt   *time.Time      `json:"last_verified_at,omitempty"`
-	Preferences      map[string]bool `json:"preferences,omitempty"`
+	ID                   string          `json:"id"`
+	OrganizationID       string          `json:"organization_id"`
+	DestinationType      string          `json:"destination_type"`
+	Name                 string          `json:"name"`
+	TelegramChatID       *int64          `json:"telegram_chat_id,omitempty"`
+	TelegramUserID       *int64          `json:"telegram_user_id,omitempty"`
+	TelegramUsername     *string         `json:"telegram_username,omitempty"`
+	EmailAddress         *string         `json:"email_address,omitempty"`
+	UserID               *string         `json:"user_id,omitempty"`
+	Status               string          `json:"status"`
+	IsEnabled            bool            `json:"is_enabled"`
+	CreatedAt            time.Time       `json:"created_at"`
+	UpdatedAt            time.Time       `json:"updated_at"`
+	LastVerifiedAt       *time.Time      `json:"last_verified_at,omitempty"`
+	VerifiedAt           *time.Time      `json:"verified_at,omitempty"`
+	VerificationSentAt   *time.Time      `json:"verification_sent_at,omitempty"`
+	PendingGroupApproval bool            `json:"pending_group_approval"`
+	PendingGroupChatID   *int64          `json:"pending_group_chat_id,omitempty"`
+	PendingGroupTitle    *string         `json:"pending_group_title,omitempty"`
+	AuthorizedByUserID   *string         `json:"authorized_by_user_id,omitempty"`
+	Preferences          map[string]bool `json:"preferences,omitempty"`
 }
 
 type NotificationDelivery struct {
-	ID              string                 `json:"id"`
-	OrganizationID  string                 `json:"organization_id"`
-	EventID         *string                `json:"event_id,omitempty"`
-	DestinationID   string                 `json:"destination_id"`
-	DestinationType string                 `json:"destination_type"`
-	Recipient       string                 `json:"recipient"`
-	EventType       string                 `json:"event_type"`
-	Status          string                 `json:"status"`
-	RetryCount      int                    `json:"retry_count"`
-	MaxRetries      int                    `json:"max_retries"`
-	NextAttemptAt   time.Time              `json:"next_attempt_at"`
-	IdempotencyKey  string                 `json:"idempotency_key"`
-	Payload         map[string]interface{} `json:"payload"`
-	ErrorMessage    *string                `json:"error_message,omitempty"`
-	LastAttemptAt   *time.Time             `json:"last_attempt_at,omitempty"`
-	SentAt          *time.Time             `json:"sent_at,omitempty"`
-	CreatedAt       time.Time              `json:"created_at"`
-	UpdatedAt       time.Time              `json:"updated_at"`
+	ID               string                 `json:"id"`
+	OrganizationID   string                 `json:"organization_id"`
+	EventID          *string                `json:"event_id,omitempty"`
+	DestinationID    string                 `json:"destination_id"`
+	DestinationType  string                 `json:"destination_type"`
+	Recipient        string                 `json:"recipient"`
+	EventType        string                 `json:"event_type"`
+	Status           string                 `json:"status"`
+	RetryCount       int                    `json:"retry_count"`
+	MaxRetries       int                    `json:"max_retries"`
+	NextAttemptAt    time.Time              `json:"next_attempt_at"`
+	IdempotencyKey   string                 `json:"idempotency_key"`
+	Payload          map[string]interface{} `json:"payload"`
+	ErrorMessage     *string                `json:"error_message,omitempty"`
+	DeliveryAttempts []interface{}          `json:"delivery_attempts,omitempty"`
+	LastAttemptAt    *time.Time             `json:"last_attempt_at,omitempty"`
+	SentAt           *time.Time             `json:"sent_at,omitempty"`
+	CreatedAt        time.Time              `json:"created_at"`
+	UpdatedAt        time.Time              `json:"updated_at"`
 }
 
 type ConsumedTokenInfo struct {
@@ -150,7 +160,72 @@ func (r *NotificationDestRepository) ConsumeConnectionToken(ctx context.Context,
 	return &info, nil
 }
 
-// ConnectTelegramDestination binds a verified Telegram chat as a destination for the organization.
+// RecordTelegramUpdateID stores the Telegram update ID to prevent replay attacks.
+// Returns true if the update ID was recorded for the first time, false if already processed (duplicate).
+func (r *NotificationDestRepository) RecordTelegramUpdateID(ctx context.Context, updateID int64) (bool, error) {
+	var returnedID int64
+	err := r.pool.QueryRow(ctx, `
+		INSERT INTO telegram_webhook_updates (update_id, processed_at)
+		VALUES ($1, NOW())
+		ON CONFLICT (update_id) DO NOTHING
+		RETURNING update_id
+	`, updateID).Scan(&returnedID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, nil
+		}
+		return false, fmt.Errorf("failed recording telegram update id: %w", err)
+	}
+	return true, nil
+}
+
+// IsUserVerifiedTelegramIdentity checks if a given Telegram user ID is associated with an active, verified private Telegram destination for this user in this organization.
+func (r *NotificationDestRepository) IsUserVerifiedTelegramIdentity(ctx context.Context, orgID, userID string, telegramUserID int64) (bool, error) {
+	var count int
+	err := WithTenantTx(ctx, r.pool, orgID, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			SELECT COUNT(*)
+			FROM notification_destinations
+			WHERE organization_id = $1
+			  AND user_id = $2
+			  AND telegram_user_id = $3
+			  AND destination_type = 'telegram_private'
+			  AND status = 'active'
+		`, orgID, userID, telegramUserID).Scan(&count)
+	})
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+// GetGroupDestinationByChatID checks cross-tenant whether an active or pending group connection already exists for this chat ID.
+func (r *NotificationDestRepository) GetGroupDestinationByChatID(ctx context.Context, chatID int64) (*NotificationDestination, error) {
+	var d NotificationDestination
+	err := r.pool.QueryRow(ctx, `
+		SELECT id, organization_id, destination_type, name, telegram_chat_id, telegram_user_id,
+		       telegram_username, email_address, user_id, status, is_enabled, created_at, updated_at,
+		       last_verified_at, verified_at, verification_sent_at, pending_group_approval,
+		       pending_group_chat_id, pending_group_title, authorized_by_user_id
+		FROM find_active_group_destination_by_chat_id($1)
+	`, chatID).Scan(
+		&d.ID, &d.OrganizationID, &d.DestinationType, &d.Name,
+		&d.TelegramChatID, &d.TelegramUserID, &d.TelegramUsername,
+		&d.EmailAddress, &d.UserID, &d.Status, &d.IsEnabled,
+		&d.CreatedAt, &d.UpdatedAt, &d.LastVerifiedAt,
+		&d.VerifiedAt, &d.VerificationSentAt, &d.PendingGroupApproval,
+		&d.PendingGroupChatID, &d.PendingGroupTitle, &d.AuthorizedByUserID,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &d, nil
+}
+
+// ConnectTelegramDestination binds a verified Telegram chat as an active destination for the organization.
 func (r *NotificationDestRepository) ConnectTelegramDestination(
 	ctx context.Context,
 	orgID, userID, destType, name string,
@@ -164,12 +239,14 @@ func (r *NotificationDestRepository) ConnectTelegramDestination(
 		query := `
 			INSERT INTO notification_destinations (
 				organization_id, destination_type, name, telegram_chat_id, telegram_user_id,
-				telegram_username, user_id, status, is_enabled, created_at, updated_at, last_verified_at
+				telegram_username, user_id, status, is_enabled, authorized_by_user_id,
+				created_at, updated_at, last_verified_at, verified_at
 			)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, 'active', true, $8, $8, $8)
-			ON CONFLICT (organization_id, id) DO NOTHING
+			VALUES ($1, $2, $3, $4, $5, $6, $7, 'active', true, $7, $8, $8, $8, $8)
 			RETURNING id, organization_id, destination_type, name, telegram_chat_id, telegram_user_id,
-			          telegram_username, email_address, user_id, status, is_enabled, created_at, updated_at, last_verified_at
+			          telegram_username, email_address, user_id, status, is_enabled, created_at, updated_at,
+			          last_verified_at, verified_at, verification_sent_at, pending_group_approval,
+			          pending_group_chat_id, pending_group_title, authorized_by_user_id
 		`
 		err := tx.QueryRow(ctx, query,
 			orgID, destType, name, chatID, telegramUserID,
@@ -179,6 +256,8 @@ func (r *NotificationDestRepository) ConnectTelegramDestination(
 			&dest.TelegramChatID, &dest.TelegramUserID, &dest.TelegramUsername,
 			&dest.EmailAddress, &dest.UserID, &dest.Status, &dest.IsEnabled,
 			&dest.CreatedAt, &dest.UpdatedAt, &dest.LastVerifiedAt,
+			&dest.VerifiedAt, &dest.VerificationSentAt, &dest.PendingGroupApproval,
+			&dest.PendingGroupChatID, &dest.PendingGroupTitle, &dest.AuthorizedByUserID,
 		)
 		if err != nil {
 			return fmt.Errorf("failed inserting telegram destination: %w", err)
@@ -218,11 +297,12 @@ func (r *NotificationDestRepository) ConnectTelegramDestination(
 	return &dest, nil
 }
 
-// CreateEmailDestination creates or enables an email destination.
-func (r *NotificationDestRepository) CreateEmailDestination(
+// CreatePendingGroupDestination creates a pending approval group destination.
+func (r *NotificationDestRepository) CreatePendingGroupDestination(
 	ctx context.Context,
-	orgID, userID, email, name string,
-	preferences map[string]bool,
+	orgID, userID, name string,
+	chatID, telegramUserID int64,
+	username *string,
 ) (*NotificationDestination, error) {
 	var dest NotificationDestination
 	now := time.Now().UTC()
@@ -230,18 +310,155 @@ func (r *NotificationDestRepository) CreateEmailDestination(
 	err := WithTenantTx(ctx, r.pool, orgID, func(tx pgx.Tx) error {
 		query := `
 			INSERT INTO notification_destinations (
-				organization_id, destination_type, name, email_address, user_id,
-				status, is_enabled, created_at, updated_at, last_verified_at
+				organization_id, destination_type, name, telegram_chat_id, telegram_user_id,
+				telegram_username, user_id, status, is_enabled,
+				pending_group_approval, pending_group_chat_id, pending_group_title,
+				created_at, updated_at
 			)
-			VALUES ($1, 'email', $2, $3, $4, 'active', true, $5, $5, $5)
+			VALUES ($1, 'telegram_group', $2, $3, $4, $5, $6, 'pending_approval', false, true, $3, $2, $7, $7)
 			RETURNING id, organization_id, destination_type, name, telegram_chat_id, telegram_user_id,
-			          telegram_username, email_address, user_id, status, is_enabled, created_at, updated_at, last_verified_at
+			          telegram_username, email_address, user_id, status, is_enabled, created_at, updated_at,
+			          last_verified_at, verified_at, verification_sent_at, pending_group_approval,
+			          pending_group_chat_id, pending_group_title, authorized_by_user_id
 		`
-		err := tx.QueryRow(ctx, query, orgID, name, email, userID, now).Scan(
+		err := tx.QueryRow(ctx, query,
+			orgID, name, chatID, telegramUserID, username, userID, now,
+		).Scan(
 			&dest.ID, &dest.OrganizationID, &dest.DestinationType, &dest.Name,
 			&dest.TelegramChatID, &dest.TelegramUserID, &dest.TelegramUsername,
 			&dest.EmailAddress, &dest.UserID, &dest.Status, &dest.IsEnabled,
 			&dest.CreatedAt, &dest.UpdatedAt, &dest.LastVerifiedAt,
+			&dest.VerifiedAt, &dest.VerificationSentAt, &dest.PendingGroupApproval,
+			&dest.PendingGroupChatID, &dest.PendingGroupTitle, &dest.AuthorizedByUserID,
+		)
+		if err != nil {
+			return fmt.Errorf("failed inserting pending group destination: %w", err)
+		}
+
+		defaultEvents := []string{
+			"incident.opened", "incident.acknowledged", "incident.resolved",
+			"heartbeat.missed", "heartbeat.recovered", "report.ready",
+		}
+		for _, ev := range defaultEvents {
+			_, err = tx.Exec(ctx, `
+				INSERT INTO notification_preferences (organization_id, destination_id, event_type, is_enabled)
+				VALUES ($1, $2, $3, true)
+				ON CONFLICT (destination_id, event_type) DO UPDATE SET is_enabled = true
+			`, orgID, dest.ID, ev)
+			if err != nil {
+				return fmt.Errorf("failed inserting default preferences: %w", err)
+			}
+		}
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+	return &dest, nil
+}
+
+// ApprovePendingGroupDestination approves a pending group destination by an authorized org admin.
+func (r *NotificationDestRepository) ApprovePendingGroupDestination(
+	ctx context.Context,
+	orgID, destinationID, approverUserID string,
+) (*NotificationDestination, error) {
+	var dest NotificationDestination
+	now := time.Now().UTC()
+
+	err := WithTenantTx(ctx, r.pool, orgID, func(tx pgx.Tx) error {
+		query := `
+			UPDATE notification_destinations
+			SET status = 'active',
+			    is_enabled = true,
+			    pending_group_approval = false,
+			    authorized_by_user_id = $3,
+			    last_verified_at = $4,
+			    verified_at = $4,
+			    updated_at = $4
+			WHERE organization_id = $1 AND id = $2 AND status = 'pending_approval'
+			RETURNING id, organization_id, destination_type, name, telegram_chat_id, telegram_user_id,
+			          telegram_username, email_address, user_id, status, is_enabled, created_at, updated_at,
+			          last_verified_at, verified_at, verification_sent_at, pending_group_approval,
+			          pending_group_chat_id, pending_group_title, authorized_by_user_id
+		`
+		err := tx.QueryRow(ctx, query, orgID, destinationID, approverUserID, now).Scan(
+			&dest.ID, &dest.OrganizationID, &dest.DestinationType, &dest.Name,
+			&dest.TelegramChatID, &dest.TelegramUserID, &dest.TelegramUsername,
+			&dest.EmailAddress, &dest.UserID, &dest.Status, &dest.IsEnabled,
+			&dest.CreatedAt, &dest.UpdatedAt, &dest.LastVerifiedAt,
+			&dest.VerifiedAt, &dest.VerificationSentAt, &dest.PendingGroupApproval,
+			&dest.PendingGroupChatID, &dest.PendingGroupTitle, &dest.AuthorizedByUserID,
+		)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrDestinationNotFound
+			}
+			return err
+		}
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+	return &dest, nil
+}
+
+// CancelPendingGroupDestination cancels a pending group destination.
+func (r *NotificationDestRepository) CancelPendingGroupDestination(ctx context.Context, orgID, destinationID string) error {
+	return WithTenantTx(ctx, r.pool, orgID, func(tx pgx.Tx) error {
+		cmd, err := tx.Exec(ctx, `
+			DELETE FROM notification_destinations
+			WHERE organization_id = $1 AND id = $2 AND status = 'pending_approval'
+		`, orgID, destinationID)
+		if err != nil {
+			return err
+		}
+		if cmd.RowsAffected() == 0 {
+			return ErrDestinationNotFound
+		}
+		return nil
+	})
+}
+
+// CreateEmailDestination creates an email destination with 'pending' status and a cryptographically secure single-use verification token.
+func (r *NotificationDestRepository) CreateEmailDestination(
+	ctx context.Context,
+	orgID, userID, email, name string,
+	preferences map[string]bool,
+) (*NotificationDestination, string, error) {
+	rawToken, err := GenerateRandomToken(32) // 64 hex characters
+	if err != nil {
+		return nil, "", fmt.Errorf("failed generating verification token: %w", err)
+	}
+	tokenHash := HashToken(rawToken)
+
+	var dest NotificationDestination
+	now := time.Now().UTC()
+
+	err = WithTenantTx(ctx, r.pool, orgID, func(tx pgx.Tx) error {
+		query := `
+			INSERT INTO notification_destinations (
+				organization_id, destination_type, name, email_address, user_id,
+				status, is_enabled, verification_token_hash, verification_sent_at,
+				authorized_by_user_id, created_at, updated_at
+			)
+			VALUES ($1, 'email', $2, $3, $4, 'pending', true, $5, $6, $4, $6, $6)
+			RETURNING id, organization_id, destination_type, name, telegram_chat_id, telegram_user_id,
+			          telegram_username, email_address, user_id, status, is_enabled, created_at, updated_at,
+			          last_verified_at, verified_at, verification_sent_at, pending_group_approval,
+			          pending_group_chat_id, pending_group_title, authorized_by_user_id
+		`
+		err := tx.QueryRow(ctx, query,
+			orgID, name, email, userID, tokenHash, now,
+		).Scan(
+			&dest.ID, &dest.OrganizationID, &dest.DestinationType, &dest.Name,
+			&dest.TelegramChatID, &dest.TelegramUserID, &dest.TelegramUsername,
+			&dest.EmailAddress, &dest.UserID, &dest.Status, &dest.IsEnabled,
+			&dest.CreatedAt, &dest.UpdatedAt, &dest.LastVerifiedAt,
+			&dest.VerifiedAt, &dest.VerificationSentAt, &dest.PendingGroupApproval,
+			&dest.PendingGroupChatID, &dest.PendingGroupTitle, &dest.AuthorizedByUserID,
 		)
 		if err != nil {
 			return fmt.Errorf("failed inserting email destination: %w", err)
@@ -272,11 +489,81 @@ func (r *NotificationDestRepository) CreateEmailDestination(
 	})
 
 	if err != nil {
-		return nil, err
+		return nil, "", err
+	}
+	return &dest, rawToken, nil
+}
+
+// ConsumeEmailVerificationToken consumes a single-use email verification token across tenants.
+func (r *NotificationDestRepository) ConsumeEmailVerificationToken(ctx context.Context, rawToken string) (*NotificationDestination, error) {
+	tokenHash := HashToken(rawToken)
+
+	var destID, orgID, emailAddr string
+	err := r.pool.QueryRow(ctx, `
+		SELECT id, organization_id, email_address
+		FROM consume_email_verification_token($1)
+	`, tokenHash).Scan(&destID, &orgID, &emailAddr)
+
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrTokenInvalidOrExpired
+		}
+		return nil, fmt.Errorf("failed verifying email destination: %w", err)
 	}
 
-	dest.Preferences = preferences
-	return &dest, nil
+	return r.GetDestinationByID(ctx, orgID, destID)
+}
+
+// ResendEmailVerificationToken generates a new token for a pending email destination with 60s rate limit.
+func (r *NotificationDestRepository) ResendEmailVerificationToken(ctx context.Context, orgID, destID string) (string, error) {
+	var lastSent *time.Time
+	var emailAddr *string
+	var status string
+
+	err := WithTenantTx(ctx, r.pool, orgID, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			SELECT status, verification_sent_at, email_address
+			FROM notification_destinations
+			WHERE organization_id = $1 AND id = $2 AND destination_type = 'email'
+		`, orgID, destID).Scan(&status, &lastSent, &emailAddr)
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", ErrDestinationNotFound
+		}
+		return "", err
+	}
+
+	if status != "pending" {
+		return "", errors.New("email destination is already verified")
+	}
+
+	if lastSent != nil && time.Since(*lastSent) < 60*time.Second {
+		return "", ErrVerificationRateLimited
+	}
+
+	rawToken, err := GenerateRandomToken(32)
+	if err != nil {
+		return "", err
+	}
+	tokenHash := HashToken(rawToken)
+	now := time.Now().UTC()
+
+	err = WithTenantTx(ctx, r.pool, orgID, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `
+			UPDATE notification_destinations
+			SET verification_token_hash = $3,
+			    verification_sent_at = $4,
+			    updated_at = $4
+			WHERE organization_id = $1 AND id = $2 AND status = 'pending'
+		`, orgID, destID, tokenHash, now)
+		return err
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed updating verification token: %w", err)
+	}
+
+	return rawToken, nil
 }
 
 // ListDestinations lists all destinations for an organization with their event preferences.
@@ -286,7 +573,9 @@ func (r *NotificationDestRepository) ListDestinations(ctx context.Context, orgID
 	err := WithTenantTx(ctx, r.pool, orgID, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `
 			SELECT id, organization_id, destination_type, name, telegram_chat_id, telegram_user_id,
-			       telegram_username, email_address, user_id, status, is_enabled, created_at, updated_at, last_verified_at
+			       telegram_username, email_address, user_id, status, is_enabled, created_at, updated_at,
+			       last_verified_at, verified_at, verification_sent_at, pending_group_approval,
+			       pending_group_chat_id, pending_group_title, authorized_by_user_id
 			FROM notification_destinations
 			WHERE organization_id = $1 AND status != 'disconnected'
 			ORDER BY created_at DESC
@@ -303,6 +592,8 @@ func (r *NotificationDestRepository) ListDestinations(ctx context.Context, orgID
 				&d.TelegramChatID, &d.TelegramUserID, &d.TelegramUsername,
 				&d.EmailAddress, &d.UserID, &d.Status, &d.IsEnabled,
 				&d.CreatedAt, &d.UpdatedAt, &d.LastVerifiedAt,
+				&d.VerifiedAt, &d.VerificationSentAt, &d.PendingGroupApproval,
+				&d.PendingGroupChatID, &d.PendingGroupTitle, &d.AuthorizedByUserID,
 			); err != nil {
 				return err
 			}
@@ -359,7 +650,9 @@ func (r *NotificationDestRepository) GetDestinationByID(ctx context.Context, org
 	err := WithTenantTx(ctx, r.pool, orgID, func(tx pgx.Tx) error {
 		query := `
 			SELECT id, organization_id, destination_type, name, telegram_chat_id, telegram_user_id,
-			       telegram_username, email_address, user_id, status, is_enabled, created_at, updated_at, last_verified_at
+			       telegram_username, email_address, user_id, status, is_enabled, created_at, updated_at,
+			       last_verified_at, verified_at, verification_sent_at, pending_group_approval,
+			       pending_group_chat_id, pending_group_title, authorized_by_user_id
 			FROM notification_destinations
 			WHERE organization_id = $1 AND id = $2 AND status != 'disconnected'
 		`
@@ -368,6 +661,8 @@ func (r *NotificationDestRepository) GetDestinationByID(ctx context.Context, org
 			&d.TelegramChatID, &d.TelegramUserID, &d.TelegramUsername,
 			&d.EmailAddress, &d.UserID, &d.Status, &d.IsEnabled,
 			&d.CreatedAt, &d.UpdatedAt, &d.LastVerifiedAt,
+			&d.VerifiedAt, &d.VerificationSentAt, &d.PendingGroupApproval,
+			&d.PendingGroupChatID, &d.PendingGroupTitle, &d.AuthorizedByUserID,
 		)
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
@@ -572,6 +867,7 @@ func (r *NotificationDestRepository) DispatchPendingEvents(ctx context.Context, 
 				  ON np.destination_id = nd.id AND np.event_type = $2 AND np.is_enabled = true
 				WHERE nd.organization_id = $1
 				  AND nd.status = 'active'
+				  AND (nd.destination_type != 'email' OR nd.verified_at IS NOT NULL)
 				  AND nd.is_enabled = true
 			`, ev.OrgID, ev.EventType)
 			if err != nil {
@@ -661,35 +957,52 @@ func (r *NotificationDestRepository) ClaimDueDeliveries(ctx context.Context, wor
 	return deliveries, nil
 }
 
-// MarkDeliverySent updates delivery to 'sent'.
-func (r *NotificationDestRepository) MarkDeliverySent(ctx context.Context, deliveryID string) error {
+// MarkDeliverySent updates delivery to 'sent' and logs worker audit trail.
+func (r *NotificationDestRepository) MarkDeliverySent(ctx context.Context, deliveryID string, workerID string) error {
+	attemptEntry, _ := json.Marshal(map[string]interface{}{
+		"status":    "sent",
+		"timestamp": time.Now().UTC(),
+		"worker_id": workerID,
+	})
+
 	_, err := r.pool.Exec(ctx, `
 		UPDATE notification_deliveries
 		SET status = 'sent',
 		    sent_at = NOW(),
 		    error_message = NULL,
+		    delivery_attempts = delivery_attempts || $2::jsonb,
 		    updated_at = NOW()
 		WHERE id = $1
-	`, deliveryID)
+	`, deliveryID, fmt.Sprintf("[%s]", string(attemptEntry)))
 	return err
 }
 
-// MarkDeliveryFailed updates delivery to 'retrying' with backoff or terminal 'failed'.
+// MarkDeliveryFailed updates delivery to 'retrying' with backoff or terminal 'failed', logging audit trail.
 func (r *NotificationDestRepository) MarkDeliveryFailed(
 	ctx context.Context,
 	deliveryID string,
+	workerID string,
 	errMsg string,
 	retryAfter time.Duration,
 	permanent bool,
 ) error {
+	attemptEntry, _ := json.Marshal(map[string]interface{}{
+		"status":    "failed_attempt",
+		"error":     errMsg,
+		"timestamp": time.Now().UTC(),
+		"worker_id": workerID,
+		"permanent": permanent,
+	})
+
 	if permanent {
 		_, err := r.pool.Exec(ctx, `
 			UPDATE notification_deliveries
 			SET status = 'failed',
 			    error_message = $2,
+			    delivery_attempts = delivery_attempts || $3::jsonb,
 			    updated_at = NOW()
 			WHERE id = $1
-		`, deliveryID, errMsg)
+		`, deliveryID, errMsg, fmt.Sprintf("[%s]", string(attemptEntry)))
 		return err
 	}
 
@@ -700,21 +1013,37 @@ func (r *NotificationDestRepository) MarkDeliveryFailed(
 		    retry_count = retry_count + 1,
 		    next_attempt_at = $2,
 		    error_message = $3,
+		    delivery_attempts = delivery_attempts || $4::jsonb,
 		    updated_at = NOW()
 		WHERE id = $1
-	`, deliveryID, nextAttempt, errMsg)
+	`, deliveryID, nextAttempt, errMsg, fmt.Sprintf("[%s]", string(attemptEntry)))
 	return err
 }
 
-// RequeueStaleDeliveries re-queues any deliveries stuck in 'sending' for longer than the timeout.
+// RequeueStaleDeliveries handles deliveries stuck in 'sending' for longer than the timeout.
+// If retry_count >= 1, the delivery outcome is uncertain (worker may have crashed after transmission).
 func (r *NotificationDestRepository) RequeueStaleDeliveries(ctx context.Context, staleThreshold time.Duration) (int64, error) {
 	threshold := time.Now().UTC().Add(-staleThreshold)
+	recoveryEntry, _ := json.Marshal(map[string]interface{}{
+		"status":          "stale_recovery",
+		"recovered_at":    time.Now().UTC(),
+		"stale_threshold": staleThreshold.String(),
+		"note":            "worker timed out while sending; outcome uncertain",
+	})
+
 	ct, err := r.pool.Exec(ctx, `
 		UPDATE notification_deliveries
-		SET status = 'retrying',
+		SET status = CASE
+		        WHEN retry_count + 1 >= max_retries THEN 'failed'
+		        WHEN retry_count > 0 THEN 'uncertain'
+		        ELSE 'retrying'
+		    END,
+		    retry_count = retry_count + 1,
+		    error_message = 'worker timed out or crashed while in-flight; outcome uncertain',
+		    delivery_attempts = delivery_attempts || $2::jsonb,
 		    updated_at = NOW()
 		WHERE status = 'sending' AND last_attempt_at < $1
-	`, threshold)
+	`, threshold, fmt.Sprintf("[%s]", string(recoveryEntry)))
 	if err != nil {
 		return 0, err
 	}
@@ -747,7 +1076,7 @@ func (r *NotificationDestRepository) ListDeliveries(
 		query := `
 			SELECT id, organization_id, event_id, destination_id, destination_type,
 			       recipient, event_type, status, retry_count, max_retries, next_attempt_at,
-			       idempotency_key, payload, error_message, last_attempt_at, sent_at, created_at, updated_at
+			       idempotency_key, payload, error_message, delivery_attempts, last_attempt_at, sent_at, created_at, updated_at
 			FROM notification_deliveries
 			WHERE organization_id = $1
 			  AND ($2 = '' OR status = $2)
@@ -764,16 +1093,18 @@ func (r *NotificationDestRepository) ListDeliveries(
 		for rows.Next() {
 			var d NotificationDelivery
 			var rawPayload []byte
+			var rawAttempts []byte
 			if err := rows.Scan(
 				&d.ID, &d.OrganizationID, &d.EventID, &d.DestinationID,
 				&d.DestinationType, &d.Recipient, &d.EventType, &d.Status,
 				&d.RetryCount, &d.MaxRetries, &d.NextAttemptAt, &d.IdempotencyKey,
-				&rawPayload, &d.ErrorMessage, &d.LastAttemptAt, &d.SentAt,
+				&rawPayload, &d.ErrorMessage, &rawAttempts, &d.LastAttemptAt, &d.SentAt,
 				&d.CreatedAt, &d.UpdatedAt,
 			); err != nil {
 				return err
 			}
 			_ = json.Unmarshal(rawPayload, &d.Payload)
+			_ = json.Unmarshal(rawAttempts, &d.DeliveryAttempts)
 			deliveries = append(deliveries, &d)
 		}
 		return nil

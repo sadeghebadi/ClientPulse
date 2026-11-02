@@ -77,6 +77,12 @@ export function AppLayout({ children }: AppLayoutProps) {
       active: pathname.startsWith("/incidents"),
     },
     {
+      label: t.notifications,
+      href: "/settings/notifications",
+      icon: <Bell className="w-4 h-4" />,
+      active: pathname.startsWith("/settings/notifications"),
+    },
+    {
       label: t.maintenance,
       href: "/maintenance",
       icon: <Wrench className="w-4 h-4" />,
@@ -100,12 +106,7 @@ export function AppLayout({ children }: AppLayoutProps) {
       icon: <Shield className="w-4 h-4" />,
       active: pathname === "/settings/members",
     },
-    {
-      label: t.notifications,
-      href: "/settings/notifications",
-      icon: <Bell className="w-4 h-4" />,
-      active: pathname.startsWith("/settings/notifications"),
-    },
+    
     {
       label: t.accountSettings,
       href: "/settings/account",

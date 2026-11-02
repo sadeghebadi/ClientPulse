@@ -102,14 +102,20 @@ func main() {
 		reportRepo := repository.NewReportRepository(db.Pool, brandingRepo)
 		notifRepo := repository.NewNotificationDestRepository(db.Pool)
 
-		telegramClient := telegram.NewClient(cfg.TelegramBotToken, "", nil)
-		telegramUpdateHdr := telegram.NewUpdateHandler(notifRepo, telegramClient, cfg.TelegramBotUsername, log)
+		var telegramSender telegram.TelegramSender
+		if cfg.TelegramBotToken != "" {
+			telegramSender = telegram.NewClient(cfg.TelegramBotToken, "", nil)
+		} else {
+			log.Info("telegram bot token not configured; running in mock telegram mode")
+			telegramSender = telegram.NewMockSender()
+		}
+		telegramUpdateHdr := telegram.NewUpdateHandler(notifRepo, telegramSender, cfg.TelegramBotUsername, log)
 		emailClient := email.NewClient(email.SMTPConfig{
 			Host:      cfg.SMTPHost,
 			Port:      cfg.SMTPPort,
 			Username:  cfg.SMTPUsername,
 			Password:  cfg.SMTPPassword,
-			FromEmail: cfg.EmailFrom,
+			FromEmail: cfg.SMTPFromEmail,
 			FromName:  cfg.SMTPFromName,
 			TLSMode:   cfg.SMTPTLSMode,
 		})
@@ -121,7 +127,7 @@ func main() {
 				Port:     cfg.SMTPPort,
 				Username: cfg.SMTPUsername,
 				Password: cfg.SMTPPassword,
-				From:     cfg.EmailFrom,
+				From:     cfg.SMTPFromEmail,
 			})
 		} else {
 			mailer = mail.NewMockMailer()
@@ -139,8 +145,8 @@ func main() {
 		deps.IncidentHdr = server.NewIncidentHandler(incidentRepo, eventRepo, log)
 		deps.MaintenanceHdr = server.NewMaintenanceHandler(maintRepo, log)
 		deps.BrandingHdr = server.NewBrandingHandler(brandingRepo, st, log)
-		deps.ReportHdr = server.NewReportHandler(reportRepo, brandingRepo, st, pdfGen, log)
-		deps.NotificationHdr = server.NewNotificationHandler(notifRepo, telegramUpdateHdr, telegramClient, emailClient, cfg, log)
+		deps.ReportHdr = server.NewReportHandler(reportRepo, brandingRepo, eventRepo, st, pdfGen, log)
+		deps.NotificationHdr = server.NewNotificationHandler(notifRepo, telegramUpdateHdr, telegramSender, emailClient, cfg, log)
 		deps.AuthMiddleware = server.NewAuthMiddleware(sessionRepo, userRepo, cfg)
 		deps.TenantMiddleware = server.NewTenantMiddleware(orgRepo, sessionRepo)
 	}

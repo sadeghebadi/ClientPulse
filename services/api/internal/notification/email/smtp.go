@@ -167,6 +167,8 @@ func (c *Client) sendSTARTTLS(addr string, auth smtp.Auth, from string, to []str
 		if err := client.StartTLS(tlsConfig); err != nil {
 			return fmt.Errorf("SMTP StartTLS failed: %w", err)
 		}
+	} else {
+		return fmt.Errorf("SMTP server does not support STARTTLS")
 	}
 
 	if auth != nil {

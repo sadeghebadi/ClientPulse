@@ -34,10 +34,14 @@ interface Destination {
   telegram_user_id?: number;
   telegram_username?: string;
   email_address?: string;
-  status: "active" | "disconnected";
+  status: "active" | "disconnected" | "pending" | "pending_approval";
   is_enabled: boolean;
   created_at: string;
   last_verified_at?: string;
+  verified_at?: string;
+  verification_sent_at?: string;
+  pending_group_approval?: boolean;
+  pending_group_title?: string;
   preferences?: Record<string, boolean>;
 }
 
@@ -47,7 +51,7 @@ interface DeliveryRecord {
   destination_type: string;
   recipient: string;
   event_type: string;
-  status: "queued" | "sending" | "sent" | "retrying" | "failed" | "cancelled";
+  status: "queued" | "sending" | "sent" | "retrying" | "failed" | "cancelled" | "uncertain";
   retry_count: number;
   max_retries: number;
   error_message?: string;
@@ -83,6 +87,11 @@ export default function NotificationSettingsPage() {
   const [emailInput, setEmailInput] = useState("");
   const [emailNameInput, setEmailNameInput] = useState("");
   const [savingEmail, setSavingEmail] = useState(false);
+
+  // Manual Verify Email Token Modal
+  const [verifyTokenModalOpen, setVerifyTokenModalOpen] = useState(false);
+  const [manualTokenInput, setManualTokenInput] = useState("");
+  const [verifyingToken, setVerifyingToken] = useState(false);
 
   // Preferences Modal
   const [prefModalOpen, setPrefModalOpen] = useState(false);
@@ -128,6 +137,27 @@ export default function NotificationSettingsPage() {
       setLoadingHistory(false);
     }
   };
+
+  // Auto-verify if url contains verify_email token
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      const verifyToken = params.get("verify_email");
+      if (verifyToken) {
+        apiFetch("/api/v1/notifications/destinations/verify-email", {
+          method: "POST",
+          body: JSON.stringify({ token: verifyToken }),
+        })
+          .then(() => {
+            setMessage({ type: "success", text: "Email destination successfully verified and activated!" });
+            fetchDestinations();
+          })
+          .catch((err) => {
+            setMessage({ type: "error", text: humanizeApiError(err) });
+          });
+      }
+    }
+  }, []);
 
   useEffect(() => {
     fetchDestinations();
@@ -206,7 +236,7 @@ export default function NotificationSettingsPage() {
         }),
       });
 
-      setMessage({ type: "success", text: "Email destination added successfully" });
+      setMessage({ type: "success", text: "Email destination added. A verification email has been sent to confirm ownership." });
       setEmailModalOpen(false);
       setEmailInput("");
       setEmailNameInput("");
@@ -298,6 +328,65 @@ export default function NotificationSettingsPage() {
     }
   };
 
+  // Approve Pending Telegram Group Connection
+  const handleApproveGroup = async (destId: string) => {
+    try {
+      await apiFetch(`/api/v1/notifications/destinations/${destId}/approve-group`, {
+        method: "POST",
+      });
+      setMessage({ type: "success", text: "Telegram group connection approved and activated!" });
+      fetchDestinations();
+    } catch (err: any) {
+      setMessage({ type: "error", text: humanizeApiError(err) });
+    }
+  };
+
+  // Cancel Pending Telegram Group Connection
+  const handleCancelGroup = async (destId: string) => {
+    try {
+      await apiFetch(`/api/v1/notifications/destinations/${destId}/cancel-group`, {
+        method: "POST",
+      });
+      setMessage({ type: "success", text: "Pending group connection cancelled." });
+      fetchDestinations();
+    } catch (err: any) {
+      setMessage({ type: "error", text: humanizeApiError(err) });
+    }
+  };
+
+  // Resend Email Ownership Verification
+  const handleResendEmailVerification = async (destId: string) => {
+    try {
+      await apiFetch(`/api/v1/notifications/destinations/${destId}/resend-verification`, {
+        method: "POST",
+      });
+      setMessage({ type: "success", text: "Verification email resent successfully. Please check your inbox." });
+    } catch (err: any) {
+      setMessage({ type: "error", text: humanizeApiError(err) });
+    }
+  };
+
+  // Manual Verify Email Token
+  const handleManualVerifyToken = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!manualTokenInput.trim()) return;
+    try {
+      setVerifyingToken(true);
+      await apiFetch("/api/v1/notifications/destinations/verify-email", {
+        method: "POST",
+        body: JSON.stringify({ token: manualTokenInput.trim() }),
+      });
+      setMessage({ type: "success", text: "Email destination verified and activated successfully!" });
+      setVerifyTokenModalOpen(false);
+      setManualTokenInput("");
+      fetchDestinations();
+    } catch (err: any) {
+      setMessage({ type: "error", text: humanizeApiError(err) });
+    } finally {
+      setVerifyingToken(false);
+    }
+  };
+
   const telegramDestinations = destinations.filter(
     (d) => d.destination_type === "telegram_private" || d.destination_type === "telegram_group"
   );
@@ -328,21 +417,19 @@ export default function NotificationSettingsPage() {
           <div className="flex items-center gap-2">
             <button
               onClick={() => setActiveTab("destinations")}
-              className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
-                activeTab === "destinations"
+              className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${activeTab === "destinations"
                   ? "bg-blue-600 text-white"
                   : "bg-white text-slate-700 hover:bg-slate-100 border border-slate-200"
-              }`}
+                }`}
             >
               {t.telegramDestinations} & {t.emailDestinations}
             </button>
             <button
               onClick={() => setActiveTab("history")}
-              className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
-                activeTab === "history"
+              className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${activeTab === "history"
                   ? "bg-blue-600 text-white"
                   : "bg-white text-slate-700 hover:bg-slate-100 border border-slate-200"
-              }`}
+                }`}
             >
               {t.deliveryHistory}
             </button>
@@ -352,11 +439,10 @@ export default function NotificationSettingsPage() {
         {/* Global Feedback Alert */}
         {message && (
           <div
-            className={`p-4 rounded-lg flex items-center justify-between text-sm ${
-              message.type === "success"
+            className={`p-4 rounded-lg flex items-center justify-between text-sm ${message.type === "success"
                 ? "bg-emerald-50 text-emerald-800 border border-emerald-200"
                 : "bg-rose-50 text-rose-800 border border-rose-200"
-            }`}
+              }`}
           >
             <div className="flex items-center gap-2">
               {message.type === "success" ? (
@@ -449,16 +535,47 @@ export default function NotificationSettingsPage() {
                               @{d.telegram_username}
                             </span>
                           )}
-                          <Badge
-                            variant={d.is_enabled ? "success" : "secondary"}
-                            className="text-xs"
-                          >
-                            {d.is_enabled ? t.enabled : t.disabled}
-                          </Badge>
+                          {d.status === "pending_approval" ? (
+                            <Badge variant="warning" className="text-xs">
+                              Pending Approval
+                            </Badge>
+                          ) : (
+                            <Badge
+                              variant={d.is_enabled ? "success" : "secondary"}
+                              className="text-xs"
+                            >
+                              {d.is_enabled ? t.enabled : t.disabled}
+                            </Badge>
+                          )}
                         </div>
                         <div className="text-xs text-slate-400 font-mono">
                           {t.chatId}: {d.telegram_chat_id || "N/A"}
                         </div>
+
+                        {d.status === "pending_approval" && (
+                          <div className="mt-2 p-2.5 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                            <span className="flex items-center gap-1.5">
+                              <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0" />
+                              Group connected by unlinked account. Admin approval required.
+                            </span>
+                            {canManage && (
+                              <div className="flex items-center gap-1.5 flex-shrink-0">
+                                <button
+                                  onClick={() => handleApproveGroup(d.id)}
+                                  className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-xs font-semibold shadow-xs"
+                                >
+                                  Approve Group
+                                </button>
+                                <button
+                                  onClick={() => handleCancelGroup(d.id)}
+                                  className="px-2 py-1 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded text-xs"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </div>
 
                       <div className="flex items-center gap-2 flex-wrap">
@@ -466,11 +583,10 @@ export default function NotificationSettingsPage() {
                           <>
                             <button
                               onClick={() => handleToggleEnabled(d)}
-                              className={`px-3 py-1.5 rounded text-xs font-medium border transition-colors ${
-                                d.is_enabled
+                              className={`px-3 py-1.5 rounded text-xs font-medium border transition-colors ${d.is_enabled
                                   ? "bg-slate-100 text-slate-700 hover:bg-slate-200 border-slate-300"
                                   : "bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border-emerald-300"
-                              }`}
+                                }`}
                             >
                               {d.is_enabled ? t.disabled : t.enabled}
                             </button>
@@ -560,13 +676,47 @@ export default function NotificationSettingsPage() {
                           <span className="text-xs text-slate-500 font-mono">
                             {d.email_address}
                           </span>
-                          <Badge
-                            variant={d.is_enabled ? "success" : "secondary"}
-                            className="text-xs"
-                          >
-                            {d.is_enabled ? t.enabled : t.disabled}
-                          </Badge>
+                          {d.status === "pending" ? (
+                            <Badge variant="warning" className="text-xs">
+                              Pending Verification
+                            </Badge>
+                          ) : (
+                            <Badge
+                              variant={d.is_enabled ? "success" : "secondary"}
+                              className="text-xs"
+                            >
+                              {d.is_enabled ? t.enabled : t.disabled}
+                            </Badge>
+                          )}
                         </div>
+
+                        {d.status === "pending" && (
+                          <div className="mt-2 p-2.5 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                            <span className="flex items-center gap-1.5">
+                              <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0" />
+                              Ownership verification required. Check inbox or enter token.
+                            </span>
+                            {canManage && (
+                              <div className="flex items-center gap-1.5 flex-shrink-0">
+                                <button
+                                  onClick={() => handleResendEmailVerification(d.id)}
+                                  className="px-2.5 py-1 bg-purple-600 hover:bg-purple-700 text-white rounded text-xs font-semibold shadow-xs"
+                                >
+                                  Resend Email
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    setManualTokenInput("");
+                                    setVerifyTokenModalOpen(true);
+                                  }}
+                                  className="px-2 py-1 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded text-xs"
+                                >
+                                  Enter Token
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </div>
 
                       <div className="flex items-center gap-2 flex-wrap">
@@ -574,11 +724,10 @@ export default function NotificationSettingsPage() {
                           <>
                             <button
                               onClick={() => handleToggleEnabled(d)}
-                              className={`px-3 py-1.5 rounded text-xs font-medium border transition-colors ${
-                                d.is_enabled
+                              className={`px-3 py-1.5 rounded text-xs font-medium border transition-colors ${d.is_enabled
                                   ? "bg-slate-100 text-slate-700 hover:bg-slate-200 border-slate-300"
                                   : "bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border-emerald-300"
-                              }`}
+                                }`}
                             >
                               {d.is_enabled ? t.disabled : t.enabled}
                             </button>
@@ -623,11 +772,16 @@ export default function NotificationSettingsPage() {
         {/* Tab 2: Delivery History */}
         {activeTab === "history" && (
           <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-            <div className="p-5 border-b border-slate-200 flex items-center justify-between bg-slate-50">
-              <h2 className="text-base font-semibold text-slate-900 flex items-center gap-2">
-                <Clock className="w-5 h-5 text-slate-600" />
-                {t.deliveryHistory}
-              </h2>
+            <div className="p-5 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-slate-50">
+              <div>
+                <h2 className="text-base font-semibold text-slate-900 flex items-center gap-2">
+                  <Clock className="w-5 h-5 text-slate-600" />
+                  {t.deliveryHistory}
+                </h2>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Tracks external provider acceptance (Telegram Bot API / SMTP Relay). External acceptance does not guarantee device receipt.
+                </p>
+              </div>
               <Button
                 variant="outline"
                 size="sm"
@@ -691,15 +845,19 @@ export default function NotificationSettingsPage() {
                             variant={
                               h.status === "sent"
                                 ? "success"
-                                : h.status === "retrying"
-                                ? "warning"
-                                : h.status === "failed"
-                                ? "destructive"
-                                : "secondary"
+                                : h.status === "retrying" || h.status === "uncertain"
+                                  ? "warning"
+                                  : h.status === "failed"
+                                    ? "destructive"
+                                    : "secondary"
                             }
                             className="text-xs uppercase font-mono"
                           >
-                            {h.status}
+                            {h.status === "sent"
+                              ? "ACCEPTED BY PROVIDER"
+                              : h.status === "uncertain"
+                                ? "UNCERTAIN (CRASH)"
+                                : h.status}
                           </Badge>
                         </td>
                         <td className="py-3 px-4 text-xs font-mono">{h.retry_count}</td>
@@ -797,7 +955,7 @@ export default function NotificationSettingsPage() {
                 <div className="p-3 bg-slate-50 rounded-lg border border-slate-200 space-y-1">
                   <p className="font-medium text-slate-800">{t.telegramGroupStep1}</p>
                   <code className="text-blue-600 font-mono font-semibold">
-                    @{botUsername || "ClientPulseBot"}
+                    @{botUsername || "ClientPulseAlertsBot"}
                   </code>
                 </div>
 
@@ -961,6 +1119,58 @@ export default function NotificationSettingsPage() {
                   {savingPrefs ? "Saving..." : t.savePreferences}
                 </Button>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* Modal: Enter Verification Token */}
+        {verifyTokenModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
+            <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6 space-y-5 animate-in fade-in-50 zoom-in-95">
+              <div className="flex items-center justify-between border-b pb-3">
+                <h3 className="font-semibold text-slate-900 text-base flex items-center gap-2">
+                  <Mail className="w-5 h-5 text-purple-600" />
+                  Verify Email Destination
+                </h3>
+                <button
+                  onClick={() => setVerifyTokenModalOpen(false)}
+                  className="text-slate-400 hover:text-slate-600 text-sm font-bold"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <form onSubmit={handleManualVerifyToken} className="space-y-4">
+                <p className="text-xs text-slate-600">
+                  Paste the verification token received in your confirmation email to activate this destination.
+                </p>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Verification Token
+                  </label>
+                  <Input
+                    type="text"
+                    required
+                    placeholder="e.g. 48-64 hex character token"
+                    value={manualTokenInput}
+                    onChange={(e) => setManualTokenInput(e.target.value)}
+                  />
+                </div>
+
+                <div className="flex justify-end gap-2 pt-3 border-t">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setVerifyTokenModalOpen(false)}
+                  >
+                    Cancel
+                  </Button>
+                  <Button type="submit" disabled={verifyingToken}>
+                    {verifyingToken ? "Verifying..." : "Verify & Activate"}
+                  </Button>
+                </div>
+              </form>
             </div>
           </div>
         )}
