@@ -158,7 +158,7 @@ func TestNotificationEvent_FanOutAndDeduplication(t *testing.T) {
 	}
 
 	// Set Dest2 to NOT receive incident.opened
-	_, err = notifRepo.UpdateDestination(ctx, orgID, dest2.ID, nil, nil, map[string]bool{
+	_, err = notifRepo.UpdateDestination(ctx, orgID, dest2.ID, nil, nil, nil, map[string]bool{
 		"incident.opened": false,
 	})
 	if err != nil {

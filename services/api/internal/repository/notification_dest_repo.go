@@ -43,6 +43,7 @@ type NotificationDestination struct {
 	PendingGroupChatID   *int64          `json:"pending_group_chat_id,omitempty"`
 	PendingGroupTitle    *string         `json:"pending_group_title,omitempty"`
 	AuthorizedByUserID   *string         `json:"authorized_by_user_id,omitempty"`
+	Locale               *string         `json:"locale,omitempty"`
 	Preferences          map[string]bool `json:"preferences,omitempty"`
 }
 
@@ -575,7 +576,7 @@ func (r *NotificationDestRepository) ListDestinations(ctx context.Context, orgID
 			SELECT id, organization_id, destination_type, name, telegram_chat_id, telegram_user_id,
 			       telegram_username, email_address, user_id, status, is_enabled, created_at, updated_at,
 			       last_verified_at, verified_at, verification_sent_at, pending_group_approval,
-			       pending_group_chat_id, pending_group_title, authorized_by_user_id
+			       pending_group_chat_id, pending_group_title, authorized_by_user_id, locale
 			FROM notification_destinations
 			WHERE organization_id = $1 AND status != 'disconnected'
 			ORDER BY created_at DESC
@@ -594,6 +595,7 @@ func (r *NotificationDestRepository) ListDestinations(ctx context.Context, orgID
 				&d.CreatedAt, &d.UpdatedAt, &d.LastVerifiedAt,
 				&d.VerifiedAt, &d.VerificationSentAt, &d.PendingGroupApproval,
 				&d.PendingGroupChatID, &d.PendingGroupTitle, &d.AuthorizedByUserID,
+				&d.Locale,
 			); err != nil {
 				return err
 			}
@@ -652,7 +654,7 @@ func (r *NotificationDestRepository) GetDestinationByID(ctx context.Context, org
 			SELECT id, organization_id, destination_type, name, telegram_chat_id, telegram_user_id,
 			       telegram_username, email_address, user_id, status, is_enabled, created_at, updated_at,
 			       last_verified_at, verified_at, verification_sent_at, pending_group_approval,
-			       pending_group_chat_id, pending_group_title, authorized_by_user_id
+			       pending_group_chat_id, pending_group_title, authorized_by_user_id, locale
 			FROM notification_destinations
 			WHERE organization_id = $1 AND id = $2 AND status != 'disconnected'
 		`
@@ -663,6 +665,7 @@ func (r *NotificationDestRepository) GetDestinationByID(ctx context.Context, org
 			&d.CreatedAt, &d.UpdatedAt, &d.LastVerifiedAt,
 			&d.VerifiedAt, &d.VerificationSentAt, &d.PendingGroupApproval,
 			&d.PendingGroupChatID, &d.PendingGroupTitle, &d.AuthorizedByUserID,
+			&d.Locale,
 		)
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
@@ -699,24 +702,26 @@ func (r *NotificationDestRepository) GetDestinationByID(ctx context.Context, org
 	return &d, nil
 }
 
-// UpdateDestination updates mutable fields (name, is_enabled, preferences).
+// UpdateDestination updates mutable fields (name, is_enabled, locale, preferences).
 func (r *NotificationDestRepository) UpdateDestination(
 	ctx context.Context,
 	orgID, destID string,
 	name *string,
 	isEnabled *bool,
+	locale *string,
 	preferences map[string]bool,
 ) (*NotificationDestination, error) {
 	err := WithTenantTx(ctx, r.pool, orgID, func(tx pgx.Tx) error {
-		if name != nil || isEnabled != nil {
+		if name != nil || isEnabled != nil || locale != nil {
 			updateQuery := `
 				UPDATE notification_destinations
 				SET name = COALESCE($1, name),
 				    is_enabled = COALESCE($2, is_enabled),
+				    locale = COALESCE($3, locale),
 				    updated_at = NOW()
-				WHERE organization_id = $3 AND id = $4 AND status != 'disconnected'
+				WHERE organization_id = $4 AND id = $5 AND status != 'disconnected'
 			`
-			ct, err := tx.Exec(ctx, updateQuery, name, isEnabled, orgID, destID)
+			ct, err := tx.Exec(ctx, updateQuery, name, isEnabled, locale, orgID, destID)
 			if err != nil {
 				return err
 			}
@@ -861,7 +866,8 @@ func (r *NotificationDestRepository) DispatchPendingEvents(ctx context.Context, 
 			// Find all active destinations that have preference enabled for this event_type
 			destRows, err := tx.Query(ctx, `
 				SELECT nd.id, nd.destination_type,
-				       COALESCE(nd.telegram_chat_id::text, nd.email_address, '') as recipient
+				       COALESCE(nd.telegram_chat_id::text, nd.email_address, '') as recipient,
+				       COALESCE(nd.locale, '') as dest_locale
 				FROM notification_destinations nd
 				JOIN notification_preferences np
 				  ON np.destination_id = nd.id AND np.event_type = $2 AND np.is_enabled = true
@@ -879,11 +885,12 @@ func (r *NotificationDestRepository) DispatchPendingEvents(ctx context.Context, 
 				ID        string
 				Type      string
 				Recipient string
+				Locale    string
 			}
 			var targets []targetDest
 			for destRows.Next() {
 				var td targetDest
-				if err := destRows.Scan(&td.ID, &td.Type, &td.Recipient); err != nil {
+				if err := destRows.Scan(&td.ID, &td.Type, &td.Recipient, &td.Locale); err != nil {
 					return err
 				}
 				if td.Recipient != "" {
@@ -892,9 +899,16 @@ func (r *NotificationDestRepository) DispatchPendingEvents(ctx context.Context, 
 			}
 			destRows.Close()
 
-			payloadBytes, _ := json.Marshal(ev.Payload)
 			for _, td := range targets {
 				idempKey := fmt.Sprintf("deliv:%s:%s", ev.ID, td.ID)
+				delivPayload := make(map[string]interface{}, len(ev.Payload)+1)
+				for k, v := range ev.Payload {
+					delivPayload[k] = v
+				}
+				if td.Locale != "" {
+					delivPayload["dest_locale"] = td.Locale
+				}
+				payloadBytes, _ := json.Marshal(delivPayload)
 				_, err = tx.Exec(ctx, `
 					INSERT INTO notification_deliveries (
 						organization_id, event_id, destination_id, destination_type,

@@ -649,7 +649,17 @@ func (r *HeartbeatRepository) RecordHeartbeatPing(ctx context.Context, plaintext
 			resolvedIncident = &inc
 
 			// Generate persistent notification event: heartbeat.recovered
+			// Enrich payload with rich context via JOIN (immutable snapshot at event time).
 			idempKey := fmt.Sprintf("hb_rec:%s:%d", hb.ID, now.Unix())
+			recPayload := map[string]interface{}{
+				"heartbeat_id":   hb.ID,
+				"heartbeat_name": hb.Name,
+				"client_id":      hb.ClientID,
+				"incident_id":    inc.ID,
+				"recovered_at":   now.Format(time.RFC3339),
+				"duration_sec":   durationSec,
+			}
+			enrichHeartbeatPayload(ctx, tx, hb.ID, hb.OrganizationID, recPayload)
 			_, err = tx.Exec(ctx, `
 				INSERT INTO notification_events (
 					organization_id, event_type, incident_id, heartbeat_monitor_id,
@@ -657,14 +667,7 @@ func (r *HeartbeatRepository) RecordHeartbeatPing(ctx context.Context, plaintext
 				)
 				VALUES ($1, 'heartbeat.recovered', $2, $3, $4, $5, $6, 'pending', NOW())
 				ON CONFLICT (idempotency_key) DO NOTHING
-			`, hb.OrganizationID, inc.ID, hb.ID, hb.ClientID, idempKey, map[string]interface{}{
-				"heartbeat_id":   hb.ID,
-				"heartbeat_name": hb.Name,
-				"client_id":      hb.ClientID,
-				"incident_id":    inc.ID,
-				"recovered_at":   now.Format(time.RFC3339),
-				"duration_sec":   durationSec,
-			})
+			`, hb.OrganizationID, inc.ID, hb.ID, hb.ClientID, idempKey, recPayload)
 			if err != nil {
 				return fmt.Errorf("failed to create heartbeat recovery event: %w", err)
 			}
@@ -707,4 +710,42 @@ func (r *HeartbeatRepository) ClaimMissedHeartbeats(ctx context.Context, workerI
 		jobs = append(jobs, &j)
 	}
 	return jobs, rows.Err()
+}
+
+// EnrichHeartbeatPayload adds heartbeat_name, client_name, org_name, org_timezone,
+// locale, expected_interval_seconds, grace_period_seconds, and asset_name (if linked)
+// to the payload map using a single query within an existing transaction.
+func EnrichHeartbeatPayload(ctx context.Context, tx pgx.Tx, heartbeatID, orgID string, payload map[string]interface{}) {
+	var hbName, clientID, clientName, orgName, orgTimezone, orgLocale string
+	var intervalSec, graceSec int
+	var assetName *string
+	err := tx.QueryRow(ctx, `
+		SELECT hm.name, hm.expected_interval_seconds, hm.grace_period_seconds,
+		       c.id, c.name, COALESCE(a.name, NULL), o.name, o.timezone, o.locale
+		FROM heartbeat_monitors hm
+		JOIN clients c ON c.id = hm.client_id AND c.organization_id = hm.organization_id
+		LEFT JOIN assets a ON a.id = hm.asset_id AND a.organization_id = hm.organization_id
+		JOIN organizations o ON o.id = hm.organization_id
+		WHERE hm.id = $1 AND hm.organization_id = $2
+	`, heartbeatID, orgID).Scan(&hbName, &intervalSec, &graceSec, &clientID, &clientName, &assetName, &orgName, &orgTimezone, &orgLocale)
+	if err != nil {
+		return
+	}
+	payload["heartbeat_name"] = hbName
+	payload["expected_interval_seconds"] = intervalSec
+	payload["grace_period_seconds"] = graceSec
+	payload["client_id"] = clientID
+	payload["client_name"] = clientName
+	payload["org_name"] = orgName
+	payload["organization_name"] = orgName
+	payload["org_timezone"] = orgTimezone
+	payload["timezone"] = orgTimezone
+	payload["locale"] = orgLocale
+	if assetName != nil {
+		payload["asset_name"] = *assetName
+	}
+}
+
+func enrichHeartbeatPayload(ctx context.Context, tx pgx.Tx, heartbeatID, orgID string, payload map[string]interface{}) {
+	EnrichHeartbeatPayload(ctx, tx, heartbeatID, orgID, payload)
 }

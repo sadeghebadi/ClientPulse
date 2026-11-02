@@ -356,12 +356,18 @@ func (h *ReportHandler) GeneratePDF(w http.ResponseWriter, r *http.Request) {
 	if h.eventRepo != nil {
 		idempotencyKey := fmt.Sprintf("report.ready:%s:%s:v%d", tc.OrganizationID, rep.ID, rep.VersionNumber)
 		payload := map[string]interface{}{
-			"report_id":   rep.ID,
-			"title":       rep.Title,
-			"client_id":   rep.ClientID,
-			"version":     rep.VersionNumber,
-			"storage_key": storageKey,
-			"size_bytes":  len(pdfBytes),
+			"report_id":         rep.ID,
+			"report_title":      rep.Title,
+			"title":             rep.Title,
+			"client_id":         rep.ClientID,
+			"client_name":       snap.Client.Name,
+			"version":           rep.VersionNumber,
+			"storage_key":       storageKey,
+			"size_bytes":        len(pdfBytes),
+			"locale":            rep.Locale,
+			"organization_name": snap.Branding.DisplayName,
+			"period_start":      rep.PeriodStart.Format("2006-01-02"),
+			"period_end":        rep.PeriodEnd.Format("2006-01-02"),
 		}
 		_, _, notifErr := h.eventRepo.CreateEvent(
 			r.Context(),

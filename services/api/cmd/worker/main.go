@@ -131,7 +131,7 @@ func main() {
 		workerID,
 		cfg.WorkerConcurrency,
 		log,
-	)
+	).WithPool(db.Pool)
 
 	// Set up cancellation context for graceful shutdown
 	workerCtx, workerCancel := context.WithCancel(context.Background())

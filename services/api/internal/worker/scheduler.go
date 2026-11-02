@@ -211,6 +211,19 @@ func (s *Scheduler) handleMissedHeartbeat(ctx context.Context, job *repository.C
 
 		if created && inc != nil {
 			idempKey := fmt.Sprintf("hb_missed:%s:%d", job.ID, firstFailure.Unix())
+			missedPayload := map[string]interface{}{
+				"heartbeat_id":              job.ID,
+				"heartbeat_name":            job.Name,
+				"client_id":                 job.ClientID,
+				"incident_id":               inc.ID,
+				"missed_at":                 firstFailure.Format(time.RFC3339),
+				"expected_interval_seconds": job.ExpectedIntervalSeconds,
+				"grace_period_seconds":      job.GracePeriodSeconds,
+			}
+			if job.LastReceivedAt != nil {
+				missedPayload["last_ping_at"] = job.LastReceivedAt.Format(time.RFC3339)
+			}
+			repository.EnrichHeartbeatPayload(hbCtx, tx, job.ID, job.OrganizationID, missedPayload)
 			_, err = tx.Exec(hbCtx, `
 				INSERT INTO notification_events (
 					organization_id, event_type, incident_id, heartbeat_monitor_id,
@@ -218,13 +231,7 @@ func (s *Scheduler) handleMissedHeartbeat(ctx context.Context, job *repository.C
 				)
 				VALUES ($1, 'heartbeat.missed', $2, $3, $4, $5, $6, 'pending', NOW())
 				ON CONFLICT (idempotency_key) DO NOTHING
-			`, job.OrganizationID, inc.ID, job.ID, job.ClientID, idempKey, map[string]interface{}{
-				"heartbeat_id":   job.ID,
-				"heartbeat_name": job.Name,
-				"client_id":      job.ClientID,
-				"incident_id":    inc.ID,
-				"missed_at":      firstFailure.Format(time.RFC3339),
-			})
+			`, job.OrganizationID, inc.ID, job.ID, job.ClientID, idempKey, missedPayload)
 			if err != nil {
 				return err
 			}
@@ -311,6 +318,8 @@ func (s *Scheduler) processJob(ctx context.Context, job *repository.ClaimedMonit
 			CheckResultID:   checkResultID,
 			ErrorCategory:   execResult.ErrorCategory,
 			ErrorMessage:    execResult.ErrorMessage,
+			TargetURL:       job.TargetURL,
+			HTTPStatusCode:  execResult.HTTPStatusCode,
 		},
 	)
 	if updateErr != nil {

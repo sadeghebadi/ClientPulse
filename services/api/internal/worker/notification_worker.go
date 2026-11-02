@@ -3,7 +3,6 @@ package worker
 import (
 	"context"
 	"fmt"
-	"html"
 	"log/slog"
 	"math/rand"
 	"strconv"
@@ -11,9 +10,13 @@ import (
 	"sync"
 	"time"
 
+	"clientpulse/services/api/internal/notification"
 	"clientpulse/services/api/internal/notification/email"
 	"clientpulse/services/api/internal/notification/telegram"
+	notiftg "clientpulse/services/api/internal/notification/telegram"
 	"clientpulse/services/api/internal/repository"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // Delivery Guarantee Contract:
@@ -30,13 +33,14 @@ import (
 //     * uncertain: Worker process crashed or lost connectivity in-flight after transmitting;
 //                  the outcome cannot be proven without external verification, avoiding silent duplicates.
 type NotificationWorker struct {
-	repo           *repository.NotificationDestRepository
-	telegramSender telegram.TelegramSender
-	emailSender    email.EmailSender
-	appBaseURL     string
-	workerID       string
-	logger         *slog.Logger
-	concurrency    int
+	repo            *repository.NotificationDestRepository
+	telegramSender  telegram.TelegramSender
+	emailSender     email.EmailSender
+	appBaseURL      string
+	workerID        string
+	logger          *slog.Logger
+	concurrency     int
+	contextResolver *notification.NotificationContextResolver
 }
 
 func NewNotificationWorker(
@@ -63,6 +67,14 @@ func NewNotificationWorker(
 		concurrency:    concurrency,
 		logger:         logger,
 	}
+}
+
+// WithPool configures a database connection pool for rich runtime context resolution.
+func (w *NotificationWorker) WithPool(pool *pgxpool.Pool) *NotificationWorker {
+	if pool != nil {
+		w.contextResolver = notification.NewNotificationContextResolver(pool)
+	}
+	return w
 }
 
 // Start runs the notification dispatcher and delivery loops until ctx is cancelled.
@@ -200,7 +212,15 @@ func (w *NotificationWorker) deliverTelegram(ctx context.Context, d *repository.
 		return err
 	}
 
-	text := formatTelegramMessage(d.EventType, d.Payload, w.appBaseURL)
+	destLocale, _ := d.Payload["dest_locale"].(string)
+	var notifCtx *notification.NotificationContext
+	if w.contextResolver != nil {
+		notifCtx = w.contextResolver.ResolveAndRefreshContext(ctx, d.OrganizationID, d.EventType, d.Payload, w.appBaseURL, destLocale)
+	} else {
+		notifCtx = notification.ParseContextFromPayload(d.EventType, d.Payload, w.appBaseURL, destLocale)
+	}
+
+	text := notiftg.RenderTelegramMessage(notifCtx)
 
 	sendErr := w.telegramSender.SendMessage(ctx, chatID, text, "HTML")
 	if sendErr == nil {
@@ -236,12 +256,15 @@ func (w *NotificationWorker) deliverEmail(ctx context.Context, d *repository.Not
 		return err
 	}
 
-	locale := "en"
-	if loc, ok := d.Payload["locale"].(string); ok && loc != "" {
-		locale = loc
+	destLocale, _ := d.Payload["dest_locale"].(string)
+	var notifCtx *notification.NotificationContext
+	if w.contextResolver != nil {
+		notifCtx = w.contextResolver.ResolveAndRefreshContext(ctx, d.OrganizationID, d.EventType, d.Payload, w.appBaseURL, destLocale)
+	} else {
+		notifCtx = notification.ParseContextFromPayload(d.EventType, d.Payload, w.appBaseURL, destLocale)
 	}
 
-	rendered := email.RenderNotificationEmail(d.EventType, locale, d.Payload, w.appBaseURL)
+	rendered := email.RenderNotificationEmailFromContext(notifCtx, w.appBaseURL)
 
 	sendErr := w.emailSender.SendEmail(ctx, d.Recipient, rendered.Subject, rendered.HTMLBody, rendered.TextBody)
 	if sendErr == nil {
@@ -252,52 +275,6 @@ func (w *NotificationWorker) deliverEmail(ctx context.Context, d *repository.Not
 	backoff := calculateBackoff(d.RetryCount)
 	_ = w.repo.MarkDeliveryFailed(ctx, d.ID, w.workerID, sendErr.Error(), backoff, permanent)
 	return sendErr
-}
-
-func formatTelegramMessage(eventType string, p map[string]interface{}, appBaseURL string) string {
-	if appBaseURL == "" {
-		appBaseURL = "http://localhost:3000"
-	}
-	appBaseURL = strings.TrimRight(appBaseURL, "/")
-
-	switch eventType {
-	case "incident.opened":
-		name := html.EscapeString(getString(p, "monitor_name", getString(p, "summary", "Monitor")))
-		cat := html.EscapeString(getString(p, "failure_category", "service_error"))
-		incID := getString(p, "incident_id", "")
-		url := fmt.Sprintf("%s/incidents/%s", appBaseURL, incID)
-		return fmt.Sprintf("🚨 <b>INCIDENT OPENED: %s is DOWN</b>\n\n<b>Category:</b> <code>%s</code>\n<b>Confirmed At:</b> %s\n\n👉 <a href=\"%s\">View Incident in ClientPulse</a>", name, cat, time.Now().UTC().Format("15:04:05 UTC"), url)
-
-	case "incident.acknowledged":
-		incID := getString(p, "incident_id", "")
-		url := fmt.Sprintf("%s/incidents/%s", appBaseURL, incID)
-		return fmt.Sprintf("👁️ <b>INCIDENT ACKNOWLEDGED</b>\n\nIncident <code>%s</code> has been acknowledged by on-call team.\n\n👉 <a href=\"%s\">View Incident Details</a>", incID[:8], url)
-
-	case "incident.resolved":
-		name := html.EscapeString(getString(p, "monitor_name", "Service"))
-		incID := getString(p, "incident_id", "")
-		url := fmt.Sprintf("%s/incidents/%s", appBaseURL, incID)
-		return fmt.Sprintf("✅ <b>INCIDENT RESOLVED: %s is back UP</b>\n\nService health checks are passing normally.\n\n👉 <a href=\"%s\">View Resolution Report</a>", name, url)
-
-	case "heartbeat.missed":
-		name := html.EscapeString(getString(p, "heartbeat_name", "Heartbeat"))
-		url := fmt.Sprintf("%s/heartbeats", appBaseURL)
-		return fmt.Sprintf("⚠️ <b>HEARTBEAT MISSED: %s</b>\n\nExpected heartbeat ping was not received before deadline.\n\n👉 <a href=\"%s\">Check Heartbeats</a>", name, url)
-
-	case "heartbeat.recovered":
-		name := html.EscapeString(getString(p, "heartbeat_name", "Heartbeat"))
-		url := fmt.Sprintf("%s/heartbeats", appBaseURL)
-		return fmt.Sprintf("✅ <b>HEARTBEAT RECOVERED: %s</b>\n\nPing received successfully, status is now healthy.\n\n👉 <a href=\"%s\">Check Heartbeats</a>", name, url)
-
-	case "report.ready":
-		title := html.EscapeString(getString(p, "report_title", "Maintenance Report"))
-		repID := getString(p, "report_id", "")
-		url := fmt.Sprintf("%s/reports/%s", appBaseURL, repID)
-		return fmt.Sprintf("📊 <b>REPORT READY: %s</b>\n\nYour care and maintenance report is ready for download.\n\n👉 <a href=\"%s\">View Report</a>", title, url)
-
-	default:
-		return "🔔 <b>ClientPulse Notification Test</b>\n\nThis is a test notification confirming that your Telegram channel is active and receiving alerts."
-	}
 }
 
 func calculateBackoff(retryCount int) time.Duration {
@@ -343,14 +320,4 @@ func isPermanentEmailError(err error) bool {
 	return false
 }
 
-func getString(m map[string]interface{}, key, def string) string {
-	if m == nil {
-		return def
-	}
-	if v, ok := m[key]; ok && v != nil {
-		if s, ok := v.(string); ok && s != "" {
-			return s
-		}
-	}
-	return def
-}
+

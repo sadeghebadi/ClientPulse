@@ -204,6 +204,7 @@ func (h *NotificationHandler) UpdateDestination(w http.ResponseWriter, r *http.R
 	var req struct {
 		Name        *string         `json:"name"`
 		IsEnabled   *bool           `json:"is_enabled"`
+		Locale      *string         `json:"locale"`
 		Preferences map[string]bool `json:"preferences"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -211,7 +212,12 @@ func (h *NotificationHandler) UpdateDestination(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	dest, err := h.repo.UpdateDestination(r.Context(), tc.OrganizationID, destID, req.Name, req.IsEnabled, req.Preferences)
+	if req.Locale != nil && *req.Locale != "" && *req.Locale != "en" && *req.Locale != "fa" {
+		sendJSONError(w, http.StatusBadRequest, "INVALID_LOCALE", "Locale must be 'en' or 'fa'")
+		return
+	}
+
+	dest, err := h.repo.UpdateDestination(r.Context(), tc.OrganizationID, destID, req.Name, req.IsEnabled, req.Locale, req.Preferences)
 	if err != nil {
 		if errors.Is(err, repository.ErrDestinationNotFound) {
 			sendJSONError(w, http.StatusNotFound, "NOT_FOUND", "Destination not found")

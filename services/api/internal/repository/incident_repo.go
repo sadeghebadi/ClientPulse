@@ -275,7 +275,29 @@ func (r *IncidentRepository) AcknowledgeIncident(ctx context.Context, orgID, inc
 		}
 
 		// Insert notification event for acknowledgement
+		// Enrich payload with rich context via JOIN (immutable snapshot at event time).
 		idempKey := fmt.Sprintf("inc_ack:%s:%s", inc.ID, now.Format(time.RFC3339Nano))
+		ackPayload := map[string]interface{}{
+			"incident_id":      inc.ID,
+			"acknowledged_by":  userID,
+			"acknowledged_at":  now.Format(time.RFC3339),
+			"first_failure_at": inc.FirstFailureAt.Format(time.RFC3339),
+			"confirmed_at":     inc.ConfirmedAt.Format(time.RFC3339),
+			"failure_category": inc.FailureCategory,
+		}
+		if inc.Summary != nil {
+			ackPayload["failure_reason"] = *inc.Summary
+		}
+		var userName, userEmail string
+		if err := tx.QueryRow(ctx, `SELECT display_name, email FROM users WHERE id = $1`, userID).Scan(&userName, &userEmail); err == nil {
+			ackPayload["acknowledged_by_name"] = userName
+			ackPayload["acknowledged_by_email"] = userEmail
+		}
+		if inc.MonitorID != nil {
+			EnrichMonitorPayload(ctx, tx, *inc.MonitorID, orgID, ackPayload)
+		} else if inc.HeartbeatMonitorID != nil {
+			EnrichHeartbeatPayload(ctx, tx, *inc.HeartbeatMonitorID, orgID, ackPayload)
+		}
 		_, err = tx.Exec(ctx, `
 			INSERT INTO notification_events (
 				organization_id, event_type, incident_id, monitor_id, heartbeat_monitor_id,
@@ -283,11 +305,7 @@ func (r *IncidentRepository) AcknowledgeIncident(ctx context.Context, orgID, inc
 			)
 			VALUES ($1, 'incident.acknowledged', $2, $3, $4, $5, $6, 'pending', NOW())
 			ON CONFLICT (idempotency_key) DO NOTHING
-		`, orgID, inc.ID, inc.MonitorID, inc.HeartbeatMonitorID, idempKey, map[string]interface{}{
-			"incident_id":     inc.ID,
-			"acknowledged_by": userID,
-			"acknowledged_at": now.Format(time.RFC3339),
-		})
+		`, orgID, inc.ID, inc.MonitorID, inc.HeartbeatMonitorID, idempKey, ackPayload)
 		return err
 	})
 
@@ -729,4 +747,6 @@ func (r *IncidentRepository) CalculateMonitorUptime(ctx context.Context, orgID, 
 	}
 	return &report, nil
 }
+
+
 

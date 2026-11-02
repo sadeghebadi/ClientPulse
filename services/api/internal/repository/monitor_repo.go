@@ -422,6 +422,9 @@ type ScheduledCheckOutcomeParams struct {
 	CheckResultID   *string
 	ErrorCategory   *string
 	ErrorMessage    *string
+	// Optional enrichment fields (passed from scheduler, used for richer notification payloads)
+	TargetURL      string
+	HTTPStatusCode *int
 }
 
 // RecordScheduledCheckOutcome updates monitor status based on check success/failure, tracks consecutive failures,
@@ -530,7 +533,24 @@ func (r *MonitorRepository) RecordScheduledCheckOutcomeWithResult(ctx context.Co
 				resultingIncident = &inc
 
 				// Generate persistent notification event: incident.resolved
+				// Enrich payload with rich context via JOIN (immutable snapshot at event time).
 				idempKey := fmt.Sprintf("inc_res:%s:%d", inc.ID, params.CompletedAt.Unix())
+				resolvedPayload := map[string]interface{}{
+					"incident_id":      inc.ID,
+					"monitor_id":       params.MonitorID,
+					"first_failure_at": inc.FirstFailureAt.Format(time.RFC3339),
+					"confirmed_at":     inc.ConfirmedAt.Format(time.RFC3339),
+					"resolved_at":      params.CompletedAt.Format(time.RFC3339),
+					"duration_sec":     durationSec,
+					"recovery_type":    "scheduled_check_pass",
+					"failure_category": inc.FailureCategory,
+					"target_url":       params.TargetURL,
+					"interval_seconds": params.IntervalSeconds,
+				}
+				if inc.Summary != nil {
+					resolvedPayload["failure_reason"] = *inc.Summary
+				}
+				enrichMonitorPayload(ctx, tx, params.MonitorID, params.OrganizationID, resolvedPayload)
 				_, err = tx.Exec(ctx, `
 					INSERT INTO notification_events (
 						organization_id, event_type, incident_id, monitor_id,
@@ -538,13 +558,7 @@ func (r *MonitorRepository) RecordScheduledCheckOutcomeWithResult(ctx context.Co
 					)
 					VALUES ($1, 'incident.resolved', $2, $3, $4, $5, 'pending', NOW())
 					ON CONFLICT (idempotency_key) DO NOTHING
-				`, params.OrganizationID, inc.ID, params.MonitorID, idempKey, map[string]interface{}{
-					"incident_id":   inc.ID,
-					"monitor_id":    params.MonitorID,
-					"resolved_at":   params.CompletedAt.Format(time.RFC3339),
-					"duration_sec":  durationSec,
-					"recovery_type": "scheduled_check_pass",
-				})
+				`, params.OrganizationID, inc.ID, params.MonitorID, idempKey, resolvedPayload)
 				if err != nil {
 					return fmt.Errorf("failed to create incident.resolved event: %w", err)
 				}
@@ -620,7 +634,22 @@ func (r *MonitorRepository) RecordScheduledCheckOutcomeWithResult(ctx context.Co
 					resultingIncident = &inc
 
 					// Generate persistent notification event: incident.opened
+					// Enrich payload with rich context via JOIN (immutable snapshot at event time).
 					idempKey := fmt.Sprintf("inc_open:%s:%d", inc.ID, params.CompletedAt.Unix())
+					openedPayload := map[string]interface{}{
+						"incident_id":      inc.ID,
+						"monitor_id":       params.MonitorID,
+						"first_failure_at": firstFailureAt.Format(time.RFC3339),
+						"confirmed_at":     params.CompletedAt.Format(time.RFC3339),
+						"failure_category": failCat,
+						"failure_reason":   summary,
+						"target_url":       params.TargetURL,
+						"interval_seconds": params.IntervalSeconds,
+					}
+					if params.HTTPStatusCode != nil {
+						openedPayload["http_status_code"] = *params.HTTPStatusCode
+					}
+					enrichMonitorPayload(ctx, tx, params.MonitorID, params.OrganizationID, openedPayload)
 					_, err = tx.Exec(ctx, `
 						INSERT INTO notification_events (
 							organization_id, event_type, incident_id, monitor_id,
@@ -628,14 +657,7 @@ func (r *MonitorRepository) RecordScheduledCheckOutcomeWithResult(ctx context.Co
 						)
 						VALUES ($1, 'incident.opened', $2, $3, $4, $5, 'pending', NOW())
 						ON CONFLICT (idempotency_key) DO NOTHING
-					`, params.OrganizationID, inc.ID, params.MonitorID, idempKey, map[string]interface{}{
-						"incident_id":      inc.ID,
-						"monitor_id":       params.MonitorID,
-						"first_failure_at": firstFailureAt.Format(time.RFC3339),
-						"confirmed_at":     params.CompletedAt.Format(time.RFC3339),
-						"failure_category": failCat,
-						"summary":          summary,
-					})
+					`, params.OrganizationID, inc.ID, params.MonitorID, idempKey, openedPayload)
 					if err != nil {
 						return fmt.Errorf("failed to create incident.opened event: %w", err)
 					}
@@ -673,3 +695,41 @@ func (r *MonitorRepository) UpdateAfterCheck(ctx context.Context, orgID, monitor
 	return err
 }
 
+
+// EnrichMonitorPayload does a single JOIN query within an existing transaction to add
+// asset_name, asset_url, client_id, client_name, org_name, org_timezone, locale,
+// and monitor_name to the provided payload map. Errors are silently ignored so that
+// notification events are always created even if enrichment fails (best-effort).
+func EnrichMonitorPayload(ctx context.Context, tx pgx.Tx, monitorID, orgID string, payload map[string]interface{}) {
+	var assetName, assetType, assetURL, effectiveURL, clientID, clientName, orgName, orgTimezone, orgLocale string
+	err := tx.QueryRow(ctx, `
+		SELECT a.name, a.type, COALESCE(a.url, ''), COALESCE(m.url_override, a.url, ''),
+		       c.id, c.name, o.name, o.timezone, o.locale
+		FROM monitors m
+		JOIN assets a ON a.id = m.asset_id AND a.organization_id = m.organization_id
+		JOIN clients c ON c.id = a.client_id AND c.organization_id = a.organization_id
+		JOIN organizations o ON o.id = m.organization_id
+		WHERE m.id = $1 AND m.organization_id = $2
+	`, monitorID, orgID).Scan(&assetName, &assetType, &assetURL, &effectiveURL, &clientID, &clientName, &orgName, &orgTimezone, &orgLocale)
+	if err != nil {
+		return
+	}
+	payload["asset_name"] = assetName
+	payload["asset_type"] = assetType
+	payload["asset_url"] = assetURL
+	payload["monitor_name"] = fmt.Sprintf("%s Monitor", assetName)
+	payload["client_id"] = clientID
+	payload["client_name"] = clientName
+	payload["org_name"] = orgName
+	payload["organization_name"] = orgName
+	payload["org_timezone"] = orgTimezone
+	payload["timezone"] = orgTimezone
+	payload["locale"] = orgLocale
+	if _, ok := payload["target_url"]; !ok || payload["target_url"] == "" {
+		payload["target_url"] = effectiveURL
+	}
+}
+
+func enrichMonitorPayload(ctx context.Context, tx pgx.Tx, monitorID, orgID string, payload map[string]interface{}) {
+	EnrichMonitorPayload(ctx, tx, monitorID, orgID, payload)
+}
