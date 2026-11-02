@@ -1116,3 +1116,34 @@ func (r *NotificationDestRepository) ListDeliveries(
 
 	return deliveries, totalCount, nil
 }
+
+// GetTelegramPollerOffset returns the last processed update_id from telegram_poller_state.
+// If last_update_id > 0, the next polling offset is last_update_id + 1.
+func (r *NotificationDestRepository) GetTelegramPollerOffset(ctx context.Context) (int64, error) {
+	var lastID int64
+	query := `SELECT last_update_id FROM telegram_poller_state WHERE id = 1`
+	err := r.pool.QueryRow(ctx, query).Scan(&lastID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("failed querying telegram poller offset: %w", err)
+	}
+	return lastID, nil
+}
+
+// SaveTelegramPollerOffset durably updates the last processed update_id in telegram_poller_state.
+func (r *NotificationDestRepository) SaveTelegramPollerOffset(ctx context.Context, lastUpdateID int64) error {
+	query := `
+		INSERT INTO telegram_poller_state (id, last_update_id, updated_at)
+		VALUES (1, $1, NOW())
+		ON CONFLICT (id) DO UPDATE SET
+			last_update_id = GREATEST(telegram_poller_state.last_update_id, EXCLUDED.last_update_id),
+			updated_at = NOW()
+	`
+	_, err := r.pool.Exec(ctx, query, lastUpdateID)
+	if err != nil {
+		return fmt.Errorf("failed saving telegram poller offset: %w", err)
+	}
+	return nil
+}

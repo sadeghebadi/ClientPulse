@@ -27,10 +27,12 @@ type Config struct {
 	TokenHashPepper string
 
 	// Integrations
-	TelegramBotToken       string
-	TelegramBotUsername    string
-	TelegramWebhookSecret string
-	TelegramMode           string
+	TelegramBotToken           string
+	TelegramBotUsername        string
+	TelegramWebhookSecret      string
+	TelegramMode               string
+	TelegramPollTimeoutSeconds int
+	TelegramProxyURL           string
 
 	// Email
 	EmailProvider string
@@ -85,6 +87,8 @@ func Load() (*Config, error) {
 		TelegramBotUsername:          getEnv("TELEGRAM_BOT_USERNAME", ""),
 		TelegramWebhookSecret:        getEnv("TELEGRAM_WEBHOOK_SECRET", ""),
 		TelegramMode:                 getEnv("TELEGRAM_MODE", "disabled"),
+		TelegramPollTimeoutSeconds:   getEnvAsInt("TELEGRAM_POLL_TIMEOUT_SECONDS", 50),
+		TelegramProxyURL:             getEnv("TELEGRAM_PROXY_URL", ""),
 		EmailProvider:                getEnv("EMAIL_PROVIDER", "none"),
 		SMTPHost:                     getEnv("SMTP_HOST", "mailpit"),
 		SMTPPort:                     getEnvAsInt("SMTP_PORT", 1025),
@@ -147,6 +151,16 @@ func (c *Config) Validate() error {
 
 	if c.WorkerHeartbeatTimeoutSeconds <= 0 {
 		return fmt.Errorf("WORKER_HEARTBEAT_TIMEOUT_SECONDS must be greater than 0")
+	}
+
+	if c.TelegramPollTimeoutSeconds <= 0 {
+		c.TelegramPollTimeoutSeconds = 50
+	}
+	switch strings.ToLower(c.TelegramMode) {
+	case "polling", "webhook", "disabled", "mock", "":
+		// valid modes
+	default:
+		return fmt.Errorf("invalid TELEGRAM_MODE: %q (must be 'polling', 'webhook', or 'disabled')", c.TelegramMode)
 	}
 
 	if c.AppEnv == "production" {

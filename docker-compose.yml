@@ -45,8 +45,11 @@ services:
       SMTP_FROM_EMAIL: ${SMTP_FROM_EMAIL:-notifications@clientpulse.local}
       SMTP_FROM_NAME: ${SMTP_FROM_NAME:-ClientPulse Alerts}
       SMTP_TLS_MODE: ${SMTP_TLS_MODE:-none}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_BOT_USERNAME: ${TELEGRAM_BOT_USERNAME:-ClientPulseAlertsBot}
-      TELEGRAM_MODE: ${TELEGRAM_MODE:-mock}
+      TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:-}
+      TELEGRAM_MODE: ${TELEGRAM_MODE:-disabled}
+      TELEGRAM_PROXY_URL: ${TELEGRAM_PROXY_URL:-}
       STORAGE_PROVIDER: ${STORAGE_PROVIDER:-local}
       STORAGE_LOCAL_DIR: /app/data/storage
       WORKER_HEARTBEAT_TIMEOUT_SECONDS: "${WORKER_HEARTBEAT_TIMEOUT_SECONDS:-10}"
@@ -86,8 +89,11 @@ services:
       SMTP_FROM_EMAIL: ${SMTP_FROM_EMAIL:-notifications@clientpulse.local}
       SMTP_FROM_NAME: ${SMTP_FROM_NAME:-ClientPulse Alerts}
       SMTP_TLS_MODE: ${SMTP_TLS_MODE:-none}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_BOT_USERNAME: ${TELEGRAM_BOT_USERNAME:-ClientPulseAlertsBot}
-      TELEGRAM_MODE: ${TELEGRAM_MODE:-mock}
+      TELEGRAM_MODE: ${TELEGRAM_MODE:-polling}
+      TELEGRAM_POLL_TIMEOUT_SECONDS: ${TELEGRAM_POLL_TIMEOUT_SECONDS:-50}
+      TELEGRAM_PROXY_URL: ${TELEGRAM_PROXY_URL:-}
     restart: unless-stopped
     networks:
       - clientpulse-network

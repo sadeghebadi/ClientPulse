@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -101,12 +102,17 @@ func main() {
 
 	// Set up notification delivery worker
 	notifRepo := repository.NewNotificationDestRepository(db.Pool)
-	var telegramSender telegram.TelegramSender
+	var botAPI telegram.TelegramBotAPI
 	if cfg.TelegramBotToken != "" {
-		telegramSender = telegram.NewClient(cfg.TelegramBotToken, "", nil)
+		botAPI = telegram.NewClientWithProxy(
+			cfg.TelegramBotToken,
+			"",
+			cfg.TelegramProxyURL,
+			time.Duration(cfg.TelegramPollTimeoutSeconds+15)*time.Second,
+		)
 	} else {
 		log.Info("telegram bot token not configured; running in mock telegram mode")
-		telegramSender = telegram.NewMockSender()
+		botAPI = telegram.NewMockSender()
 	}
 	emailClient := email.NewClient(email.SMTPConfig{
 		Host:      cfg.SMTPHost,
@@ -119,7 +125,7 @@ func main() {
 	})
 	notifWorker := worker.NewNotificationWorker(
 		notifRepo,
-		telegramSender,
+		botAPI,
 		emailClient,
 		cfg.AppBaseURL,
 		workerID,
@@ -144,6 +150,27 @@ func main() {
 	go func() {
 		notifWorker.Start(workerCtx)
 	}()
+
+	// Launch Telegram Long-Polling daemon if configured
+	if strings.EqualFold(cfg.TelegramMode, "polling") {
+		if cfg.TelegramBotToken == "" {
+			log.Warn("TELEGRAM_MODE is polling but TELEGRAM_BOT_TOKEN is empty; polling poller disabled")
+		} else {
+			telegramUpdateHdr := telegram.NewUpdateHandler(notifRepo, botAPI, cfg.TelegramBotUsername, log)
+			telegramPoller := worker.NewTelegramPoller(
+				db.Pool,
+				notifRepo,
+				botAPI,
+				telegramUpdateHdr,
+				cfg.TelegramBotUsername,
+				cfg.TelegramPollTimeoutSeconds,
+				log,
+			)
+			go func() {
+				telegramPoller.Start(workerCtx)
+			}()
+		}
+	}
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)

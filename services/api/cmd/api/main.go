@@ -104,7 +104,7 @@ func main() {
 
 		var telegramSender telegram.TelegramSender
 		if cfg.TelegramBotToken != "" {
-			telegramSender = telegram.NewClient(cfg.TelegramBotToken, "", nil)
+			telegramSender = telegram.NewClientWithProxy(cfg.TelegramBotToken, "", cfg.TelegramProxyURL, 15*time.Second)
 		} else {
 			log.Info("telegram bot token not configured; running in mock telegram mode")
 			telegramSender = telegram.NewMockSender()
