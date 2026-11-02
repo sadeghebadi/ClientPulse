@@ -27,8 +27,10 @@ type Config struct {
 	TokenHashPepper string
 
 	// Integrations
-	TelegramBotToken    string
-	TelegramBotUsername string
+	TelegramBotToken       string
+	TelegramBotUsername    string
+	TelegramWebhookSecret string
+	TelegramMode           string
 
 	// Email
 	EmailProvider string
@@ -37,6 +39,8 @@ type Config struct {
 	SMTPUsername  string
 	SMTPPassword  string
 	EmailFrom     string
+	SMTPFromName  string
+	SMTPTLSMode   string
 
 	// Storage
 	StorageProvider  string
@@ -78,12 +82,16 @@ func Load() (*Config, error) {
 		TokenHashPepper:              getEnv("TOKEN_HASH_PEPPER", "dev-token-pepper-replace-with-cryptographic-random-value-in-prod"),
 		TelegramBotToken:             getEnv("TELEGRAM_BOT_TOKEN", ""),
 		TelegramBotUsername:          getEnv("TELEGRAM_BOT_USERNAME", ""),
+		TelegramWebhookSecret:        getEnv("TELEGRAM_WEBHOOK_SECRET", ""),
+		TelegramMode:                 getEnv("TELEGRAM_MODE", "disabled"),
 		EmailProvider:                getEnv("EMAIL_PROVIDER", "none"),
 		SMTPHost:                     getEnv("SMTP_HOST", "mailpit"),
 		SMTPPort:                     getEnvAsInt("SMTP_PORT", 1025),
 		SMTPUsername:                 getEnv("SMTP_USERNAME", ""),
 		SMTPPassword:                 getEnv("SMTP_PASSWORD", ""),
 		EmailFrom:                    getEnv("EMAIL_FROM", "notifications@clientpulse.local"),
+		SMTPFromName:                 getEnv("SMTP_FROM_NAME", "ClientPulse Alerts"),
+		SMTPTLSMode:                  getEnv("SMTP_TLS_MODE", "none"),
 		StorageProvider:              getEnv("STORAGE_PROVIDER", "local"),
 		StorageLocalPath:             getEnv("STORAGE_LOCAL_PATH", "/data/storage"),
 		S3Endpoint:                   getEnv("S3_ENDPOINT", ""),

@@ -15,6 +15,8 @@ import (
 	"clientpulse/services/api/internal/health"
 	"clientpulse/services/api/internal/logger"
 	"clientpulse/services/api/internal/mail"
+	"clientpulse/services/api/internal/notification/email"
+	"clientpulse/services/api/internal/notification/telegram"
 	"clientpulse/services/api/internal/pdf"
 	"clientpulse/services/api/internal/repository"
 	"clientpulse/services/api/internal/server"
@@ -98,6 +100,19 @@ func main() {
 		maintRepo := repository.NewMaintenanceRepository(db.Pool, auditRepo)
 		brandingRepo := repository.NewBrandingRepository(db.Pool)
 		reportRepo := repository.NewReportRepository(db.Pool, brandingRepo)
+		notifRepo := repository.NewNotificationDestRepository(db.Pool)
+
+		telegramClient := telegram.NewClient(cfg.TelegramBotToken, "", nil)
+		telegramUpdateHdr := telegram.NewUpdateHandler(notifRepo, telegramClient, cfg.TelegramBotUsername, log)
+		emailClient := email.NewClient(email.SMTPConfig{
+			Host:      cfg.SMTPHost,
+			Port:      cfg.SMTPPort,
+			Username:  cfg.SMTPUsername,
+			Password:  cfg.SMTPPassword,
+			FromEmail: cfg.EmailFrom,
+			FromName:  cfg.SMTPFromName,
+			TLSMode:   cfg.SMTPTLSMode,
+		})
 
 		var mailer mail.EmailSender
 		if cfg.SMTPHost != "" {
@@ -125,6 +140,7 @@ func main() {
 		deps.MaintenanceHdr = server.NewMaintenanceHandler(maintRepo, log)
 		deps.BrandingHdr = server.NewBrandingHandler(brandingRepo, st, log)
 		deps.ReportHdr = server.NewReportHandler(reportRepo, brandingRepo, st, pdfGen, log)
+		deps.NotificationHdr = server.NewNotificationHandler(notifRepo, telegramUpdateHdr, telegramClient, emailClient, cfg, log)
 		deps.AuthMiddleware = server.NewAuthMiddleware(sessionRepo, userRepo, cfg)
 		deps.TenantMiddleware = server.NewTenantMiddleware(orgRepo, sessionRepo)
 	}

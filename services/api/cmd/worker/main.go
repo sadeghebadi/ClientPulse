@@ -12,6 +12,8 @@ import (
 	"clientpulse/services/api/internal/database"
 	"clientpulse/services/api/internal/health"
 	"clientpulse/services/api/internal/logger"
+	"clientpulse/services/api/internal/notification/email"
+	"clientpulse/services/api/internal/notification/telegram"
 	"clientpulse/services/api/internal/repository"
 	"clientpulse/services/api/internal/ssrf"
 	"clientpulse/services/api/internal/worker"
@@ -97,6 +99,28 @@ func main() {
 		log,
 	)
 
+	// Set up notification delivery worker
+	notifRepo := repository.NewNotificationDestRepository(db.Pool)
+	telegramClient := telegram.NewClient(cfg.TelegramBotToken, "", nil)
+	emailClient := email.NewClient(email.SMTPConfig{
+		Host:      cfg.SMTPHost,
+		Port:      cfg.SMTPPort,
+		Username:  cfg.SMTPUsername,
+		Password:  cfg.SMTPPassword,
+		FromEmail: cfg.EmailFrom,
+		FromName:  cfg.SMTPFromName,
+		TLSMode:   cfg.SMTPTLSMode,
+	})
+	notifWorker := worker.NewNotificationWorker(
+		notifRepo,
+		telegramClient,
+		emailClient,
+		cfg.AppBaseURL,
+		workerID,
+		cfg.WorkerConcurrency,
+		log,
+	)
+
 	// Set up cancellation context for graceful shutdown
 	workerCtx, workerCancel := context.WithCancel(context.Background())
 	defer workerCancel()
@@ -108,6 +132,11 @@ func main() {
 			log.Error("scheduler daemon error", "error", err)
 			schedulerErrChan <- err
 		}
+	}()
+
+	// Launch notification delivery daemon
+	go func() {
+		notifWorker.Start(workerCtx)
 	}()
 
 	sigChan := make(chan os.Signal, 1)

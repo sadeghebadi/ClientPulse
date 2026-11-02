@@ -27,6 +27,7 @@ type Dependencies struct {
 	MaintenanceHdr   *MaintenanceHandler
 	BrandingHdr      *BrandingHandler
 	ReportHdr        *ReportHandler
+	NotificationHdr  *NotificationHandler
 	AuthMiddleware   *AuthMiddleware
 	TenantMiddleware *TenantMiddleware
 }
@@ -264,6 +265,21 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 		// Public unauthenticated read-only endpoints
 		mux.HandleFunc("GET /public/reports/{token}", s.deps.ReportHdr.PublicView)
 		mux.HandleFunc("GET /public/reports/{token}/pdf", s.deps.ReportHdr.PublicPDF)
+	}
+
+	// 16. Notification Management & Telegram Webhook Routes
+	if s.deps.NotificationHdr != nil {
+		mux.Handle("GET /api/v1/notifications/destinations", tenantScoped(s.deps.NotificationHdr.ListDestinations, ""))
+		mux.Handle("POST /api/v1/notifications/destinations/telegram/connect-token", sensitiveTenantScoped(s.deps.NotificationHdr.CreateTelegramConnectToken, tenant.RoleAdmin))
+		mux.Handle("POST /api/v1/notifications/destinations/telegram/group-token", sensitiveTenantScoped(s.deps.NotificationHdr.CreateTelegramGroupToken, tenant.RoleAdmin))
+		mux.Handle("POST /api/v1/notifications/destinations/email", sensitiveTenantScoped(s.deps.NotificationHdr.CreateEmailDestination, tenant.RoleAdmin))
+		mux.Handle("PATCH /api/v1/notifications/destinations/{id}", sensitiveTenantScoped(s.deps.NotificationHdr.UpdateDestination, tenant.RoleAdmin))
+		mux.Handle("DELETE /api/v1/notifications/destinations/{id}", sensitiveTenantScoped(s.deps.NotificationHdr.DeleteDestination, tenant.RoleAdmin))
+		mux.Handle("POST /api/v1/notifications/destinations/{id}/test", sensitiveTenantScoped(s.deps.NotificationHdr.TestDestination, tenant.RoleAdmin))
+		mux.Handle("GET /api/v1/notifications/history", tenantScoped(s.deps.NotificationHdr.ListHistory, ""))
+
+		// Public webhook for incoming Telegram updates
+		mux.HandleFunc("POST /api/v1/integrations/telegram/webhook", s.deps.NotificationHdr.TelegramWebhook)
 	}
 }
 

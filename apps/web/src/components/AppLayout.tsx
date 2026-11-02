@@ -23,6 +23,7 @@ import {
   Wrench,
   FileText,
   Palette,
+  Bell,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
 import { useI18n } from "@/lib/i18n";
@@ -98,6 +99,12 @@ export function AppLayout({ children }: AppLayoutProps) {
       href: "/settings/members",
       icon: <Shield className="w-4 h-4" />,
       active: pathname === "/settings/members",
+    },
+    {
+      label: t.notifications,
+      href: "/settings/notifications",
+      icon: <Bell className="w-4 h-4" />,
+      active: pathname.startsWith("/settings/notifications"),
     },
     {
       label: t.accountSettings,
