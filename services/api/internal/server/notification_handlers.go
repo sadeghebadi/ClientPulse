@@ -175,7 +175,7 @@ func (h *NotificationHandler) CreateEmailDestination(w http.ResponseWriter, r *h
 
 	// Dispatch ownership verification email
 	if h.emailSender != nil && dest.EmailAddress != nil {
-		rendered := email.RenderEmailVerification(rawToken, h.cfg.AppBaseURL, "en")
+		rendered := email.RenderEmailVerification(rawToken, h.cfg.PublicAppURL, "en")
 		go func(to string, rend email.RenderedEmail) {
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			defer cancel()
@@ -311,7 +311,7 @@ func (h *NotificationHandler) TestDestination(w http.ResponseWriter, r *http.Req
 			sendJSONError(w, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", "Email service is not configured")
 			return
 		}
-		rendered := email.RenderNotificationEmail("test.notification", "en", testPayload, h.cfg.AppBaseURL)
+		rendered := email.RenderNotificationEmail("test.notification", "en", testPayload, h.cfg.PublicAppURL)
 		sendErr = h.emailSender.SendEmail(r.Context(), recipient, rendered.Subject, rendered.HTMLBody, rendered.TextBody)
 
 	default:
@@ -442,7 +442,7 @@ func (h *NotificationHandler) ResendEmailVerification(w http.ResponseWriter, r *
 
 	dest, _ := h.repo.GetDestinationByID(r.Context(), tc.OrganizationID, destID)
 	if dest != nil && dest.EmailAddress != nil && h.emailSender != nil {
-		rendered := email.RenderEmailVerification(rawToken, h.cfg.AppBaseURL, "en")
+		rendered := email.RenderEmailVerification(rawToken, h.cfg.PublicAppURL, "en")
 		go func(to string, rend email.RenderedEmail) {
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			defer cancel()

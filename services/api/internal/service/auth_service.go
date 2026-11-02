@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -322,7 +323,12 @@ func (s *AuthService) SendVerificationEmail(ctx context.Context, userID, email, 
 		return err
 	}
 
-	verifyURL := fmt.Sprintf("%s/verify-email?token=%s", s.cfg.AppBaseURL, rawToken)
+	baseURL := s.cfg.PublicAppURL
+	if baseURL == "" {
+		baseURL = s.cfg.AppBaseURL
+	}
+	baseURL = strings.TrimRight(baseURL, "/")
+	verifyURL := fmt.Sprintf("%s/verify-email?token=%s", baseURL, url.QueryEscape(rawToken))
 	return s.mailer.SendVerificationEmail(ctx, email, displayName, verifyURL)
 }
 
@@ -368,7 +374,12 @@ func (s *AuthService) ForgotPassword(ctx context.Context, email string) error {
 		return err
 	}
 
-	resetURL := fmt.Sprintf("%s/reset-password?token=%s", s.cfg.AppBaseURL, rawToken)
+	baseURL := s.cfg.PublicAppURL
+	if baseURL == "" {
+		baseURL = s.cfg.AppBaseURL
+	}
+	baseURL = strings.TrimRight(baseURL, "/")
+	resetURL := fmt.Sprintf("%s/reset-password?token=%s", baseURL, url.QueryEscape(rawToken))
 	return s.mailer.SendPasswordResetEmail(ctx, user.Email, user.DisplayName, resetURL)
 }
 

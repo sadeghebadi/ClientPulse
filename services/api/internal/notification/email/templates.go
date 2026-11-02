@@ -440,8 +440,11 @@ func renderHeartbeatMissed(ctx *notification.NotificationContext, isFA bool) Ren
 		htmlBody := baseHTML("rtl", "fa", subject, heading+banner+formatTable(rows)+btn)
 
 		textBody.WriteString(fmt.Sprintf("⚠️ عدم دریافت پالس: [%s] %s\n", clientName, hbName))
-		textBody.WriteString(fmt.Sprintf("مشتری: %s\nمیزان تاخیر: %s\nآخرین پالس: %s\nبررسی: %s\n",
-			clientName, overdueStr, lastPingStr, ctx.ViewURL))
+		textBody.WriteString(fmt.Sprintf("مشتری: %s\nمیزان تاخیر: %s\nآخرین پالس: %s\n",
+			clientName, overdueStr, lastPingStr))
+		if ctx.ViewURL != "" {
+			textBody.WriteString(fmt.Sprintf("بررسی: %s\n", ctx.ViewURL))
+		}
 
 		return RenderedEmail{Subject: subject, HTMLBody: htmlBody, TextBody: textBody.String()}
 	}
@@ -466,8 +469,11 @@ func renderHeartbeatMissed(ctx *notification.NotificationContext, isFA bool) Ren
 	htmlBody := baseHTML("ltr", "en", subject, heading+banner+formatTable(rows)+btn)
 
 	textBody.WriteString(fmt.Sprintf("⚠️ HEARTBEAT MISSED: [%s] %s is overdue\n", clientName, hbName))
-	textBody.WriteString(fmt.Sprintf("Client: %s\nOverdue By: %s\nLast Ping: %s\nView: %s\n",
-		clientName, overdueStr, lastPingStr, ctx.ViewURL))
+	textBody.WriteString(fmt.Sprintf("Client: %s\nOverdue By: %s\nLast Ping: %s\n",
+		clientName, overdueStr, lastPingStr))
+	if ctx.ViewURL != "" {
+		textBody.WriteString(fmt.Sprintf("View: %s\n", ctx.ViewURL))
+	}
 
 	return RenderedEmail{Subject: subject, HTMLBody: htmlBody, TextBody: textBody.String()}
 }
@@ -510,7 +516,10 @@ func renderHeartbeatRecovered(ctx *notification.NotificationContext, isFA bool) 
 		htmlBody := baseHTML("rtl", "fa", subject, heading+formatTable(rows)+btn)
 
 		textBody.WriteString(fmt.Sprintf("✅ بازگشت پالس: [%s] %s\n", clientName, hbName))
-		textBody.WriteString(fmt.Sprintf("مشتری: %s\nزمان: %s\nوضعیت: سالم\nبررسی: %s\n", clientName, recAt, ctx.ViewURL))
+		textBody.WriteString(fmt.Sprintf("مشتری: %s\nزمان: %s\nوضعیت: سالم\n", clientName, recAt))
+		if ctx.ViewURL != "" {
+			textBody.WriteString(fmt.Sprintf("بررسی: %s\n", ctx.ViewURL))
+		}
 
 		return RenderedEmail{Subject: subject, HTMLBody: htmlBody, TextBody: textBody.String()}
 	}
@@ -532,7 +541,10 @@ func renderHeartbeatRecovered(ctx *notification.NotificationContext, isFA bool) 
 	htmlBody := baseHTML("ltr", "en", subject, heading+formatTable(rows)+btn)
 
 	textBody.WriteString(fmt.Sprintf("✅ HEARTBEAT RECOVERED: [%s] %s\n", clientName, hbName))
-	textBody.WriteString(fmt.Sprintf("Client: %s\nRecovered: %s\nStatus: Healthy\nView: %s\n", clientName, recAt, ctx.ViewURL))
+	textBody.WriteString(fmt.Sprintf("Client: %s\nRecovered: %s\nStatus: Healthy\n", clientName, recAt))
+	if ctx.ViewURL != "" {
+		textBody.WriteString(fmt.Sprintf("View: %s\n", ctx.ViewURL))
+	}
 
 	return RenderedEmail{Subject: subject, HTMLBody: htmlBody, TextBody: textBody.String()}
 }
@@ -567,7 +579,10 @@ func renderReportReady(ctx *notification.NotificationContext, isFA bool) Rendere
 		htmlBody := baseHTML("rtl", "fa", subject, heading+formatTable(rows)+btn)
 
 		textBody.WriteString(fmt.Sprintf("📊 گزارش آماده شد: [%s] %s\n", clientName, reportTitle))
-		textBody.WriteString(fmt.Sprintf("مشتری: %s\nگزارش: %s\nمشاهده: %s\n", clientName, reportTitle, ctx.ViewURL))
+		textBody.WriteString(fmt.Sprintf("مشتری: %s\nگزارش: %s\n", clientName, reportTitle))
+		if ctx.ViewURL != "" {
+			textBody.WriteString(fmt.Sprintf("مشاهده: %s\n", ctx.ViewURL))
+		}
 
 		return RenderedEmail{Subject: subject, HTMLBody: htmlBody, TextBody: textBody.String()}
 	}
@@ -587,7 +602,10 @@ func renderReportReady(ctx *notification.NotificationContext, isFA bool) Rendere
 	htmlBody := baseHTML("ltr", "en", subject, heading+formatTable(rows)+btn)
 
 	textBody.WriteString(fmt.Sprintf("📊 Report Ready: [%s] %s\n", clientName, reportTitle))
-	textBody.WriteString(fmt.Sprintf("Client: %s\nReport: %s\nView: %s\n", clientName, reportTitle, ctx.ViewURL))
+	textBody.WriteString(fmt.Sprintf("Client: %s\nReport: %s\n", clientName, reportTitle))
+	if ctx.ViewURL != "" {
+		textBody.WriteString(fmt.Sprintf("View: %s\n", ctx.ViewURL))
+	}
 
 	return RenderedEmail{Subject: subject, HTMLBody: htmlBody, TextBody: textBody.String()}
 }
@@ -624,16 +642,20 @@ func renderGenericTest(ctx *notification.NotificationContext, isFA bool) Rendere
 
 // RenderEmailVerification renders the ownership verification email for an alert destination.
 func RenderEmailVerification(token, appBaseURL, locale string) RenderedEmail {
-	if appBaseURL == "" {
-		appBaseURL = "http://localhost:3000"
+	builder, _ := appurl.NewLinkBuilder(appBaseURL, false)
+	verifyURL := ""
+	if builder != nil && builder.IsConfigured() {
+		verifyURL = builder.EmailVerificationURL(token)
 	}
-	appBaseURL = strings.TrimRight(appBaseURL, "/")
-	verifyURL := fmt.Sprintf("%s/settings/notifications?verify_email=%s", appBaseURL, token)
 
 	isFA := strings.ToLower(locale) == "fa"
 	if isFA {
 		subject := "🔐 تایید آدرس ایمیل برای هشدارهای ClientPulse"
-		content := fmt.Sprintf(`
+		var content string
+		var textBody string
+		if verifyURL != "" {
+			escapedURL := html.EscapeString(verifyURL)
+			content = fmt.Sprintf(`
       <h2 style="color: #0284c7; margin-top: 0; font-size: 20px;">🔐 تایید مالکیت آدرس ایمیل</h2>
       <p style="color: #334155;">درخواستی برای دریافت هشدارهای نظارتی سازمان شما به این نشانی ایمیل در سامانه <strong>ClientPulse</strong> ثبت شده است.</p>
       <p style="color: #334155;">جهت فعال‌سازی این مقصد و شروع دریافت اعلان‌ها، روی دکمه زیر کلیک کنید (این پیوند تا ۲۴ ساعت معتبر است):</p>
@@ -642,16 +664,29 @@ func RenderEmailVerification(token, appBaseURL, locale string) RenderedEmail {
       </div>
       <p style="font-size: 13px; color: #64748b;">اگر دکمه بالا کار نمی‌کند، پیوند زیر را در مرورگر کپی کنید:<br><code style="word-break: break-all;">%s</code></p>
       <p style="font-size: 12px; color: #94a3b8; margin-top: 24px;">اگر شما این درخواست را ارسال نکرده‌اید، نیازی به انجام کاری نیست؛ این ایمیل فعال نخواهد شد.</p>
-    `, verifyURL, verifyURL)
+    `, escapedURL, escapedURL)
+			textBody = fmt.Sprintf("تایید ایمیل ClientPulse: برای فعال‌سازی نشانی ایمیل به این پیوند مراجعه نمایید: %s", verifyURL)
+		} else {
+			content = `
+      <h2 style="color: #0284c7; margin-top: 0; font-size: 20px;">🔐 تایید مالکیت آدرس ایمیل</h2>
+      <p style="color: #334155;">درخواستی برای دریافت هشدارهای نظارتی سازمان شما به این نشانی ایمیل در سامانه <strong>ClientPulse</strong> ثبت شده است.</p>
+      <p style="color: #dc2626; font-size: 13px; margin: 24px 0;">توجه: PUBLIC_APP_URL پیکربندی نشده است؛ پیوند تایید خودکار در دسترس نیست.</p>
+      <p style="font-size: 12px; color: #94a3b8; margin-top: 24px;">اگر شما این درخواست را ارسال نکرده‌اید، نیازی به انجام کاری نیست.</p>`
+			textBody = "تایید ایمیل ClientPulse: درخواستی برای دریافت هشدارها ثبت شده است (PUBLIC_APP_URL پیکربندی نشده است)."
+		}
 		return RenderedEmail{
 			Subject:  subject,
 			HTMLBody: baseHTML("rtl", "fa", subject, content),
-			TextBody: fmt.Sprintf("تایید ایمیل ClientPulse: برای فعال‌سازی نشانی ایمیل به این پیوند مراجعه نمایید: %s", verifyURL),
+			TextBody: textBody,
 		}
 	}
 
 	subject := "🔐 Verify your email address for ClientPulse alerts"
-	content := fmt.Sprintf(`
+	var content string
+	var textBody string
+	if verifyURL != "" {
+		escapedURL := html.EscapeString(verifyURL)
+		content = fmt.Sprintf(`
       <h2 style="color: #0284c7; margin-top: 0; font-size: 20px;">🔐 Verify Alert Destination Email</h2>
       <p style="color: #334155;">A request was made to add this email address as an alert destination in <strong>ClientPulse</strong>.</p>
       <p style="color: #334155;">To confirm ownership and activate alert delivery, click the button below (link expires in 24 hours):</p>
@@ -660,10 +695,19 @@ func RenderEmailVerification(token, appBaseURL, locale string) RenderedEmail {
       </div>
       <p style="font-size: 13px; color: #64748b;">If the button above does not work, copy and paste this link into your browser:<br><code style="word-break: break-all;">%s</code></p>
       <p style="font-size: 12px; color: #94a3b8; margin-top: 24px;">If you did not request this notification destination, you can safely ignore this email; no alerts will be sent.</p>
-    `, verifyURL, verifyURL)
+    `, escapedURL, escapedURL)
+		textBody = fmt.Sprintf("Verify ClientPulse Email: Visit %s to activate your alert destination.", verifyURL)
+	} else {
+		content = `
+      <h2 style="color: #0284c7; margin-top: 0; font-size: 20px;">🔐 Verify Alert Destination Email</h2>
+      <p style="color: #334155;">A request was made to add this email address as an alert destination in <strong>ClientPulse</strong>.</p>
+      <p style="color: #dc2626; font-size: 13px; margin: 24px 0;">Notice: PUBLIC_APP_URL is not configured; automated verification link is unavailable.</p>
+      <p style="font-size: 12px; color: #94a3b8; margin-top: 24px;">If you did not request this notification destination, you can safely ignore this email.</p>`
+		textBody = "Verify ClientPulse Email: A request was made to add this email address (PUBLIC_APP_URL is not configured)."
+	}
 	return RenderedEmail{
 		Subject:  subject,
 		HTMLBody: baseHTML("ltr", "en", subject, content),
-		TextBody: fmt.Sprintf("Verify ClientPulse Email: Visit %s to activate your alert destination.", verifyURL),
+		TextBody: textBody,
 	}
 }

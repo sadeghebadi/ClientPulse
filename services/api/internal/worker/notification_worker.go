@@ -227,6 +227,15 @@ func (w *NotificationWorker) deliverTelegram(ctx context.Context, d *repository.
 		return w.repo.MarkDeliverySent(ctx, d.ID, w.workerID)
 	}
 
+	// If Telegram rejected message due to entity parsing, fallback to unformatted plain-text
+	if strings.Contains(strings.ToLower(sendErr.Error()), "can't parse entities") {
+		plainText := notiftg.RenderTelegramMessagePlainText(notifCtx)
+		sendErr = w.telegramSender.SendMessage(ctx, chatID, plainText, "")
+		if sendErr == nil {
+			return w.repo.MarkDeliverySent(ctx, d.ID, w.workerID)
+		}
+	}
+
 	// Classify error
 	var rateErr *telegram.RateLimitError
 	var permErr *telegram.PermanentError

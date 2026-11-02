@@ -268,32 +268,32 @@ func (r *NotificationContextResolver) ResolveAndRefreshContext(
 		var durSec *int
 		var ackAt *time.Time
 		var ackBy *string
-		var ackName *string
 
-		// Tenant-scoped query ensuring no cross-tenant leakage
-		err := r.pool.QueryRow(ctx, `
-			SELECT i.status, i.resolved_at, i.duration_seconds, i.acknowledged_at, i.acknowledged_by,
-			       u.display_name
-			FROM incidents i
-			LEFT JOIN users u ON u.id = i.acknowledged_by
-			WHERE i.id = $1 AND i.organization_id = $2
-		`, notifCtx.IncidentID, orgID).Scan(&status, &resolvedAt, &durSec, &ackAt, &ackBy, &ackName)
+		tx, txErr := r.pool.Begin(ctx)
+		if txErr == nil {
+			defer func() { _ = tx.Rollback(ctx) }()
+			_, _ = tx.Exec(ctx, "SELECT set_config('app.current_organization_id', $1, true)", orgID)
 
-		if err == nil {
-			if status == "resolved" || resolvedAt != nil {
-				notifCtx.IsAlreadyResolved = true
-				notifCtx.ResolvedAt = resolvedAt
-				if durSec != nil && *durSec > 0 {
-					notifCtx.DurationSeconds = int64(*durSec)
-				} else if resolvedAt != nil && notifCtx.FirstFailureAt != nil {
-					notifCtx.DurationSeconds = int64(resolvedAt.Sub(*notifCtx.FirstFailureAt).Seconds())
+			// Tenant-scoped query ensuring no cross-tenant leakage
+			err := tx.QueryRow(ctx, `
+				SELECT i.status, i.resolved_at, i.duration_seconds, i.acknowledged_at, i.acknowledged_by
+				FROM incidents i
+				WHERE i.id = $1 AND i.organization_id = $2
+			`, notifCtx.IncidentID, orgID).Scan(&status, &resolvedAt, &durSec, &ackAt, &ackBy)
+
+			if err == nil {
+				if status == "resolved" || resolvedAt != nil {
+					notifCtx.IsAlreadyResolved = true
+					notifCtx.ResolvedAt = resolvedAt
+					if durSec != nil && *durSec > 0 {
+						notifCtx.DurationSeconds = int64(*durSec)
+					} else if resolvedAt != nil && notifCtx.FirstFailureAt != nil {
+						notifCtx.DurationSeconds = int64(resolvedAt.Sub(*notifCtx.FirstFailureAt).Seconds())
+					}
 				}
-			}
 
-			if ackAt != nil && notifCtx.AcknowledgedAt == nil {
-				notifCtx.AcknowledgedAt = ackAt
-				if ackName != nil && *ackName != "" {
-					notifCtx.AcknowledgedByName = *ackName
+				if ackAt != nil && notifCtx.AcknowledgedAt == nil {
+					notifCtx.AcknowledgedAt = ackAt
 				}
 			}
 		}

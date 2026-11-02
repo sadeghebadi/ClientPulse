@@ -127,7 +127,7 @@ func main() {
 		notifRepo,
 		botAPI,
 		emailClient,
-		cfg.AppBaseURL,
+		cfg.PublicAppURL,
 		workerID,
 		cfg.WorkerConcurrency,
 		log,

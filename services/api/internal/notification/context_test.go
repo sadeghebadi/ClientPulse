@@ -139,6 +139,16 @@ func TestFormatTimestamp(t *testing.T) {
 	if !strings.Contains(fa, "۱۴:۳۰") {
 		t.Errorf("expected Persian digits in FA timestamp, got: %s", fa)
 	}
+
+	// Tehran timezone: 14:30 UTC -> 18:00 Tehran (+03:30)
+	tehranTime := FormatTimestamp(fixedTime, "Asia/Tehran", false)
+	if !strings.Contains(tehranTime, "18:00:00") {
+		t.Errorf("expected 18:00:00 for Asia/Tehran, got: %s", tehranTime)
+	}
+	tehranTimeFA := FormatTimestamp(fixedTime, "Asia/Tehran", true)
+	if !strings.Contains(tehranTimeFA, "۱۸:۰۰:۰۰") {
+		t.Errorf("expected Persian digits for Asia/Tehran, got: %s", tehranTimeFA)
+	}
 }
 
 func TestParseContextFromPayload_PrecedenceAndCalculations(t *testing.T) {
@@ -211,5 +221,50 @@ func TestParseContextFromPayload_PrecedenceAndCalculations(t *testing.T) {
 	}
 	if ctxHB.OverdueSeconds < 550 || ctxHB.OverdueSeconds > 650 {
 		t.Errorf("expected OverdueSeconds ~600, got: %d", ctxHB.OverdueSeconds)
+	}
+}
+
+func TestParseContextFromPayload_LinkBuilder(t *testing.T) {
+	payload := map[string]interface{}{
+		"incident_id":  "inc-abc-123",
+		"heartbeat_id": "hb-xyz-456",
+		"report_id":    "rep-789",
+	}
+
+	// 1. Unconfigured empty URL -> ViewURL must be empty, no fallback to localhost
+	ctxEmpty := ParseContextFromPayload("incident.opened", payload, "", "en")
+	if ctxEmpty.ViewURL != "" {
+		t.Errorf("expected empty ViewURL when appBaseURL is empty, got: %q", ctxEmpty.ViewURL)
+	}
+
+	// 2. Incident link
+	ctxInc := ParseContextFromPayload("incident.opened", payload, "https://mindu.ir", "en")
+	if ctxInc.ViewURL != "https://mindu.ir/incidents/inc-abc-123" {
+		t.Errorf("expected incident URL https://mindu.ir/incidents/inc-abc-123, got: %q", ctxInc.ViewURL)
+	}
+
+	// 3. Heartbeat link (no incident_id)
+	hbPayload := map[string]interface{}{
+		"heartbeat_id": "hb-xyz-456",
+	}
+	ctxHB := ParseContextFromPayload("heartbeat.missed", hbPayload, "https://mindu.ir", "en")
+	if ctxHB.ViewURL != "https://mindu.ir/heartbeats/hb-xyz-456" {
+		t.Errorf("expected heartbeat URL https://mindu.ir/heartbeats/hb-xyz-456, got: %q", ctxHB.ViewURL)
+	}
+
+	// 4. Report link
+	repPayload := map[string]interface{}{
+		"report_id": "rep-789",
+	}
+	ctxRep := ParseContextFromPayload("report.ready", repPayload, "https://mindu.ir", "en")
+	if ctxRep.ViewURL != "https://mindu.ir/reports/rep-789" {
+		t.Errorf("expected report URL https://mindu.ir/reports/rep-789, got: %q", ctxRep.ViewURL)
+	}
+
+	// 5. Dashboard link when no specific entity
+	emptyPayload := map[string]interface{}{}
+	ctxDash := ParseContextFromPayload("generic", emptyPayload, "https://mindu.ir", "en")
+	if ctxDash.ViewURL != "https://mindu.ir" {
+		t.Errorf("expected dashboard URL https://mindu.ir, got: %q", ctxDash.ViewURL)
 	}
 }

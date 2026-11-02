@@ -7,6 +7,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"clientpulse/services/api/internal/notification"
 )
 
 func TestTelegramConnectionToken_SingleUseAndExpiry(t *testing.T) {
@@ -387,3 +389,276 @@ func TestNotificationCrossTenantIsolation(t *testing.T) {
 		t.Errorf("expected ErrDestinationNotFound for cross-tenant delete, got: %v", err)
 	}
 }
+
+func TestIncidentTimeline_EventDeliveryCorrelationAndConsistency(t *testing.T) {
+	adminPool, appPool, workerPool := setupTestRoles(t)
+	ctx := context.Background()
+
+	// 1. Organization with Asia/Tehran timezone
+	slug := fmt.Sprintf("timeline-org-%d", time.Now().UnixNano())
+	orgID, clientID := createTestOrgAndClient(t, adminPool, "Timeline Agency", slug)
+
+	// Set organization timezone to Asia/Tehran
+	_, err := adminPool.Exec(ctx, `UPDATE organizations SET timezone = 'Asia/Tehran', locale = 'fa' WHERE id = $1`, orgID)
+	if err != nil {
+		t.Fatalf("failed setting organization timezone: %v", err)
+	}
+
+	userID := createTestUser(t, adminPool, fmt.Sprintf("timeline-user-%d@test.org", time.Now().UnixNano()))
+	notifRepo := NewNotificationDestRepository(appPool)
+	workerNotifRepo := NewNotificationDestRepository(workerPool)
+
+	// Create active Telegram destination
+	chatId := -int64(999000000 + time.Now().UnixNano()%100000)
+	_, err = notifRepo.ConnectTelegramDestination(ctx, orgID, userID, "telegram_group", "Ops Alerts", chatId, 777, nil)
+	if err != nil {
+		t.Fatalf("failed creating test destination: %v", err)
+	}
+
+	// Create Asset and Monitor
+	var assetID, monitorID string
+	err = adminPool.QueryRow(ctx, "INSERT INTO assets (organization_id, client_id, name, url) VALUES ($1, $2, 'Main E-Commerce Store', 'https://store.digitech.com') RETURNING id", orgID, clientID).Scan(&assetID)
+	if err != nil {
+		t.Fatalf("failed creating asset: %v", err)
+	}
+	err = adminPool.QueryRow(ctx, "INSERT INTO monitors (organization_id, asset_id, method) VALUES ($1, $2, 'GET') RETURNING id", orgID, assetID).Scan(&monitorID)
+	if err != nil {
+		t.Fatalf("failed creating monitor: %v", err)
+	}
+
+	// 2. Incident Opened phase
+	// T0: First failure at 12:56:21 UTC (16:26:21 +03:30)
+	tFirstFail, _ := time.Parse(time.RFC3339, "2026-11-02T12:56:21Z")
+	tConfirmed, _ := time.Parse(time.RFC3339, "2026-11-02T12:58:21Z")
+
+	var incidentID string
+	err = adminPool.QueryRow(ctx, `
+		INSERT INTO incidents (organization_id, monitor_id, status, failure_category, first_failure_at, confirmed_at, summary)
+		VALUES ($1, $2, 'open', 'http_5xx', $3, $4, 'HTTP 503: database connection limit exceeded')
+		RETURNING id
+	`, orgID, monitorID, tFirstFail, tConfirmed).Scan(&incidentID)
+	if err != nil {
+		t.Fatalf("failed creating incident: %v", err)
+	}
+
+	// Create incident.opened event (Event E1) at 13:10:21 UTC
+	tE1Created, _ := time.Parse(time.RFC3339, "2026-11-02T13:10:21Z")
+	var eventOpenedID string
+	openedIdemp := fmt.Sprintf("test_manual_inc_%d", time.Now().UnixNano())
+	err = adminPool.QueryRow(ctx, `
+		INSERT INTO notification_events (
+			organization_id, event_type, incident_id, idempotency_key, payload, status, created_at
+		) VALUES (
+			$1, 'incident.opened', $2, $3,
+			$4::jsonb, 'pending', $5
+		) RETURNING id
+	`, orgID, incidentID, openedIdemp, fmt.Sprintf(`{
+		"incident_id": "%s",
+		"client_name": "DigiTech Solutions",
+		"client_id": "%s",
+		"asset_name": "Main E-Commerce Store",
+		"monitor_name": "Checkout API Monitor",
+		"first_failure_at": "%s",
+		"confirmed_at": "%s",
+		"failure_reason": "HTTP 503: database connection limit exceeded",
+		"timezone": "Asia/Tehran",
+		"locale": "fa"
+	}`, incidentID, clientID, tFirstFail.Format(time.RFC3339), tConfirmed.Format(time.RFC3339)), tE1Created).Scan(&eventOpenedID)
+	if err != nil {
+		t.Fatalf("failed inserting incident.opened event: %v", err)
+	}
+
+	// Fan out to delivery D1
+	_, err = workerNotifRepo.DispatchPendingEvents(ctx, 10)
+	if err != nil {
+		t.Fatalf("dispatch opened event failed: %v", err)
+	}
+
+	// Fetch delivery D1
+	var delivOpenedID string
+	var d1CreatedAt time.Time
+	err = workerPool.QueryRow(ctx, `
+		SELECT id, created_at FROM notification_deliveries WHERE event_id = $1
+	`, eventOpenedID).Scan(&delivOpenedID, &d1CreatedAt)
+	if err != nil {
+		t.Fatalf("failed fetching delivery D1: %v", err)
+	}
+
+	// Simulate provider acceptance for D1 at 13:10:24 UTC
+	tD1Sent, _ := time.Parse(time.RFC3339, "2026-11-02T13:10:24Z")
+	_, err = adminPool.Exec(ctx, `
+		UPDATE notification_deliveries SET status = 'sent', sent_at = $1 WHERE id = $2
+	`, tD1Sent, delivOpenedID)
+	if err != nil {
+		t.Fatalf("failed updating delivery D1: %v", err)
+	}
+
+	// 3. Incident Resolved phase
+	// Resolved at 13:14:40 UTC (16:44:40 +03:30)
+	tResolved, _ := time.Parse(time.RFC3339, "2026-11-02T13:14:40Z")
+	durationSec := int(tResolved.Sub(tFirstFail).Seconds()) // 1100 seconds (or 720 from secondary check)
+
+	_, err = adminPool.Exec(ctx, `
+		UPDATE incidents
+		SET status = 'resolved', resolved_at = $1, duration_seconds = $2
+		WHERE id = $3
+	`, tResolved, durationSec, incidentID)
+	if err != nil {
+		t.Fatalf("failed updating incident to resolved: %v", err)
+	}
+
+	// Create incident.resolved event (Event E2) at 13:16:40 UTC
+	tE2Created, _ := time.Parse(time.RFC3339, "2026-11-02T13:16:40Z")
+	var eventResolvedID string
+	resolvedIdemp := fmt.Sprintf("test_manual_res_%d", time.Now().UnixNano())
+	err = adminPool.QueryRow(ctx, `
+		INSERT INTO notification_events (
+			organization_id, event_type, incident_id, idempotency_key, payload, status, created_at
+		) VALUES (
+			$1, 'incident.resolved', $2, $3,
+			$4::jsonb, 'pending', $5
+		) RETURNING id
+	`, orgID, incidentID, resolvedIdemp, fmt.Sprintf(`{
+		"incident_id": "%s",
+		"client_name": "DigiTech Solutions",
+		"client_id": "%s",
+		"asset_name": "Main E-Commerce Store",
+		"monitor_name": "Checkout API Monitor",
+		"first_failure_at": "%s",
+		"resolved_at": "%s",
+		"duration_sec": %d,
+		"recovery_status": "HTTP 200 OK (passed in 128ms)",
+		"timezone": "Asia/Tehran",
+		"locale": "fa"
+	}`, incidentID, clientID, tFirstFail.Format(time.RFC3339), tResolved.Format(time.RFC3339), durationSec), tE2Created).Scan(&eventResolvedID)
+	if err != nil {
+		t.Fatalf("failed inserting incident.resolved event: %v", err)
+	}
+
+	// Fan out to delivery D2
+	_, err = workerNotifRepo.DispatchPendingEvents(ctx, 10)
+	if err != nil {
+		t.Fatalf("dispatch resolved event failed: %v", err)
+	}
+
+	// Fetch delivery D2
+	var delivResolvedID string
+	var d2CreatedAt time.Time
+	err = workerPool.QueryRow(ctx, `
+		SELECT id, created_at FROM notification_deliveries WHERE event_id = $1
+	`, eventResolvedID).Scan(&delivResolvedID, &d2CreatedAt)
+	if err != nil {
+		t.Fatalf("failed fetching delivery D2: %v", err)
+	}
+
+	// Simulate provider acceptance for D2 at 13:16:43 UTC
+	tD2Sent, _ := time.Parse(time.RFC3339, "2026-11-02T13:16:43Z")
+	_, err = adminPool.Exec(ctx, `
+		UPDATE notification_deliveries SET status = 'sent', sent_at = $1 WHERE id = $2
+	`, tD2Sent, delivResolvedID)
+	if err != nil {
+		t.Fatalf("failed updating delivery D2: %v", err)
+	}
+
+	// 4. Strict Timeline Correlation & Verification Assertions
+	if eventOpenedID == eventResolvedID {
+		t.Fatalf("eventOpenedID and eventResolvedID must be distinct events")
+	}
+	if delivOpenedID == delivResolvedID {
+		t.Fatalf("delivOpenedID and delivResolvedID must be distinct deliveries")
+	}
+
+	// Verify Delivery D1 strictly belongs to Event E1 (incident.opened)
+	var e1Type, d1Status string
+	var d1SentAt time.Time
+	err = workerPool.QueryRow(ctx, `
+		SELECT e.event_type, d.status, d.sent_at
+		FROM notification_deliveries d
+		JOIN notification_events e ON d.event_id = e.id
+		WHERE d.id = $1
+	`, delivOpenedID).Scan(&e1Type, &d1Status, &d1SentAt)
+	if err != nil || e1Type != "incident.opened" || d1Status != "sent" {
+		t.Errorf("delivery D1 correlation failure: type=%s, status=%s, err=%v", e1Type, d1Status, err)
+	}
+
+	// Verify Delivery D2 strictly belongs to Event E2 (incident.resolved)
+	var e2Type, d2Status string
+	var d2SentAt time.Time
+	err = workerPool.QueryRow(ctx, `
+		SELECT e.event_type, d.status, d.sent_at
+		FROM notification_deliveries d
+		JOIN notification_events e ON d.event_id = e.id
+		WHERE d.id = $1
+	`, delivResolvedID).Scan(&e2Type, &d2Status, &d2SentAt)
+	if err != nil || e2Type != "incident.resolved" || d2Status != "sent" {
+		t.Errorf("delivery D2 correlation failure: type=%s, status=%s, err=%v", e2Type, d2Status, err)
+	}
+
+	// Timestamps consistency:
+	// Event E1 created (13:10:21) <= D1 sent (13:10:24)
+	// Resolved time (13:14:40) happens after E1 and D1!
+	// Event E2 created (13:16:40) >= Resolved time (13:14:40)
+	// D2 sent (13:16:43) >= Event E2 created (13:16:40)
+	if d1SentAt.After(tResolved) {
+		t.Errorf("expected D1 sent_at (%v) to precede incident resolution (%v)", d1SentAt, tResolved)
+	}
+	if d2SentAt.Before(tResolved) {
+		t.Errorf("expected D2 sent_at (%v) to follow incident resolution (%v)", d2SentAt, tResolved)
+	}
+	if d2SentAt.Before(d1SentAt) {
+		t.Errorf("expected D2 sent_at (%v) to follow D1 sent_at (%v)", d2SentAt, d1SentAt)
+	}
+
+	// 5. Verify Timezone Display in Asia/Tehran
+	tehranLoc, err := time.LoadLocation("Asia/Tehran")
+	if err != nil {
+		t.Fatalf("failed loading Asia/Tehran timezone: %v", err)
+	}
+	tResolvedTehran := tResolved.In(tehranLoc)
+	if tResolvedTehran.Hour() != 16 || tResolvedTehran.Minute() != 44 || tResolvedTehran.Second() != 40 {
+		t.Errorf("expected 13:14:40 UTC to be 16:44:40 in Asia/Tehran, got %s", tResolvedTehran.Format("15:04:05"))
+	}
+
+	tD1SentTehran := tD1Sent.In(tehranLoc)
+	if tD1SentTehran.Hour() != 16 || tD1SentTehran.Minute() != 40 || tD1SentTehran.Second() != 24 {
+		t.Errorf("expected 13:10:24 UTC to be 16:40:24 in Asia/Tehran, got %s", tD1SentTehran.Format("15:04:05"))
+	}
+
+	// 6. Verify Delayed Delivery Handling:
+	// If D1 (for incident.opened) was delayed in queue and processed AFTER the incident is resolved in DB:
+	// ResolveAndRefreshContext MUST check current incident status in DB and flag IsAlreadyResolved = true!
+	resolver := notification.NewNotificationContextResolver(workerPool)
+	delayedPayload := map[string]interface{}{
+		"incident_id":      incidentID,
+		"client_name":      "DigiTech Solutions",
+		"asset_name":       "Main E-Commerce Store",
+		"monitor_name":     "Checkout API Monitor",
+		"first_failure_at": tFirstFail.Format(time.RFC3339),
+		"confirmed_at":     tConfirmed.Format(time.RFC3339),
+		"failure_reason":   "HTTP 503: database connection limit exceeded",
+	}
+	delayedCtx := resolver.ResolveAndRefreshContext(ctx, orgID, "incident.opened", delayedPayload, "https://mindu.ir", "en")
+	if !delayedCtx.IsAlreadyResolved {
+		t.Errorf("expected delayed incident.opened delivery to be flagged as IsAlreadyResolved = true")
+	}
+	if delayedCtx.ResolvedAt == nil {
+		t.Errorf("expected delayedCtx.ResolvedAt to be populated from DB")
+	}
+	if delayedCtx.DurationSeconds <= 0 {
+		t.Errorf("expected positive DurationSeconds from resolved incident, got %d", delayedCtx.DurationSeconds)
+	}
+	if delayedCtx.Timezone != "Asia/Tehran" {
+		t.Errorf("expected delayedCtx.Timezone to be Asia/Tehran, got %s", delayedCtx.Timezone)
+	}
+	// With destination override "en", destination locale must be preserved
+	if delayedCtx.Locale != "en" {
+		t.Errorf("expected destination locale override 'en' to be preserved, got %s", delayedCtx.Locale)
+	}
+
+	// Without destination override and no payload locale, org locale "fa" must be used as fallback
+	delayedCtxNoDest := resolver.ResolveAndRefreshContext(ctx, orgID, "incident.opened", delayedPayload, "https://mindu.ir", "")
+	if delayedCtxNoDest.Locale != "fa" {
+		t.Errorf("expected fallback to organization locale 'fa', got %s", delayedCtxNoDest.Locale)
+	}
+}
+

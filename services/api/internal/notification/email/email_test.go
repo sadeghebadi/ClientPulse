@@ -162,3 +162,58 @@ func TestRenderEmailVerification_BothLocales(t *testing.T) {
 		t.Errorf("expected RTL in Persian verification email")
 	}
 }
+
+func TestRenderEmailVerification_UnconfiguredURL(t *testing.T) {
+	en := RenderEmailVerification("token-xyz-123", "", "en")
+	if strings.Contains(en.HTMLBody, "http://localhost:3000") || strings.Contains(en.HTMLBody, "app.clientpulse.io") {
+		t.Errorf("unconfigured verification email must not contain hardcoded or localhost URL: %s", en.HTMLBody)
+	}
+	if !strings.Contains(en.HTMLBody, "unavailable") {
+		t.Errorf("expected notice that link is unavailable in English")
+	}
+	if strings.Contains(en.HTMLBody, "<a href=") {
+		t.Errorf("must not render broken button link when URL is unconfigured")
+	}
+
+	fa := RenderEmailVerification("token-xyz-123", "", "fa")
+	if strings.Contains(fa.HTMLBody, "http://localhost:3000") || strings.Contains(fa.HTMLBody, "app.clientpulse.io") {
+		t.Errorf("unconfigured Persian verification email must not contain hardcoded or localhost URL: %s", fa.HTMLBody)
+	}
+	if !strings.Contains(fa.HTMLBody, "پیکربندی نشده است") {
+		t.Errorf("expected notice that link is unavailable in Persian")
+	}
+}
+
+func TestRenderNotificationEmail_EmptyAppURL_OmitsActionLink(t *testing.T) {
+	ctx := &notification.NotificationContext{
+		EventType:       "incident.opened",
+		Locale:          "en",
+		IncidentID:      "inc-404",
+		ClientName:      "Acme",
+		MonitorName:     "Web API",
+		ViewURL:         "", // empty because PUBLIC_APP_URL is unconfigured
+		SanitizedTarget: "https://acme.com",
+	}
+
+	rendered := RenderNotificationEmailFromContext(ctx, "")
+	if strings.Contains(rendered.HTMLBody, "http://localhost:3000") {
+		t.Errorf("rendered HTML body should not contain localhost fallback: %s", rendered.HTMLBody)
+	}
+	if strings.Contains(rendered.HTMLBody, "<a href=") {
+		t.Errorf("rendered HTML body should omit action button when ViewURL is empty: %s", rendered.HTMLBody)
+	}
+	if strings.Contains(rendered.TextBody, "View:") {
+		t.Errorf("rendered TextBody should omit View line when ViewURL is empty: %s", rendered.TextBody)
+	}
+}
+
+func TestActionButton_Escaping(t *testing.T) {
+	unsafeURL := `https://mindu.ir/incidents/123" onmouseover="alert('xss')`
+	btn := actionButton(unsafeURL, "Click Me <script>", "#dc2626")
+	if strings.Contains(btn, `onmouseover="alert`) || strings.Contains(btn, `<script>`) {
+		t.Errorf("actionButton vulnerable to HTML attribute injection: %s", btn)
+	}
+	if !strings.Contains(btn, "&#34;") {
+		t.Errorf("quotes in URL should be escaped: %s", btn)
+	}
+}
