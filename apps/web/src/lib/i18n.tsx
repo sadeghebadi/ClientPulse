@@ -846,7 +846,7 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
         isRTL,
       }}
     >
-      <div dir={isRTL ? "rtl" : "ltr"} className={isRTL ? "font-sans" : ""}>
+      <div dir={isRTL ? "rtl" : "ltr"} className={isRTL ? "font-persian" : "font-sans"}>
         {children}
       </div>
     </I18nContext.Provider>

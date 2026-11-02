@@ -2,15 +2,68 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  --foreground-rgb: 15, 23, 42;
-  --background-rgb: 248, 250, 252;
+@layer base {
+  :root {
+    /* Primitive Brand Tokens */
+    --brand-50: #eff6ff;
+    --brand-100: #dbeafe;
+    --brand-500: #3b82f6;
+    --brand-600: #2563eb;
+    --brand-700: #1d4ed8;
+    --brand-800: #1e40af;
+    --brand-900: #1e3a8a;
+
+    /* Semantic Surface Tokens */
+    --surface-background: #f8fafc;
+    --surface-card: #ffffff;
+    --surface-sidebar: #0f172a;
+    --surface-border: #e2e8f0;
+
+    /* Semantic Text Tokens */
+    --text-primary: #0f172a;
+    --text-secondary: #475569;
+    --text-muted: #64748b;
+    --text-inverse: #ffffff;
+    --text-disabled: #94a3b8;
+
+    /* Status Semantics */
+    --status-operational: #10b981;
+    --status-degraded: #f59e0b;
+    --status-down: #ef4444;
+    --status-paused: #64748b;
+    --status-missing: #8b5cf6;
+
+    /* Legacy RGB Fallbacks */
+    --foreground-rgb: 15, 23, 42;
+    --background-rgb: 248, 250, 252;
+  }
+
+  body {
+    color: var(--text-primary);
+    background-color: var(--surface-background);
+    min-height: 100vh;
+  }
+
+  /* Default font styling based on active document direction */
+  html[dir="rtl"] body {
+    font-family: var(--font-vazirmatn), Tahoma, "Segoe UI", Arial, sans-serif;
+  }
+
+  html[dir="ltr"] body {
+    font-family: var(--font-inter), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
 }
 
-body {
-  color: rgb(var(--foreground-rgb));
-  background: rgb(var(--background-rgb));
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  min-height: 100vh;
+/* Numeric tabular figure utilities */
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+  -webkit-font-feature-settings: "tnum";
+  font-feature-settings: "tnum";
 }
 
+/* Technical strings that must remain LTR even inside Persian RTL */
+.ltr-text {
+  direction: ltr !important;
+  unicode-bidi: isolate;
+  text-align: left;
+}

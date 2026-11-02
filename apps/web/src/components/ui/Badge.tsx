@@ -41,279 +41,386 @@ export type BadgeVariant =
   | "failure"
   | "timeout"
   | "blocked"
+  | "warning"
+  | "danger"
+  | "default"
+  | "secondary"
+  | "outline"
   | "error";
 
-interface BadgeProps {
+export interface BadgeProps {
   variant: BadgeVariant | string;
   label?: string;
   children?: React.ReactNode;
   showIcon?: boolean;
   className?: string;
+  icon?: React.ReactNode;
 }
 
-export function Badge({ variant, label, children, showIcon = true, className = "" }: BadgeProps) {
+type BadgeConfig = {
+  bg: string;
+  text: string;
+  border?: string;
+  icon?: React.ComponentType<{ className?: string }>;
+  iconClass?: string;
+  defaultLabelKey?: string;
+  defaultLabelFallback?: string;
+  titleKey?: string;
+  isPill?: boolean;
+  isUppercase?: boolean;
+  isMinimalText?: boolean;
+};
+
+const BADGE_CONFIG_MAP: Record<string, BadgeConfig> = {
+  // Operational statuses
+  up: {
+    bg: "bg-emerald-50",
+    text: "text-emerald-700",
+    border: "border-emerald-200",
+    icon: CheckCircle2,
+    iconClass: "text-emerald-600",
+    defaultLabelKey: "statusUp",
+    titleKey: "statusUpDesc",
+    isPill: true,
+  },
+  healthy: {
+    bg: "bg-emerald-50",
+    text: "text-emerald-700",
+    border: "border-emerald-200",
+    icon: CheckCircle2,
+    iconClass: "text-emerald-600",
+    defaultLabelKey: "statusHealthy",
+    isPill: true,
+  },
+  resolved: {
+    bg: "bg-emerald-50",
+    text: "text-emerald-700",
+    border: "border-emerald-200",
+    icon: CheckCircle2,
+    iconClass: "text-emerald-600",
+    defaultLabelKey: "statusResolved",
+    isPill: true,
+  },
+  active: {
+    bg: "bg-emerald-50",
+    text: "text-emerald-700",
+    border: "border-emerald-200",
+    defaultLabelKey: "active",
+    isPill: true,
+  },
+  success: {
+    bg: "transparent",
+    text: "text-emerald-700",
+    icon: CheckCircle2,
+    iconClass: "text-emerald-600",
+    defaultLabelKey: "success",
+    isMinimalText: true,
+  },
+
+  // Degraded / warning statuses
+  suspected_down: {
+    bg: "bg-amber-50",
+    text: "text-amber-800",
+    border: "border-amber-300",
+    icon: AlertCircle,
+    iconClass: "text-amber-600",
+    defaultLabelKey: "statusSuspectedDown",
+    titleKey: "statusSuspectedDownDesc",
+    isPill: true,
+  },
+  late: {
+    bg: "bg-amber-50",
+    text: "text-amber-800",
+    border: "border-amber-300",
+    icon: AlertCircle,
+    iconClass: "text-amber-600",
+    defaultLabelKey: "statusLate",
+    isPill: true,
+  },
+  warning: {
+    bg: "bg-amber-50",
+    text: "text-amber-800",
+    border: "border-amber-300",
+    icon: AlertCircle,
+    iconClass: "text-amber-600",
+    defaultLabelFallback: "Warning",
+    isPill: true,
+  },
+  timeout: {
+    bg: "transparent",
+    text: "text-amber-700",
+    icon: Clock,
+    iconClass: "text-amber-600",
+    defaultLabelKey: "timeoutResult",
+    isMinimalText: true,
+  },
+  api: {
+    bg: "bg-amber-50",
+    text: "text-amber-800",
+    border: "border-amber-200",
+    defaultLabelFallback: "API",
+    isUppercase: true,
+  },
+
+  // Down / critical statuses
+  down: {
+    bg: "bg-rose-50",
+    text: "text-rose-700",
+    border: "border-rose-200",
+    icon: XCircle,
+    iconClass: "text-rose-600",
+    defaultLabelKey: "statusDown",
+    titleKey: "statusDownDesc",
+    isPill: true,
+  },
+  missed: {
+    bg: "bg-rose-50",
+    text: "text-rose-700",
+    border: "border-rose-200",
+    icon: XCircle,
+    iconClass: "text-rose-600",
+    defaultLabelKey: "statusMissed",
+    isPill: true,
+  },
+  open: {
+    bg: "bg-rose-100",
+    text: "text-rose-800",
+    border: "border-rose-300",
+    icon: XCircle,
+    iconClass: "text-rose-600",
+    defaultLabelKey: "statusOpen",
+    isPill: true,
+    isUppercase: true,
+  },
+  danger: {
+    bg: "bg-rose-50",
+    text: "text-rose-700",
+    border: "border-rose-200",
+    icon: XCircle,
+    iconClass: "text-rose-600",
+    defaultLabelFallback: "Danger",
+    isPill: true,
+  },
+  failure: {
+    bg: "transparent",
+    text: "text-rose-700",
+    icon: XCircle,
+    iconClass: "text-rose-600",
+    defaultLabelKey: "failure",
+    isMinimalText: true,
+  },
+  error: {
+    bg: "bg-rose-50",
+    text: "text-rose-700",
+    border: "border-rose-200",
+    icon: XCircle,
+    iconClass: "text-rose-600",
+    defaultLabelFallback: "Error",
+    isPill: true,
+  },
+
+  // Informational / Pending / Blue statuses
+  pending: {
+    bg: "bg-blue-50",
+    text: "text-blue-700",
+    border: "border-blue-200",
+    icon: Clock,
+    iconClass: "text-blue-600",
+    defaultLabelKey: "statusPending",
+    titleKey: "statusPendingDesc",
+    isPill: true,
+  },
+  acknowledged: {
+    bg: "bg-blue-50",
+    text: "text-blue-700",
+    border: "border-blue-200",
+    icon: Clock,
+    iconClass: "text-blue-600",
+    defaultLabelKey: "statusAcknowledged",
+    isPill: true,
+  },
+  website: {
+    bg: "bg-blue-50",
+    text: "text-blue-700",
+    border: "border-blue-200",
+    defaultLabelFallback: "Website",
+    isUppercase: true,
+  },
+  owner: {
+    bg: "bg-blue-100",
+    text: "text-blue-800",
+    defaultLabelFallback: "Owner",
+    isUppercase: true,
+  },
+  admin: {
+    bg: "bg-blue-100",
+    text: "text-blue-800",
+    defaultLabelFallback: "Admin",
+    isUppercase: true,
+  },
+
+  // Paused / Muted / Neutral statuses
+  paused: {
+    bg: "bg-slate-100",
+    text: "text-slate-700",
+    border: "border-slate-200",
+    icon: PauseCircle,
+    iconClass: "text-slate-500",
+    defaultLabelKey: "statusPaused",
+    titleKey: "statusPausedDesc",
+    isPill: true,
+  },
+  unknown: {
+    bg: "bg-slate-50",
+    text: "text-slate-600",
+    border: "border-slate-200",
+    icon: HelpCircle,
+    iconClass: "text-slate-400",
+    defaultLabelKey: "statusUnknown",
+    titleKey: "statusUnknownDesc",
+    isPill: true,
+  },
+  archived: {
+    bg: "bg-slate-100",
+    text: "text-slate-600",
+    border: "border-slate-200",
+    defaultLabelKey: "archived",
+    isPill: true,
+  },
+  revoked: {
+    bg: "bg-slate-100",
+    text: "text-slate-600",
+    border: "border-slate-300",
+    icon: ShieldAlert,
+    iconClass: "text-slate-500",
+    defaultLabelKey: "statusRevoked",
+    isPill: true,
+  },
+  development: {
+    bg: "bg-slate-100",
+    text: "text-slate-700",
+    border: "border-slate-200",
+    defaultLabelKey: "development",
+    isUppercase: true,
+  },
+  member: {
+    bg: "bg-slate-100",
+    text: "text-slate-700",
+    defaultLabelFallback: "Member",
+    isUppercase: true,
+  },
+  viewer: {
+    bg: "bg-slate-100",
+    text: "text-slate-700",
+    defaultLabelFallback: "Viewer",
+    isUppercase: true,
+  },
+  secondary: {
+    bg: "bg-slate-100",
+    text: "text-slate-700",
+    border: "border-slate-200",
+    isPill: true,
+  },
+  outline: {
+    bg: "bg-transparent",
+    text: "text-slate-700",
+    border: "border-slate-300",
+    isPill: true,
+  },
+  default: {
+    bg: "bg-slate-100",
+    text: "text-slate-700",
+    isPill: true,
+  },
+
+  // Environments & Violet
+  production: {
+    bg: "bg-blue-50",
+    text: "text-blue-700",
+    border: "border-blue-200",
+    defaultLabelKey: "production",
+    isUppercase: true,
+  },
+  staging: {
+    bg: "bg-purple-50",
+    text: "text-purple-700",
+    border: "border-purple-200",
+    defaultLabelKey: "staging",
+    isUppercase: true,
+  },
+  blocked: {
+    bg: "transparent",
+    text: "text-purple-700",
+    icon: ShieldAlert,
+    iconClass: "text-purple-600",
+    defaultLabelKey: "blockedResult",
+    isMinimalText: true,
+  },
+};
+
+export function Badge({
+  variant,
+  label,
+  children,
+  showIcon = true,
+  className = "",
+  icon: customIcon,
+}: BadgeProps) {
   const { t } = useI18n();
 
-  switch (variant) {
-    case "up":
-      return (
-        <span
-          title={t.statusUpDesc}
-          className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 ${className}`}
-        >
-          {showIcon && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />}
-          <span>{label || t.statusUp}</span>
-        </span>
-      );
+  const config = BADGE_CONFIG_MAP[variant] || {
+    bg: "bg-slate-100",
+    text: "text-slate-700",
+    border: "border-slate-200",
+    isPill: true,
+  };
 
-    case "suspected_down":
-      return (
-        <span
-          title={t.statusSuspectedDownDesc}
-          className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-800 border border-amber-300 ${className}`}
-        >
-          {showIcon && <AlertCircle className="w-3.5 h-3.5 text-amber-600" />}
-          <span>{label || t.statusSuspectedDown}</span>
-        </span>
-      );
-
-    case "down":
-      return (
-        <span
-          title={t.statusDownDesc}
-          className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-rose-50 text-rose-700 border border-rose-200 ${className}`}
-        >
-          {showIcon && <XCircle className="w-3.5 h-3.5 text-rose-600" />}
-          <span>{label || t.statusDown}</span>
-        </span>
-      );
-
-    case "paused":
-      return (
-        <span
-          title={t.statusPausedDesc}
-          className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200 ${className}`}
-        >
-          {showIcon && <PauseCircle className="w-3.5 h-3.5 text-slate-500" />}
-          <span>{label || t.statusPaused}</span>
-        </span>
-      );
-
-    case "pending":
-      return (
-        <span
-          title={t.statusPendingDesc}
-          className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200 ${className}`}
-        >
-          {showIcon && <Clock className="w-3.5 h-3.5 text-blue-600" />}
-          <span>{label || t.statusPending}</span>
-        </span>
-      );
-
-    case "unknown":
-      return (
-        <span
-          title={t.statusUnknownDesc}
-          className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-50 text-slate-600 border border-slate-200 ${className}`}
-        >
-          {showIcon && <HelpCircle className="w-3.5 h-3.5 text-slate-400" />}
-          <span>{label || t.statusUnknown}</span>
-        </span>
-      );
-
-    case "healthy":
-      return (
-        <span
-          className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 ${className}`}
-        >
-          {showIcon && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />}
-          <span>{label || t.statusHealthy}</span>
-        </span>
-      );
-
-    case "missed":
-      return (
-        <span
-          className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-rose-50 text-rose-700 border border-rose-200 ${className}`}
-        >
-          {showIcon && <XCircle className="w-3.5 h-3.5 text-rose-600" />}
-          <span>{label || t.statusMissed}</span>
-        </span>
-      );
-
-    case "late":
-      return (
-        <span
-          className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-800 border border-amber-300 ${className}`}
-        >
-          {showIcon && <AlertCircle className="w-3.5 h-3.5 text-amber-600" />}
-          <span>{label || t.statusLate}</span>
-        </span>
-      );
-
-    case "revoked":
-      return (
-        <span
-          className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-600 border border-slate-300 ${className}`}
-        >
-          {showIcon && <ShieldAlert className="w-3.5 h-3.5 text-slate-500" />}
-          <span>{label || t.statusRevoked}</span>
-        </span>
-      );
-
-    case "open":
-      return (
-        <span
-          className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold uppercase tracking-wide bg-rose-100 text-rose-800 border border-rose-300 ${className}`}
-        >
-          {showIcon && <XCircle className="w-3.5 h-3.5 text-rose-600" />}
-          <span>{label || t.statusOpen}</span>
-        </span>
-      );
-
-    case "resolved":
-      return (
-        <span
-          className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 ${className}`}
-        >
-          {showIcon && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />}
-          <span>{label || t.statusResolved}</span>
-        </span>
-      );
-
-    case "acknowledged":
-      return (
-        <span
-          className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200 ${className}`}
-        >
-          {showIcon && <Clock className="w-3.5 h-3.5 text-blue-600" />}
-          <span>{label || t.statusAcknowledged}</span>
-        </span>
-      );
-
-    case "active":
-      return (
-        <span
-          className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 ${className}`}
-        >
-          {label || t.active}
-        </span>
-      );
-
-    case "archived":
-      return (
-        <span
-          className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-600 border border-slate-200 ${className}`}
-        >
-          {label || t.archived}
-        </span>
-      );
-
-    case "production":
-      return (
-        <span
-          className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold uppercase tracking-wider bg-indigo-50 text-indigo-700 border border-indigo-200 ${className}`}
-        >
-          {label || t.production}
-        </span>
-      );
-
-    case "staging":
-      return (
-        <span
-          className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold uppercase tracking-wider bg-purple-50 text-purple-700 border border-purple-200 ${className}`}
-        >
-          {label || t.staging}
-        </span>
-      );
-
-    case "development":
-      return (
-        <span
-          className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold uppercase tracking-wider bg-slate-100 text-slate-700 border border-slate-200 ${className}`}
-        >
-          {label || t.development}
-        </span>
-      );
-
-    case "website":
-      return (
-        <span
-          className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] uppercase font-bold bg-blue-50 text-blue-700 border border-blue-200 ${className}`}
-        >
-          Website
-        </span>
-      );
-
-    case "api":
-      return (
-        <span
-          className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] uppercase font-bold bg-amber-50 text-amber-700 border border-amber-200 ${className}`}
-        >
-          API
-        </span>
-      );
-
-    case "success":
-      return (
-        <span className={`inline-flex items-center gap-1 text-emerald-600 font-semibold text-xs ${className}`}>
-          {showIcon && <CheckCircle2 className="w-3.5 h-3.5" />}
-          <span>{label || children || t.success}</span>
-        </span>
-      );
-
-    case "failure":
-      return (
-        <span className={`inline-flex items-center gap-1 text-rose-600 font-semibold text-xs ${className}`}>
-          {showIcon && <XCircle className="w-3.5 h-3.5" />}
-          <span>{label || t.failure}</span>
-        </span>
-      );
-
-    case "timeout":
-      return (
-        <span className={`inline-flex items-center gap-1 text-amber-600 font-semibold text-xs ${className}`}>
-          {showIcon && <Clock className="w-3.5 h-3.5" />}
-          <span>{label || t.timeoutResult}</span>
-        </span>
-      );
-
-    case "blocked":
-      return (
-        <span className={`inline-flex items-center gap-1 text-purple-600 font-semibold text-xs ${className}`}>
-          {showIcon && <ShieldAlert className="w-3.5 h-3.5" />}
-          <span>{label || t.blockedResult}</span>
-        </span>
-      );
-
-    case "owner":
-    case "admin":
-      return (
-        <span
-          className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded bg-blue-100 text-blue-800 ${className}`}
-        >
-          {label || variant}
-        </span>
-      );
-
-    case "member":
-    case "viewer":
-      return (
-        <span
-          className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded bg-slate-100 text-slate-700 ${className}`}
-        >
-          {label || variant}
-        </span>
-      );
-
-    default:
-      return (
-        <span
-          className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-slate-100 text-slate-700 ${className}`}
-        >
-          {children || label || variant}
-        </span>
-      );
+  const IconComponent = config.icon;
+  const resolvedTitle = config.titleKey ? (t as Record<string, string>)[config.titleKey] : undefined;
+  
+  let resolvedLabel = label || children;
+  if (!resolvedLabel && config.defaultLabelKey) {
+    resolvedLabel = (t as Record<string, string>)[config.defaultLabelKey];
   }
-}
+  if (!resolvedLabel) {
+    resolvedLabel = config.defaultLabelFallback || variant;
+  }
 
+  if (config.isMinimalText) {
+    return (
+      <span
+        title={resolvedTitle}
+        className={`inline-flex items-center gap-1 font-semibold text-xs ${config.text} ${className}`}
+      >
+        {customIcon ? (
+          <span className="shrink-0">{customIcon}</span>
+        ) : (
+          showIcon && IconComponent && <IconComponent className={`w-3.5 h-3.5 ${config.iconClass || ""}`} />
+        )}
+        <span>{resolvedLabel}</span>
+      </span>
+    );
+  }
+
+  const shapeClasses = config.isPill
+    ? "rounded-full px-2.5 py-0.5 text-xs font-semibold"
+    : config.isUppercase
+    ? "rounded px-2 py-0.5 text-[11px] font-bold uppercase tracking-wider"
+    : "rounded px-2 py-0.5 text-xs font-medium";
+
+  const borderClass = config.border ? `border ${config.border}` : "";
+
+  return (
+    <span
+      title={resolvedTitle}
+      className={`inline-flex items-center gap-1.5 select-none ${shapeClasses} ${config.bg} ${config.text} ${borderClass} ${className}`}
+    >
+      {customIcon ? (
+        <span className="shrink-0">{customIcon}</span>
+      ) : (
+        showIcon && IconComponent && <IconComponent className={`w-3.5 h-3.5 shrink-0 ${config.iconClass || ""}`} />
+      )}
+      <span>{resolvedLabel}</span>
+    </span>
+  );
+}
