@@ -287,8 +287,14 @@ func TestTelegramPoller_PrivateStartAndGroupConnect(t *testing.T) {
 	mockBot := telegram.NewMockSender()
 	privChatID := int64(time.Now().UnixNano() % 900000000)
 
+	baseOffset := int(time.Now().UnixNano() % 10000000)
+	if baseOffset < 100000000 {
+		baseOffset += 100000000
+	}
+	_, _ = pool.Exec(context.Background(), "UPDATE telegram_poller_state SET last_update_id = $1 WHERE id = 1", baseOffset)
+
 	updatePriv := telegram.TelegramUpdate{
-		UpdateID: int(time.Now().UnixNano() % 10000000),
+		UpdateID: baseOffset + 1,
 		Message: &telegram.TelegramMessage{
 			MessageID: 101,
 			From: &telegram.TelegramUser{
