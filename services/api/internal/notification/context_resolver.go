@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"clientpulse/services/api/internal/appurl"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -55,10 +56,7 @@ func getTime(m map[string]interface{}, key string) *time.Time {
 
 // ParseContextFromPayload converts raw event payload into a typed NotificationContext.
 func ParseContextFromPayload(eventType string, p map[string]interface{}, appBaseURL, destLocale string) *NotificationContext {
-	if appBaseURL == "" {
-		appBaseURL = "http://localhost:3000"
-	}
-	appBaseURL = strings.TrimRight(appBaseURL, "/")
+	builder, _ := appurl.NewLinkBuilder(appBaseURL, false)
 
 	// Locale precedence: destination override -> payload locale -> "en"
 	locale := "en"
@@ -68,7 +66,7 @@ func ParseContextFromPayload(eventType string, p map[string]interface{}, appBase
 		locale = loc
 	}
 
-	timezone := getString(p, "timezone", "UTC")
+	timezone := getString(p, "timezone", getString(p, "org_timezone", "UTC"))
 	incID := getString(p, "incident_id", "")
 	targetURL := getString(p, "target_url", getString(p, "url", ""))
 
@@ -119,15 +117,19 @@ func ParseContextFromPayload(eventType string, p map[string]interface{}, appBase
 		PeriodEnd:            getString(p, "period_end", ""),
 	}
 
-	// Navigation link
-	if incID != "" {
-		ctx.ViewURL = fmt.Sprintf("%s/incidents/%s", appBaseURL, incID)
-	} else if ctx.HeartbeatID != "" {
-		ctx.ViewURL = fmt.Sprintf("%s/heartbeats", appBaseURL)
-	} else if ctx.ReportID != "" {
-		ctx.ViewURL = fmt.Sprintf("%s/reports/%s", appBaseURL, ctx.ReportID)
+	// Navigation link using verified canonical routes
+	if builder != nil && builder.IsConfigured() {
+		if incID != "" {
+			ctx.ViewURL = builder.IncidentURL(incID)
+		} else if ctx.HeartbeatID != "" {
+			ctx.ViewURL = builder.HeartbeatURL(ctx.HeartbeatID)
+		} else if ctx.ReportID != "" {
+			ctx.ViewURL = builder.ReportURL(ctx.ReportID)
+		} else {
+			ctx.ViewURL = builder.DashboardURL()
+		}
 	} else {
-		ctx.ViewURL = appBaseURL
+		ctx.ViewURL = ""
 	}
 
 	// Fallback naming
@@ -241,7 +243,25 @@ func (r *NotificationContextResolver) ResolveAndRefreshContext(
 		return notifCtx
 	}
 
-	// 1. If this is an incident event (opened / acknowledged), verify current incident state in DB
+	// 1. Fetch organization timezone and locale to ensure accurate localized formatting
+	var orgTimezone, orgLocale string
+	orgErr := r.pool.QueryRow(ctx, `
+		SELECT COALESCE(timezone, 'UTC'), COALESCE(locale, 'en')
+		FROM organizations
+		WHERE id = $1
+	`, orgID).Scan(&orgTimezone, &orgLocale)
+	if orgErr == nil {
+		if orgTimezone != "" && (notifCtx.Timezone == "" || notifCtx.Timezone == "UTC") {
+			notifCtx.Timezone = orgTimezone
+		}
+		if destLocale == "" && getString(payload, "locale", "") == "" && orgLocale != "" {
+			if orgLocale == "fa" || orgLocale == "en" {
+				notifCtx.Locale = orgLocale
+			}
+		}
+	}
+
+	// 2. If this is an incident event (opened / acknowledged), verify current incident state in DB
 	if (eventType == "incident.opened" || eventType == "incident.acknowledged") && notifCtx.IncidentID != "" {
 		var status string
 		var resolvedAt *time.Time

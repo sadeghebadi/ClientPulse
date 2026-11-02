@@ -7,12 +7,15 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"clientpulse/services/api/internal/appurl"
 )
 
 // Config holds all configuration parameters for ClientPulse API and Worker.
 type Config struct {
 	AppEnv          string
 	AppBaseURL      string
+	PublicAppURL    string
 	APIBaseURL      string
 	Port            int
 	DefaultLocale   string
@@ -75,6 +78,7 @@ func Load() (*Config, error) {
 	cfg := &Config{
 		AppEnv:                       getEnv("APP_ENV", "development"),
 		AppBaseURL:                   getEnv("APP_BASE_URL", "http://localhost:3000"),
+		PublicAppURL:                 getEnv("PUBLIC_APP_URL", ""),
 		APIBaseURL:                   getEnv("API_BASE_URL", "http://localhost:8080"),
 		Port:                         getEnvAsInt("API_PORT", 8080),
 		DefaultLocale:                getEnv("DEFAULT_LOCALE", "en"),
@@ -131,6 +135,10 @@ func (c *Config) Validate() error {
 
 	if _, err := url.ParseRequestURI(c.AppBaseURL); err != nil {
 		return fmt.Errorf("invalid APP_BASE_URL: %w", err)
+	}
+
+	if err := appurl.ValidatePublicAppURL(c.PublicAppURL, c.IsProduction()); err != nil {
+		return fmt.Errorf("invalid PUBLIC_APP_URL: %w", err)
 	}
 
 	if _, err := url.ParseRequestURI(c.APIBaseURL); err != nil {

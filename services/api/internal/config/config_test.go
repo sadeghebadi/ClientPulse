@@ -87,6 +87,33 @@ func TestConfigValidation(t *testing.T) {
 			},
 			wantErr: false,
 		},
+		{
+			name: "valid production PublicAppURL",
+			mutate: func(c *Config) {
+				c.AppEnv = "production"
+				c.SessionSecret = "a-very-long-production-session-secret-that-is-at-least-32-chars"
+				c.TokenHashPepper = "a-very-long-production-token-pepper-that-is-at-least-32-chars"
+				c.PublicAppURL = "https://mindu.ir"
+			},
+			wantErr: false,
+		},
+		{
+			name: "invalid production PublicAppURL (http rejected)",
+			mutate: func(c *Config) {
+				c.AppEnv = "production"
+				c.SessionSecret = "a-very-long-production-session-secret-that-is-at-least-32-chars"
+				c.TokenHashPepper = "a-very-long-production-token-pepper-that-is-at-least-32-chars"
+				c.PublicAppURL = "http://mindu.ir"
+			},
+			wantErr: true,
+		},
+		{
+			name: "invalid PublicAppURL with credentials",
+			mutate: func(c *Config) {
+				c.PublicAppURL = "https://user:pass@mindu.ir"
+			},
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {

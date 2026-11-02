@@ -5,6 +5,7 @@ import (
 	"html"
 	"strings"
 
+	"clientpulse/services/api/internal/appurl"
 	"clientpulse/services/api/internal/notification"
 )
 
@@ -29,11 +30,11 @@ func RenderNotificationEmailFromContext(ctx *notification.NotificationContext, a
 			OrgName:   "ClientPulse",
 		}
 	}
-	if appBaseURL == "" {
-		appBaseURL = "http://localhost:3000"
-	}
-	if ctx.ViewURL == "" {
-		ctx.ViewURL = appBaseURL
+	if ctx.ViewURL == "" && appBaseURL != "" {
+		builder, _ := appurl.NewLinkBuilder(appBaseURL, false)
+		if builder != nil && builder.IsConfigured() {
+			ctx.ViewURL = builder.DashboardURL()
+		}
 	}
 
 	isFA := strings.ToLower(ctx.Locale) == "fa"
@@ -100,9 +101,13 @@ func formatTable(rows []string) string {
 }
 
 func actionButton(url, label, bgColor string) string {
+	trimmed := strings.TrimSpace(url)
+	if trimmed == "" {
+		return ""
+	}
 	return fmt.Sprintf(`<div style="margin: 24px 0 16px 0;">
   <a href="%s" style="background-color: %s; color: #ffffff; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: 600; font-size: 14px; display: inline-block;">%s</a>
-</div>`, url, bgColor, html.EscapeString(label))
+</div>`, html.EscapeString(trimmed), bgColor, html.EscapeString(label))
 }
 
 func renderIncidentOpened(ctx *notification.NotificationContext, isFA bool) RenderedEmail {
@@ -166,8 +171,11 @@ func renderIncidentOpened(ctx *notification.NotificationContext, isFA bool) Rend
 		htmlBody := baseHTML("rtl", "fa", subject, heading+resolvedBanner+formatTable(rows)+btn)
 
 		textBody.WriteString(fmt.Sprintf("🚨 بحرانی: [%s] سرویس %s از دسترس خارج شد\n", clientName, monitorName))
-		textBody.WriteString(fmt.Sprintf("مشتری: %s\nدارایی: %s\nمانیتور: %s\nآدرس: %s\nزمان: %s\nمدت اختلال: %s\nمرجع: %s\nبررسی: %s\n",
-			clientName, ctx.AssetName, monitorName, ctx.SanitizedTarget, detectedAt, durationStr, ctx.IncidentRef, ctx.ViewURL))
+		textBody.WriteString(fmt.Sprintf("مشتری: %s\nدارایی: %s\nمانیتور: %s\nآدرس: %s\nزمان: %s\nمدت اختلال: %s\nمرجع: %s\n",
+			clientName, ctx.AssetName, monitorName, ctx.SanitizedTarget, detectedAt, durationStr, ctx.IncidentRef))
+		if ctx.ViewURL != "" {
+			textBody.WriteString(fmt.Sprintf("بررسی: %s\n", ctx.ViewURL))
+		}
 
 		return RenderedEmail{Subject: subject, HTMLBody: htmlBody, TextBody: textBody.String()}
 	}
@@ -208,8 +216,11 @@ func renderIncidentOpened(ctx *notification.NotificationContext, isFA bool) Rend
 	htmlBody := baseHTML("ltr", "en", subject, heading+resolvedBanner+formatTable(rows)+btn)
 
 	textBody.WriteString(fmt.Sprintf("🚨 CRITICAL: [%s] %s is DOWN\n", clientName, monitorName))
-	textBody.WriteString(fmt.Sprintf("Client: %s\nAsset: %s\nMonitor: %s\nTarget: %s\nDetected: %s\nDowntime: %s\nRef: %s\nView: %s\n",
-		clientName, ctx.AssetName, monitorName, ctx.SanitizedTarget, detectedAt, durationStr, ctx.IncidentRef, ctx.ViewURL))
+	textBody.WriteString(fmt.Sprintf("Client: %s\nAsset: %s\nMonitor: %s\nTarget: %s\nDetected: %s\nDowntime: %s\nRef: %s\n",
+		clientName, ctx.AssetName, monitorName, ctx.SanitizedTarget, detectedAt, durationStr, ctx.IncidentRef))
+	if ctx.ViewURL != "" {
+		textBody.WriteString(fmt.Sprintf("View: %s\n", ctx.ViewURL))
+	}
 
 	return RenderedEmail{Subject: subject, HTMLBody: htmlBody, TextBody: textBody.String()}
 }
@@ -259,8 +270,11 @@ func renderIncidentResolved(ctx *notification.NotificationContext, isFA bool) Re
 		htmlBody := baseHTML("rtl", "fa", subject, heading+formatTable(rows)+btn)
 
 		textBody.WriteString(fmt.Sprintf("✅ رفع مشکل: [%s] %s به حالت عادی بازگشت\n", clientName, monitorName))
-		textBody.WriteString(fmt.Sprintf("مشتری: %s\nمدت قطعی: %s\nزمان رفع: %s\nمرجع: %s\nبررسی: %s\n",
-			clientName, totalDowntime, recoveredAt, ctx.IncidentRef, ctx.ViewURL))
+		textBody.WriteString(fmt.Sprintf("مشتری: %s\nمدت قطعی: %s\nزمان رفع: %s\nمرجع: %s\n",
+			clientName, totalDowntime, recoveredAt, ctx.IncidentRef))
+		if ctx.ViewURL != "" {
+			textBody.WriteString(fmt.Sprintf("بررسی: %s\n", ctx.ViewURL))
+		}
 
 		return RenderedEmail{Subject: subject, HTMLBody: htmlBody, TextBody: textBody.String()}
 	}
@@ -285,8 +299,11 @@ func renderIncidentResolved(ctx *notification.NotificationContext, isFA bool) Re
 	htmlBody := baseHTML("ltr", "en", subject, heading+formatTable(rows)+btn)
 
 	textBody.WriteString(fmt.Sprintf("✅ RESOLVED: [%s] %s is back UP\n", clientName, monitorName))
-	textBody.WriteString(fmt.Sprintf("Client: %s\nDowntime: %s\nRecovered: %s\nRef: %s\nView: %s\n",
-		clientName, totalDowntime, recoveredAt, ctx.IncidentRef, ctx.ViewURL))
+	textBody.WriteString(fmt.Sprintf("Client: %s\nDowntime: %s\nRecovered: %s\nRef: %s\n",
+		clientName, totalDowntime, recoveredAt, ctx.IncidentRef))
+	if ctx.ViewURL != "" {
+		textBody.WriteString(fmt.Sprintf("View: %s\n", ctx.ViewURL))
+	}
 
 	return RenderedEmail{Subject: subject, HTMLBody: htmlBody, TextBody: textBody.String()}
 }
@@ -338,8 +355,11 @@ func renderIncidentAcknowledged(ctx *notification.NotificationContext, isFA bool
 		htmlBody := baseHTML("rtl", "fa", subject, heading+banner+formatTable(rows)+btn)
 
 		textBody.WriteString(fmt.Sprintf("👁️ تایید بررسی: [%s] حادثه %s\n", clientName, ctx.IncidentRef))
-		textBody.WriteString(fmt.Sprintf("تاییدکننده: %s\nزمان تایید: %s\nمدت قطعی تا کنون: %s\nپیگیری: %s\n",
-			ackBy, ackAt, downtimeSoFar, ctx.ViewURL))
+		textBody.WriteString(fmt.Sprintf("تاییدکننده: %s\nزمان تایید: %s\nمدت قطعی تا کنون: %s\n",
+			ackBy, ackAt, downtimeSoFar))
+		if ctx.ViewURL != "" {
+			textBody.WriteString(fmt.Sprintf("پیگیری: %s\n", ctx.ViewURL))
+		}
 
 		return RenderedEmail{Subject: subject, HTMLBody: htmlBody, TextBody: textBody.String()}
 	}
@@ -364,8 +384,11 @@ func renderIncidentAcknowledged(ctx *notification.NotificationContext, isFA bool
 	htmlBody := baseHTML("ltr", "en", subject, heading+banner+formatTable(rows)+btn)
 
 	textBody.WriteString(fmt.Sprintf("👁️ ACKNOWLEDGED: [%s] Incident %s\n", clientName, ctx.IncidentRef))
-	textBody.WriteString(fmt.Sprintf("Acknowledged By: %s\nTime: %s\nDowntime So Far: %s\nView: %s\n",
-		ackBy, ackAt, downtimeSoFar, ctx.ViewURL))
+	textBody.WriteString(fmt.Sprintf("Acknowledged By: %s\nTime: %s\nDowntime So Far: %s\n",
+		ackBy, ackAt, downtimeSoFar))
+	if ctx.ViewURL != "" {
+		textBody.WriteString(fmt.Sprintf("View: %s\n", ctx.ViewURL))
+	}
 
 	return RenderedEmail{Subject: subject, HTMLBody: htmlBody, TextBody: textBody.String()}
 }
