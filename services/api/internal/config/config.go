@@ -171,6 +171,13 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("invalid TELEGRAM_MODE: %q (must be 'polling', 'webhook', or 'disabled')", c.TelegramMode)
 	}
 
+	switch strings.ToLower(c.EmailProvider) {
+	case "smtp", "none", "disabled", "mock", "":
+		// valid modes
+	default:
+		return fmt.Errorf("invalid EMAIL_PROVIDER: %q (must be 'disabled', 'none', or 'smtp')", c.EmailProvider)
+	}
+
 	if c.AppEnv == "production" {
 		if strings.Contains(c.SessionSecret, "dev-session-secret") || len(c.SessionSecret) < 32 {
 			return fmt.Errorf("production SESSION_SECRET must be at least 32 characters and cannot use default dev secret")

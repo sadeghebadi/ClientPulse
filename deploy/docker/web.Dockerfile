@@ -7,6 +7,8 @@ COPY apps/web/package*.json ./
 RUN npm ci
 
 COPY apps/web/ ./
+ARG NEXT_PUBLIC_API_BASE_URL=https://mindu.ir
+ENV NEXT_PUBLIC_API_BASE_URL=${NEXT_PUBLIC_API_BASE_URL}
 RUN npm run build
 
 # Production Runner

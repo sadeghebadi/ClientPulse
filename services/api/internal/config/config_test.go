@@ -114,6 +114,26 @@ func TestConfigValidation(t *testing.T) {
 			},
 			wantErr: true,
 		},
+		{
+			name: "production with EMAIL_PROVIDER=disabled without smtp credentials",
+			mutate: func(c *Config) {
+				c.AppEnv = "production"
+				c.SessionSecret = "a-very-long-production-session-secret-that-is-at-least-32-chars"
+				c.TokenHashPepper = "a-very-long-production-token-pepper-that-is-at-least-32-chars"
+				c.PublicAppURL = "https://mindu.ir"
+				c.EmailProvider = "disabled"
+				c.TelegramMode = "disabled"
+				c.SMTPHost = ""
+			},
+			wantErr: false,
+		},
+		{
+			name: "invalid EMAIL_PROVIDER rejected",
+			mutate: func(c *Config) {
+				c.EmailProvider = "unsupported_provider"
+			},
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {

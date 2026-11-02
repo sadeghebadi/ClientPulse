@@ -1,0 +1,7 @@
+.git
+node_modules
+apps/web/node_modules
+apps/web/.next
+deploy/build
+task-report/screenshots
+

@@ -13,6 +13,7 @@ COPY services/api/ ./
 # Build statically linked binaries
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o /bin/api ./cmd/api
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o /bin/migrate ./cmd/migrate
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o /bin/worker ./cmd/worker
 
 # Production Runner
 FROM alpine:3.24.3
@@ -26,6 +27,7 @@ RUN apk add --no-cache ca-certificates tzdata curl chromium font-dejavu font-not
 
 COPY --from=builder /bin/api /app/api
 COPY --from=builder /bin/migrate /app/migrate
+COPY --from=builder /bin/worker /app/worker
 COPY migrations /app/migrations
 
 USER clientpulse

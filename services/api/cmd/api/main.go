@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -103,25 +104,29 @@ func main() {
 		notifRepo := repository.NewNotificationDestRepository(db.Pool)
 
 		var telegramSender telegram.TelegramSender
-		if cfg.TelegramBotToken != "" {
+		if !strings.EqualFold(cfg.TelegramMode, "disabled") && cfg.TelegramBotToken != "" {
 			telegramSender = telegram.NewClientWithProxy(cfg.TelegramBotToken, "", cfg.TelegramProxyURL, 15*time.Second)
-		} else {
+		} else if !cfg.IsProduction() && !strings.EqualFold(cfg.TelegramMode, "disabled") {
 			log.Info("telegram bot token not configured; running in mock telegram mode")
 			telegramSender = telegram.NewMockSender()
 		}
 		telegramUpdateHdr := telegram.NewUpdateHandler(notifRepo, telegramSender, cfg.TelegramBotUsername, log)
-		emailClient := email.NewClient(email.SMTPConfig{
-			Host:      cfg.SMTPHost,
-			Port:      cfg.SMTPPort,
-			Username:  cfg.SMTPUsername,
-			Password:  cfg.SMTPPassword,
-			FromEmail: cfg.SMTPFromEmail,
-			FromName:  cfg.SMTPFromName,
-			TLSMode:   cfg.SMTPTLSMode,
-		})
+
+		var emailClient email.EmailSender
+		if !strings.EqualFold(cfg.EmailProvider, "disabled") && !strings.EqualFold(cfg.EmailProvider, "none") && cfg.SMTPHost != "" && (!cfg.IsProduction() || cfg.SMTPHost != "mailpit") {
+			emailClient = email.NewClient(email.SMTPConfig{
+				Host:      cfg.SMTPHost,
+				Port:      cfg.SMTPPort,
+				Username:  cfg.SMTPUsername,
+				Password:  cfg.SMTPPassword,
+				FromEmail: cfg.SMTPFromEmail,
+				FromName:  cfg.SMTPFromName,
+				TLSMode:   cfg.SMTPTLSMode,
+			})
+		}
 
 		var mailer mail.EmailSender
-		if cfg.SMTPHost != "" {
+		if !strings.EqualFold(cfg.EmailProvider, "disabled") && !strings.EqualFold(cfg.EmailProvider, "none") && cfg.SMTPHost != "" && (!cfg.IsProduction() || cfg.SMTPHost != "mailpit") {
 			mailer = mail.NewSMTPMailer(mail.SMTPConfig{
 				Host:     cfg.SMTPHost,
 				Port:     cfg.SMTPPort,

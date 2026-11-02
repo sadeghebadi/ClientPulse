@@ -41,6 +41,8 @@ type NotificationWorker struct {
 	logger          *slog.Logger
 	concurrency     int
 	contextResolver *notification.NotificationContextResolver
+	telegramMode    string
+	emailProvider   string
 }
 
 func NewNotificationWorker(
@@ -67,6 +69,13 @@ func NewNotificationWorker(
 		concurrency:    concurrency,
 		logger:         logger,
 	}
+}
+
+// WithProviders sets the transport mode for Telegram and Email.
+func (w *NotificationWorker) WithProviders(telegramMode, emailProvider string) *NotificationWorker {
+	w.telegramMode = telegramMode
+	w.emailProvider = emailProvider
+	return w
 }
 
 // WithPool configures a database connection pool for rich runtime context resolution.
@@ -200,10 +209,9 @@ func (w *NotificationWorker) Deliver(ctx context.Context, d *repository.Notifica
 }
 
 func (w *NotificationWorker) deliverTelegram(ctx context.Context, d *repository.NotificationDelivery) error {
-	if w.telegramSender == nil {
-		err := fmt.Errorf("telegram sender adapter is not configured")
-		_ = w.repo.MarkDeliveryFailed(ctx, d.ID, w.workerID, err.Error(), 1*time.Minute, false)
-		return err
+	if strings.EqualFold(w.telegramMode, "disabled") || w.telegramSender == nil {
+		w.logger.Info("telegram delivery transport disabled; cancelling delivery", "delivery_id", d.ID)
+		return w.repo.MarkDeliveryCancelled(ctx, d.ID, w.workerID, "transport disabled: Telegram delivery is intentionally disabled in this deployment")
 	}
 
 	chatID, err := strconv.ParseInt(d.Recipient, 10, 64)
@@ -259,10 +267,9 @@ func (w *NotificationWorker) deliverTelegram(ctx context.Context, d *repository.
 }
 
 func (w *NotificationWorker) deliverEmail(ctx context.Context, d *repository.NotificationDelivery) error {
-	if w.emailSender == nil {
-		err := fmt.Errorf("email sender adapter is not configured")
-		_ = w.repo.MarkDeliveryFailed(ctx, d.ID, w.workerID, err.Error(), 1*time.Minute, false)
-		return err
+	if strings.EqualFold(w.emailProvider, "disabled") || strings.EqualFold(w.emailProvider, "none") || w.emailSender == nil {
+		w.logger.Info("email delivery transport disabled; cancelling delivery", "delivery_id", d.ID)
+		return w.repo.MarkDeliveryCancelled(ctx, d.ID, w.workerID, "transport disabled: Email delivery is intentionally disabled in this deployment")
 	}
 
 	destLocale, _ := d.Payload["dest_locale"].(string)

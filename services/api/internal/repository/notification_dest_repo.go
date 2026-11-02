@@ -1034,6 +1034,33 @@ func (r *NotificationDestRepository) MarkDeliveryFailed(
 	return err
 }
 
+// MarkDeliveryCancelled updates delivery to terminal 'cancelled' state with an explicit reason.
+// Used when external transport is disabled (e.g., TELEGRAM_MODE=disabled or EMAIL_PROVIDER=disabled)
+// to ensure deliveries are not endlessly retried, never claimed as sent, and do not flood later.
+func (r *NotificationDestRepository) MarkDeliveryCancelled(
+	ctx context.Context,
+	deliveryID string,
+	workerID string,
+	reason string,
+) error {
+	attemptEntry, _ := json.Marshal(map[string]interface{}{
+		"status":    "cancelled",
+		"reason":    reason,
+		"timestamp": time.Now().UTC(),
+		"worker_id": workerID,
+	})
+
+	_, err := r.pool.Exec(ctx, `
+		UPDATE notification_deliveries
+		SET status = 'cancelled',
+		    error_message = $2,
+		    delivery_attempts = delivery_attempts || $3::jsonb,
+		    updated_at = NOW()
+		WHERE id = $1
+	`, deliveryID, reason, fmt.Sprintf("[%s]", string(attemptEntry)))
+	return err
+}
+
 // RequeueStaleDeliveries handles deliveries stuck in 'sending' for longer than the timeout.
 // If retry_count >= 1, the delivery outcome is uncertain (worker may have crashed after transmission).
 func (r *NotificationDestRepository) RequeueStaleDeliveries(ctx context.Context, staleThreshold time.Duration) (int64, error) {

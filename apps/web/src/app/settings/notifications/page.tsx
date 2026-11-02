@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { AppLayout } from "@/components/AppLayout";
 import { useAuth } from "@/lib/auth-context";
 import { useI18n } from "@/lib/i18n";
@@ -61,11 +61,13 @@ interface DeliveryRecord {
 
 export default function NotificationSettingsPage() {
   const { role, activeOrg } = useAuth();
-  const { t } = useI18n();
+  const { t, isRTL } = useI18n();
 
   const [activeTab, setActiveTab] = useState<"destinations" | "history">("destinations");
   const [destinations, setDestinations] = useState<Destination[]>([]);
   const [botUsername, setBotUsername] = useState<string>("");
+  const [telegramConfigured, setTelegramConfigured] = useState<boolean>(true);
+  const [emailConfigured, setEmailConfigured] = useState<boolean>(true);
   const [loading, setLoading] = useState<boolean>(true);
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
@@ -104,26 +106,33 @@ export default function NotificationSettingsPage() {
 
   const canManage = role === "owner" || role === "admin";
 
-  const fetchDestinations = async () => {
+  const fetchDestinations = useCallback(async () => {
     try {
-      setLoading(true);
       const data = await apiFetch<{
         destinations?: Destination[];
         bot_username?: string;
+        telegram_configured?: boolean;
+        email_configured?: boolean;
       }>("/api/v1/notifications/destinations");
 
       setDestinations(data?.destinations || []);
       if (data?.bot_username) {
         setBotUsername(data.bot_username);
       }
+      if (typeof data?.telegram_configured === "boolean") {
+        setTelegramConfigured(data.telegram_configured);
+      }
+      if (typeof data?.email_configured === "boolean") {
+        setEmailConfigured(data.email_configured);
+      }
     } catch (err: any) {
       setMessage({ type: "error", text: humanizeApiError(err) });
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  const fetchHistory = async () => {
+  const fetchHistory = useCallback(async () => {
     try {
       setLoadingHistory(true);
       const data = await apiFetch<{
@@ -136,7 +145,7 @@ export default function NotificationSettingsPage() {
     } finally {
       setLoadingHistory(false);
     }
-  };
+  }, []);
 
   // Auto-verify if url contains verify_email token
   useEffect(() => {
@@ -157,13 +166,48 @@ export default function NotificationSettingsPage() {
           });
       }
     }
-  }, []);
+  }, [fetchDestinations]);
 
   useEffect(() => {
-    fetchDestinations();
+    let isMounted = true;
+    apiFetch<{
+      destinations?: Destination[];
+      bot_username?: string;
+      telegram_configured?: boolean;
+      email_configured?: boolean;
+    }>("/api/v1/notifications/destinations")
+      .then((data) => {
+        if (!isMounted) return;
+        setDestinations(data?.destinations || []);
+        if (data?.bot_username) setBotUsername(data.bot_username);
+        if (typeof data?.telegram_configured === "boolean") setTelegramConfigured(data.telegram_configured);
+        if (typeof data?.email_configured === "boolean") setEmailConfigured(data.email_configured);
+      })
+      .catch((err: any) => {
+        if (!isMounted) return;
+        setMessage({ type: "error", text: humanizeApiError(err) });
+      })
+      .finally(() => {
+        if (isMounted) setLoading(false);
+      });
+
     if (activeTab === "history") {
-      fetchHistory();
+      apiFetch<{ deliveries?: DeliveryRecord[] }>("/api/v1/notifications/history?limit=30")
+        .then((data) => {
+          if (!isMounted) return;
+          setHistory(data?.deliveries || []);
+        })
+        .catch((err: any) => {
+          console.error("Failed fetching history:", err);
+        })
+        .finally(() => {
+          if (isMounted) setLoadingHistory(false);
+        });
     }
+
+    return () => {
+      isMounted = false;
+    };
   }, [activeOrg, activeTab]);
 
   // Connect Private Telegram
@@ -505,6 +549,17 @@ export default function NotificationSettingsPage() {
                 )}
               </div>
 
+              {!telegramConfigured && (
+                <div className="p-3.5 bg-amber-50 border-b border-amber-200 text-amber-800 text-xs flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0" />
+                  <span>
+                    {isRTL
+                      ? "ارسال اعلان‌های تلگرام در این نسخه اولیه پیکربندی نشده و به صورت موقت غیرفعال است."
+                      : "Production Telegram delivery is not configured yet (deferred for this release)."}
+                  </span>
+                </div>
+              )}
+
               {loading ? (
                 <div className="p-8 text-center text-slate-400 text-sm">
                   <RefreshCw className="w-5 h-5 animate-spin mx-auto mb-2" />
@@ -653,6 +708,17 @@ export default function NotificationSettingsPage() {
                   </Button>
                 )}
               </div>
+
+              {!emailConfigured && (
+                <div className="p-3.5 bg-amber-50 border-b border-amber-200 text-amber-800 text-xs flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0" />
+                  <span>
+                    {isRTL
+                      ? "ارسال ایمیل‌های اعلان در این نسخه اولیه پیکربندی نشده و به صورت موقت غیرفعال است."
+                      : "Production Email delivery is not configured yet (deferred for this release)."}
+                  </span>
+                </div>
+              )}
 
               {loading ? (
                 <div className="p-8 text-center text-slate-400 text-sm">Loading...</div>
@@ -918,6 +984,17 @@ export default function NotificationSettingsPage() {
                   </div>
                 )}
               </div>
+
+              {!telegramConfigured && (
+                <div className="p-3.5 bg-amber-50 border-b border-amber-200 text-amber-800 text-xs flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0" />
+                  <span>
+                    {isRTL
+                      ? "ارسال اعلان‌های تلگرام در این نسخه اولیه پیکربندی نشده و به صورت موقت غیرفعال است."
+                      : "Production Telegram delivery is not configured yet (deferred for this release)."}
+                  </span>
+                </div>
+              )}
 
               <div className="flex justify-end pt-2">
                 <Button

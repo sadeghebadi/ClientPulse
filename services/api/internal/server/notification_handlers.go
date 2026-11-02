@@ -59,10 +59,15 @@ func (h *NotificationHandler) ListDestinations(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	telegramConfigured := !strings.EqualFold(h.cfg.TelegramMode, "disabled") && h.cfg.TelegramBotToken != ""
+	emailConfigured := !strings.EqualFold(h.cfg.EmailProvider, "disabled") && !strings.EqualFold(h.cfg.EmailProvider, "none") && h.cfg.SMTPHost != "" && (!h.cfg.IsProduction() || h.cfg.SMTPHost != "mailpit")
+
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
-		"destinations": destinations,
-		"bot_username": strings.TrimPrefix(h.cfg.TelegramBotUsername, "@"),
+		"destinations":        destinations,
+		"bot_username":        strings.TrimPrefix(h.cfg.TelegramBotUsername, "@"),
+		"telegram_configured": telegramConfigured,
+		"email_configured":    emailConfigured,
 	})
 }
 
@@ -294,8 +299,13 @@ func (h *NotificationHandler) TestDestination(w http.ResponseWriter, r *http.Req
 			return
 		}
 		recipient = strconv.FormatInt(*dest.TelegramChatID, 10)
-		if h.telegramSender == nil {
-			sendJSONError(w, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", "Telegram Bot service is not configured")
+		if h.telegramSender == nil || (h.cfg.IsProduction() && strings.EqualFold(h.cfg.TelegramMode, "disabled")) {
+			idempKey := fmt.Sprintf("test:%s:%d", dest.ID, time.Now().UnixNano())
+			deliv, _ := h.repo.CreateDelivery(r.Context(), tc.OrganizationID, nil, dest.ID, dest.DestinationType, recipient, "test.notification", idempKey, testPayload)
+			if deliv != nil {
+				_ = h.repo.MarkDeliveryCancelled(r.Context(), deliv.ID, "api-test", "transport disabled: Telegram delivery is intentionally disabled in this deployment")
+			}
+			sendJSONError(w, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", "Telegram Bot service is not configured or disabled in this deployment")
 			return
 		}
 		msg := "🔔 <b>ClientPulse Test Notification</b>\n\nYour Telegram destination is connected and verified successfully!"
@@ -307,8 +317,13 @@ func (h *NotificationHandler) TestDestination(w http.ResponseWriter, r *http.Req
 			return
 		}
 		recipient = *dest.EmailAddress
-		if h.emailSender == nil {
-			sendJSONError(w, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", "Email service is not configured")
+		if h.emailSender == nil || (h.cfg.IsProduction() && (strings.EqualFold(h.cfg.EmailProvider, "disabled") || strings.EqualFold(h.cfg.EmailProvider, "none"))) {
+			idempKey := fmt.Sprintf("test:%s:%d", dest.ID, time.Now().UnixNano())
+			deliv, _ := h.repo.CreateDelivery(r.Context(), tc.OrganizationID, nil, dest.ID, dest.DestinationType, recipient, "test.notification", idempKey, testPayload)
+			if deliv != nil {
+				_ = h.repo.MarkDeliveryCancelled(r.Context(), deliv.ID, "api-test", "transport disabled: Email delivery is intentionally disabled in this deployment")
+			}
+			sendJSONError(w, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", "Email service is not configured or disabled in this deployment")
 			return
 		}
 		rendered := email.RenderNotificationEmail("test.notification", "en", testPayload, h.cfg.PublicAppURL)

@@ -103,26 +103,35 @@ func main() {
 	// Set up notification delivery worker
 	notifRepo := repository.NewNotificationDestRepository(db.Pool)
 	var botAPI telegram.TelegramBotAPI
-	if cfg.TelegramBotToken != "" {
+	if !strings.EqualFold(cfg.TelegramMode, "disabled") && cfg.TelegramBotToken != "" {
 		botAPI = telegram.NewClientWithProxy(
 			cfg.TelegramBotToken,
 			"",
 			cfg.TelegramProxyURL,
 			time.Duration(cfg.TelegramPollTimeoutSeconds+15)*time.Second,
 		)
-	} else {
+	} else if !cfg.IsProduction() && !strings.EqualFold(cfg.TelegramMode, "disabled") {
 		log.Info("telegram bot token not configured; running in mock telegram mode")
 		botAPI = telegram.NewMockSender()
+	} else {
+		log.Info("telegram integration disabled")
 	}
-	emailClient := email.NewClient(email.SMTPConfig{
-		Host:      cfg.SMTPHost,
-		Port:      cfg.SMTPPort,
-		Username:  cfg.SMTPUsername,
-		Password:  cfg.SMTPPassword,
-		FromEmail: cfg.SMTPFromEmail,
-		FromName:  cfg.SMTPFromName,
-		TLSMode:   cfg.SMTPTLSMode,
-	})
+
+	var emailClient *email.Client
+	if !strings.EqualFold(cfg.EmailProvider, "disabled") && !strings.EqualFold(cfg.EmailProvider, "none") && cfg.SMTPHost != "" && (!cfg.IsProduction() || cfg.SMTPHost != "mailpit") {
+		emailClient = email.NewClient(email.SMTPConfig{
+			Host:      cfg.SMTPHost,
+			Port:      cfg.SMTPPort,
+			Username:  cfg.SMTPUsername,
+			Password:  cfg.SMTPPassword,
+			FromEmail: cfg.SMTPFromEmail,
+			FromName:  cfg.SMTPFromName,
+			TLSMode:   cfg.SMTPTLSMode,
+		})
+	} else {
+		log.Info("email delivery provider disabled")
+	}
+
 	notifWorker := worker.NewNotificationWorker(
 		notifRepo,
 		botAPI,
@@ -131,7 +140,7 @@ func main() {
 		workerID,
 		cfg.WorkerConcurrency,
 		log,
-	).WithPool(db.Pool)
+	).WithPool(db.Pool).WithProviders(cfg.TelegramMode, cfg.EmailProvider)
 
 	// Set up cancellation context for graceful shutdown
 	workerCtx, workerCancel := context.WithCancel(context.Background())
@@ -152,7 +161,7 @@ func main() {
 	}()
 
 	// Launch Telegram Long-Polling daemon if configured
-	if strings.EqualFold(cfg.TelegramMode, "polling") {
+	if strings.EqualFold(cfg.TelegramMode, "polling") && botAPI != nil {
 		if cfg.TelegramBotToken == "" {
 			log.Warn("TELEGRAM_MODE is polling but TELEGRAM_BOT_TOKEN is empty; polling poller disabled")
 		} else {
