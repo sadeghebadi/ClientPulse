@@ -41,7 +41,7 @@ type SchedulerTelemetrySnapshot struct {
 // SchedulerHealthEvaluator calculates the current health status of the scheduler.
 type SchedulerHealthEvaluator struct {
 	pollPeriod  time.Duration
-	staleFactor int // multiplier of pollPeriod before considering stale (e.g. 5x)
+	staleFactor int // multiplier of pollPeriod before considering stale (e.g. 10x)
 }
 
 // NewSchedulerHealthEvaluator creates a new evaluator based on configured poll period.
@@ -51,8 +51,21 @@ func NewSchedulerHealthEvaluator(pollPeriod time.Duration) *SchedulerHealthEvalu
 	}
 	return &SchedulerHealthEvaluator{
 		pollPeriod:  pollPeriod,
-		staleFactor: 5,
+		staleFactor: 10,
 	}
+}
+
+// StaleThreshold returns the calculated threshold duration.
+func (e *SchedulerHealthEvaluator) StaleThreshold() time.Duration {
+	return e.staleThreshold()
+}
+
+func (e *SchedulerHealthEvaluator) staleThreshold() time.Duration {
+	staleThreshold := time.Duration(e.staleFactor) * e.pollPeriod
+	if staleThreshold < 20*time.Second {
+		staleThreshold = 20 * time.Second
+	}
+	return staleThreshold
 }
 
 // Evaluate determines the health state based on the current instance telemetry.
@@ -82,11 +95,7 @@ func (e *SchedulerHealthEvaluator) Evaluate(inst *repository.SchedulerInstanceSt
 	}
 
 	// Stale threshold derived from configured pollPeriod:
-	// e.g. pollPeriod = 1s -> stale after 10s (minimum 10s to absorb jitter/batch run)
-	staleThreshold := time.Duration(e.staleFactor) * e.pollPeriod
-	if staleThreshold < 10*time.Second {
-		staleThreshold = 10 * time.Second
-	}
+	staleThreshold := e.staleThreshold()
 
 	// 1. If it has never completed a poll since starting, check how long it has been running
 	if inst.LastSuccessfulPollAt == nil && inst.LastPollCompletedAt == nil {
@@ -129,7 +138,8 @@ func (e *SchedulerHealthEvaluator) Evaluate(inst *repository.SchedulerInstanceSt
 // SchedulerHealthService provides an interface for both API health check and future Platform Admin service.
 type SchedulerHealthService interface {
 	GetSchedulerStatus(ctx context.Context) (SchedulerTelemetrySnapshot, error)
-	GetStaleMonitors(ctx context.Context, thresholdSeconds int, limit int) ([]*repository.StaleMonitorItem, error)
+	GetSchedulerAggregateHealth(ctx context.Context) (*repository.SchedulerAggregateHealth, error)
+	GetStaleMonitors(ctx context.Context, intervalMultiplier, minToleranceSeconds, limit int) ([]*repository.StaleMonitorItem, error)
 	DiagnoseSchedulingState(ctx context.Context) (*repository.SchedulingStateDiagnostic, error)
 }
 
@@ -147,27 +157,35 @@ func NewSchedulerHealthService(repo *repository.SchedulerTelemetryRepository, po
 	}
 }
 
-// GetSchedulerStatus fetches latest state and evaluates health.
+// GetSchedulerStatus fetches latest state and evaluates health using the least-privilege procedure.
 func (s *DefaultSchedulerHealthService) GetSchedulerStatus(ctx context.Context) (SchedulerTelemetrySnapshot, error) {
-	inst, err := s.repo.GetLatestActiveInstance(ctx)
+	staleSec := int(s.evaluator.staleThreshold().Seconds())
+	agg, err := s.repo.GetSchedulerAggregateHealth(ctx, staleSec)
 	if err != nil {
 		return SchedulerTelemetrySnapshot{
 			State:   SchedulerStateUnknown,
-			Summary: "failed to retrieve scheduler telemetry: " + err.Error(),
+			Summary: "failed to retrieve scheduler aggregate health: " + err.Error(),
 		}, err
 	}
-	return s.evaluator.Evaluate(inst, time.Now().UTC()), nil
+
+	snap := SchedulerTelemetrySnapshot{
+		State:                SchedulerHealthState(agg.AggregateState),
+		LastSuccessfulPollAt: agg.LatestSuccessfulPollAt,
+		LastPollCompletedAt:  agg.LatestPollCompletedAt,
+		Summary:              fmt.Sprintf("aggregate: %s (%d active, %d healthy, %d stale, %d degraded)", agg.AggregateState, agg.TotalActiveInstances, agg.HealthyInstances, agg.StaleInstances, agg.DegradedInstances),
+	}
+	return snap, nil
 }
 
-// GetStaleMonitors delegates to repository detect_stale_monitors.
-func (s *DefaultSchedulerHealthService) GetStaleMonitors(ctx context.Context, thresholdSeconds int, limit int) ([]*repository.StaleMonitorItem, error) {
-	if thresholdSeconds <= 0 {
-		thresholdSeconds = 900 // 15 min default
-	}
-	if limit <= 0 {
-		limit = 100
-	}
-	return s.repo.DetectStaleMonitors(ctx, thresholdSeconds, limit)
+// GetSchedulerAggregateHealth retrieves aggregate multi-worker metrics.
+func (s *DefaultSchedulerHealthService) GetSchedulerAggregateHealth(ctx context.Context) (*repository.SchedulerAggregateHealth, error) {
+	staleSec := int(s.evaluator.staleThreshold().Seconds())
+	return s.repo.GetSchedulerAggregateHealth(ctx, staleSec)
+}
+
+// GetStaleMonitors delegates to repository detect_stale_monitors with dynamic per-monitor thresholds.
+func (s *DefaultSchedulerHealthService) GetStaleMonitors(ctx context.Context, intervalMultiplier, minToleranceSeconds, limit int) ([]*repository.StaleMonitorItem, error) {
+	return s.repo.DetectStaleMonitors(ctx, intervalMultiplier, minToleranceSeconds, limit)
 }
 
 // DiagnoseSchedulingState delegates to repository diagnose_monitor_scheduling_state.

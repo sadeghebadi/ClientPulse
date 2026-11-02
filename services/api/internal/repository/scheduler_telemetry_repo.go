@@ -74,14 +74,26 @@ type SchedulingStateDiagnostic struct {
 
 // StaleMonitorItem represents an overdue monitor identified by detect_stale_monitors.
 type StaleMonitorItem struct {
-	MonitorID       string     `json:"monitor_id"`
-	OrganizationID  string     `json:"organization_id"`
-	Status          string     `json:"status"`
-	IntervalSeconds int        `json:"interval_seconds"`
-	NextCheckAt     time.Time  `json:"next_check_at"`
-	LastCheckedAt   *time.Time `json:"last_checked_at"`
-	OverdueSeconds  int        `json:"overdue_seconds"`
-	IsFirstCheck    bool       `json:"is_first_check"`
+	MonitorID                  string     `json:"monitor_id"`
+	OrganizationID             string     `json:"organization_id"`
+	Status                     string     `json:"status"`
+	IntervalSeconds            int        `json:"interval_seconds"`
+	NextCheckAt                time.Time  `json:"next_check_at"`
+	LastCheckedAt              *time.Time `json:"last_checked_at"`
+	OverdueSeconds             int        `json:"overdue_seconds"`
+	EffectiveThresholdSeconds  int        `json:"effective_threshold_seconds"`
+	IsFirstCheck               bool       `json:"is_first_check"`
+}
+
+// SchedulerAggregateHealth represents aggregate health across all running worker instances.
+type SchedulerAggregateHealth struct {
+	TotalActiveInstances   int        `json:"total_active_instances"`
+	HealthyInstances       int        `json:"healthy_instances"`
+	StaleInstances         int        `json:"stale_instances"`
+	DegradedInstances      int        `json:"degraded_instances"`
+	LatestSuccessfulPollAt *time.Time `json:"latest_successful_poll_at"`
+	LatestPollCompletedAt  *time.Time `json:"latest_poll_completed_at"`
+	AggregateState         string     `json:"aggregate_state"`
 }
 
 // SchedulerTelemetryRepository manages persistence and queries for scheduler telemetry.
@@ -258,18 +270,28 @@ func (r *SchedulerTelemetryRepository) DiagnoseSchedulingState(ctx context.Conte
 	return &d, nil
 }
 
-// DetectStaleMonitors executes the security-definer stale monitor diagnostic function.
-func (r *SchedulerTelemetryRepository) DetectStaleMonitors(ctx context.Context, thresholdSeconds, limit int) ([]*StaleMonitorItem, error) {
+// DetectStaleMonitors executes the security-definer stale monitor diagnostic function with dynamic per-monitor thresholds.
+func (r *SchedulerTelemetryRepository) DetectStaleMonitors(ctx context.Context, intervalMultiplier, minToleranceSeconds, limit int) ([]*StaleMonitorItem, error) {
 	if r == nil || r.pool == nil {
 		return nil, fmt.Errorf("database pool is nil")
 	}
 
+	if intervalMultiplier <= 0 {
+		intervalMultiplier = 3
+	}
+	if minToleranceSeconds <= 0 {
+		minToleranceSeconds = 180
+	}
+	if limit <= 0 {
+		limit = 100
+	}
+
 	query := `
 		SELECT monitor_id, organization_id, status, interval_seconds,
-		       next_check_at, last_checked_at, overdue_seconds, is_first_check
-		FROM detect_stale_monitors($1, $2)
+		       next_check_at, last_checked_at, overdue_seconds, effective_threshold_seconds, is_first_check
+		FROM detect_stale_monitors($1, $2, $3)
 	`
-	rows, err := r.pool.Query(ctx, query, thresholdSeconds, limit)
+	rows, err := r.pool.Query(ctx, query, intervalMultiplier, minToleranceSeconds, limit)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query stale monitors: %w", err)
 	}
@@ -280,13 +302,46 @@ func (r *SchedulerTelemetryRepository) DetectStaleMonitors(ctx context.Context, 
 		var item StaleMonitorItem
 		if err := rows.Scan(
 			&item.MonitorID, &item.OrganizationID, &item.Status, &item.IntervalSeconds,
-			&item.NextCheckAt, &item.LastCheckedAt, &item.OverdueSeconds, &item.IsFirstCheck,
+			&item.NextCheckAt, &item.LastCheckedAt, &item.OverdueSeconds, &item.EffectiveThresholdSeconds, &item.IsFirstCheck,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan stale monitor item: %w", err)
 		}
 		items = append(items, &item)
 	}
 	return items, rows.Err()
+}
+
+// GetSchedulerAggregateHealth calls the security-definer function get_scheduler_aggregate_health.
+func (r *SchedulerTelemetryRepository) GetSchedulerAggregateHealth(ctx context.Context, staleThresholdSeconds int) (*SchedulerAggregateHealth, error) {
+	if r == nil || r.pool == nil {
+		return nil, fmt.Errorf("database pool is nil")
+	}
+
+	if staleThresholdSeconds <= 0 {
+		staleThresholdSeconds = 20
+	}
+
+	query := `
+		SELECT total_active_instances, healthy_instances, stale_instances, degraded_instances,
+		       latest_successful_poll_at, latest_poll_completed_at, aggregate_state
+		FROM get_scheduler_aggregate_health($1);
+	`
+	row := r.pool.QueryRow(ctx, query, staleThresholdSeconds)
+
+	var h SchedulerAggregateHealth
+	err := row.Scan(
+		&h.TotalActiveInstances,
+		&h.HealthyInstances,
+		&h.StaleInstances,
+		&h.DegradedInstances,
+		&h.LatestSuccessfulPollAt,
+		&h.LatestPollCompletedAt,
+		&h.AggregateState,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get scheduler aggregate health: %w", err)
+	}
+	return &h, nil
 }
 
 // GetLatestActiveInstance retrieves the most recently active scheduler instance state.

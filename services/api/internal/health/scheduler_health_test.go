@@ -26,7 +26,20 @@ func (m *mockSchedulerService) GetSchedulerStatus(ctx context.Context) (Schedule
 	return SchedulerTelemetrySnapshot{State: SchedulerStateUnknown}, nil
 }
 
-func (m *mockSchedulerService) GetStaleMonitors(ctx context.Context, thresholdSeconds int, limit int) ([]*repository.StaleMonitorItem, error) {
+func (m *mockSchedulerService) GetSchedulerAggregateHealth(ctx context.Context) (*repository.SchedulerAggregateHealth, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	state := "Unknown"
+	if m.snap != nil {
+		state = string(m.snap.State)
+	}
+	return &repository.SchedulerAggregateHealth{
+		AggregateState: state,
+	}, nil
+}
+
+func (m *mockSchedulerService) GetStaleMonitors(ctx context.Context, intervalMultiplier, minToleranceSeconds, limit int) ([]*repository.StaleMonitorItem, error) {
 	return nil, nil
 }
 
@@ -54,8 +67,8 @@ func TestSchedulerHealthEvaluator(t *testing.T) {
 		t.Fatalf("expected state Unknown for newly started scheduler, got %s", snap.State)
 	}
 
-	// 3. Started long ago, never polled beyond threshold -> Stale
-	inst.StartedAt = now.Add(-15 * time.Second)
+	// 3. Started long ago, never polled beyond threshold (20s) -> Stale
+	inst.StartedAt = now.Add(-25 * time.Second)
 	snap = evaluator.Evaluate(inst, now)
 	if snap.State != SchedulerStateStale {
 		t.Fatalf("expected state Stale for unstarted scheduler, got %s", snap.State)
@@ -72,8 +85,8 @@ func TestSchedulerHealthEvaluator(t *testing.T) {
 		t.Fatalf("expected state Healthy for recent poll, got %s", snap.State)
 	}
 
-	// 5. Polled successfully in past, but has stopped for > 10s (stale threshold) -> Stale
-	lastOldPoll := now.Add(-15 * time.Second)
+	// 5. Polled successfully in past, but has stopped for > 20s (stale threshold) -> Stale
+	lastOldPoll := now.Add(-25 * time.Second)
 	inst.LastPollCompletedAt = &lastOldPoll
 	inst.LastSuccessfulPollAt = &lastOldPoll
 	snap = evaluator.Evaluate(inst, now)

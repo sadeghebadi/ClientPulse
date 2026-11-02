@@ -299,8 +299,8 @@ func TestSchedulerObservabilityAndDiagnostics(t *testing.T) {
 			RETURNING id
 		`, orgID, assetID).Scan(&staleActiveMonID)
 
-		// Run detect_stale_monitors with threshold 900 seconds (15 min)
-		staleList, err := telemetryRepo.DetectStaleMonitors(ctx, 900, 100)
+		// Run detect_stale_monitors with multiplier 3, min tolerance 180s (3 min)
+		staleList, err := telemetryRepo.DetectStaleMonitors(ctx, 3, 180, 100)
 		if err != nil {
 			t.Fatalf("DetectStaleMonitors failed: %v", err)
 		}
@@ -345,7 +345,7 @@ func TestSchedulerObservabilityAndDiagnostics(t *testing.T) {
 		}
 
 		// 2. clientpulse_app cannot call detect_stale_monitors
-		_, err = appDB.Pool.Exec(ctx, "SELECT * FROM detect_stale_monitors(900, 10)")
+		_, err = appDB.Pool.Exec(ctx, "SELECT * FROM detect_stale_monitors(3, 180, 10)")
 		if err == nil {
 			t.Fatalf("SECURITY VIOLATION: clientpulse_app was able to execute detect_stale_monitors")
 		}
