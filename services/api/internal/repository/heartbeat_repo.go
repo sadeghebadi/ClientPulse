@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -284,22 +285,169 @@ func (r *HeartbeatRepository) ResumeHeartbeat(ctx context.Context, orgID, heartb
 	})
 }
 
-// ArchiveHeartbeat soft-deletes the heartbeat monitor while preserving history.
+// ArchiveHeartbeat soft-deletes the heartbeat monitor and resolves any associated open incidents
+// with resolution_type 'source_monitor_deleted' while preserving historical records and audit logs.
 func (r *HeartbeatRepository) ArchiveHeartbeat(ctx context.Context, orgID, heartbeatID string) error {
+	return r.ArchiveHeartbeatWithActor(ctx, orgID, heartbeatID, "")
+}
+
+// ArchiveHeartbeatWithActor soft-deletes the heartbeat monitor and resolves any associated open incidents
+// attributing the action to the acting user.
+func (r *HeartbeatRepository) ArchiveHeartbeatWithActor(ctx context.Context, orgID, heartbeatID, userID string) error {
 	return WithTenantTx(ctx, r.pool, orgID, func(tx pgx.Tx) error {
+		var hbName string
+		var clientID string
+		err := tx.QueryRow(ctx, `
+			SELECT name, client_id
+			FROM heartbeat_monitors
+			WHERE id = $1 AND organization_id = $2 AND archived_at IS NULL
+			FOR UPDATE
+		`, heartbeatID, orgID).Scan(&hbName, &clientID)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrHeartbeatNotFound
+			}
+			return err
+		}
+
+		now := time.Now().UTC()
+
 		res, err := tx.Exec(ctx, `
 			UPDATE heartbeat_monitors
-			SET archived_at = NOW(),
+			SET archived_at = $1,
 			    is_active = false,
 			    updated_at = NOW()
-			WHERE id = $1 AND organization_id = $2 AND archived_at IS NULL
-		`, heartbeatID, orgID)
+			WHERE id = $2 AND organization_id = $3 AND archived_at IS NULL
+		`, now, heartbeatID, orgID)
 		if err != nil {
 			return err
 		}
 		if res.RowsAffected() == 0 {
 			return ErrHeartbeatNotFound
 		}
+
+		// Identify all open incidents belonging to that exact Heartbeat Monitor
+		rows, err := tx.Query(ctx, `
+			SELECT id, confirmed_at
+			FROM incidents
+			WHERE heartbeat_monitor_id = $1 AND organization_id = $2 AND status = 'open'
+			FOR UPDATE
+		`, heartbeatID, orgID)
+		if err != nil {
+			return fmt.Errorf("failed to find open incidents for heartbeat: %w", err)
+		}
+		defer rows.Close()
+
+		type openInc struct {
+			id          string
+			confirmedAt time.Time
+		}
+		var openIncs []openInc
+		for rows.Next() {
+			var oi openInc
+			if err := rows.Scan(&oi.id, &oi.confirmedAt); err != nil {
+				return err
+			}
+			openIncs = append(openIncs, oi)
+		}
+		if err := rows.Err(); err != nil {
+			return err
+		}
+
+		var actorUserPtr *string
+		if userID != "" {
+			actorUserPtr = &userID
+		}
+
+		var resolvedIncIDs []string
+		for _, oi := range openIncs {
+			durationSec := int(now.Sub(oi.confirmedAt).Seconds())
+			if durationSec < 0 {
+				durationSec = 0
+			}
+
+			resolutionNote := "Closed because the associated heartbeat monitor was deleted."
+			_, err = tx.Exec(ctx, `
+				UPDATE incidents
+				SET status = 'resolved',
+				    resolved_at = $1,
+				    resolved_by = $2,
+				    resolution_type = 'source_monitor_deleted',
+				    resolution_note = $3,
+				    duration_seconds = $4,
+				    updated_at = NOW()
+				WHERE id = $5 AND organization_id = $6
+			`, now, actorUserPtr, resolutionNote, durationSec, oi.id, orgID)
+			if err != nil {
+				return fmt.Errorf("failed to resolve incident %s on heartbeat deletion: %w", oi.id, err)
+			}
+			resolvedIncIDs = append(resolvedIncIDs, oi.id)
+
+			// Record notification event for each resolved incident
+			idempKey := fmt.Sprintf("inc_res_del:%s:%d", oi.id, now.Unix())
+			resPayload := map[string]interface{}{
+				"incident_id":     oi.id,
+				"heartbeat_id":    heartbeatID,
+				"heartbeat_name":  hbName,
+				"client_id":       clientID,
+				"resolution_type": "source_monitor_deleted",
+				"resolved_at":     now.Format(time.RFC3339),
+				"duration_sec":    durationSec,
+				"reason":          "source_monitor_deleted",
+			}
+			if actorUserPtr != nil {
+				resPayload["resolved_by"] = *actorUserPtr
+			}
+			_, _ = tx.Exec(ctx, `
+				INSERT INTO notification_events (
+					organization_id, event_type, incident_id, heartbeat_monitor_id,
+					client_id, idempotency_key, payload, status, created_at
+				)
+				VALUES ($1, 'incident.resolved', $2, $3, $4, $5, $6, 'pending', NOW())
+				ON CONFLICT (idempotency_key) DO NOTHING
+			`, orgID, oi.id, heartbeatID, clientID, idempKey, resPayload)
+
+			// Record audit log entry for this incident resolution
+			auditMeta := map[string]interface{}{
+				"incident_id":      oi.id,
+				"heartbeat_id":     heartbeatID,
+				"heartbeat_name":   hbName,
+				"resolution_type":  "source_monitor_deleted",
+				"resolution_note":  resolutionNote,
+				"resolved_at":      now.Format(time.RFC3339),
+				"duration_seconds": durationSec,
+			}
+			if actorUserPtr != nil {
+				auditMeta["resolved_by"] = *actorUserPtr
+			}
+			metaJSON, _ := json.Marshal(auditMeta)
+			_, _ = tx.Exec(ctx, `
+				INSERT INTO audit_logs (
+					organization_id, actor_user_id, action, entity_type, entity_id, metadata_json, ip_hash, created_at
+				)
+				VALUES ($1, $2, 'incident.resolved', 'incident', $3, $4, '', NOW())
+			`, orgID, actorUserPtr, oi.id, metaJSON)
+		}
+
+		// Record audit log for heartbeat monitor deletion
+		hbAuditMeta := map[string]interface{}{
+			"heartbeat_id":          heartbeatID,
+			"heartbeat_name":        hbName,
+			"client_id":             clientID,
+			"archived_at":           now.Format(time.RFC3339),
+			"resolved_incident_ids": resolvedIncIDs,
+		}
+		if actorUserPtr != nil {
+			hbAuditMeta["deleted_by"] = *actorUserPtr
+		}
+		metaJSON, _ := json.Marshal(hbAuditMeta)
+		_, _ = tx.Exec(ctx, `
+			INSERT INTO audit_logs (
+				organization_id, actor_user_id, action, entity_type, entity_id, metadata_json, ip_hash, created_at
+			)
+			VALUES ($1, $2, 'heartbeat.deleted', 'heartbeat_monitor', $3, $4, '', NOW())
+		`, orgID, actorUserPtr, heartbeatID, metaJSON)
+
 		return nil
 	})
 }
@@ -629,24 +777,44 @@ func (r *HeartbeatRepository) RecordHeartbeatPing(ctx context.Context, plaintext
 				UPDATE incidents
 				SET status = 'resolved',
 				    resolved_at = $1,
+				    resolution_type = 'automatic_recovery',
 				    duration_seconds = $2,
 				    updated_at = NOW()
 				WHERE id = $3 AND organization_id = $4
 				RETURNING id, organization_id, monitor_id, heartbeat_monitor_id, first_failure_at,
 				          confirmed_at, resolved_at, status, failure_category, first_failure_result_id,
-				          recovery_result_id, acknowledged_at, acknowledged_by, notification_state,
+				          recovery_result_id, acknowledged_at, acknowledged_by, resolved_by,
+				          resolution_type, resolution_note, notification_state,
 				          duration_seconds, summary, created_at, updated_at
 			`, now, durationSec, openIncID, hb.OrganizationID).Scan(
 				&inc.ID, &inc.OrganizationID, &inc.MonitorID, &inc.HeartbeatMonitorID,
 				&inc.FirstFailureAt, &inc.ConfirmedAt, &inc.ResolvedAt, &inc.Status,
 				&inc.FailureCategory, &inc.FirstFailureResultID, &inc.RecoveryResultID,
-				&inc.AcknowledgedAt, &inc.AcknowledgedBy, &inc.NotificationState,
+				&inc.AcknowledgedAt, &inc.AcknowledgedBy, &inc.ResolvedBy,
+				&inc.ResolutionType, &inc.ResolutionNote, &inc.NotificationState,
 				&inc.DurationSeconds, &inc.Summary, &inc.CreatedAt, &inc.UpdatedAt,
 			)
 			if err != nil {
 				return fmt.Errorf("failed to resolve heartbeat incident: %w", err)
 			}
 			resolvedIncident = &inc
+
+			// Record audit log for automatic recovery
+			auditMeta := map[string]interface{}{
+				"incident_id":      inc.ID,
+				"heartbeat_id":     hb.ID,
+				"heartbeat_name":   hb.Name,
+				"resolution_type":  "automatic_recovery",
+				"resolved_at":      now.Format(time.RFC3339),
+				"duration_seconds": durationSec,
+			}
+			metaJSON, _ := json.Marshal(auditMeta)
+			_, _ = tx.Exec(ctx, `
+				INSERT INTO audit_logs (
+					organization_id, actor_user_id, action, entity_type, entity_id, metadata_json, ip_hash, created_at
+				)
+				VALUES ($1, NULL, 'incident.resolved', 'incident', $2, $3, '', NOW())
+			`, hb.OrganizationID, inc.ID, metaJSON)
 
 			// Generate persistent notification event: heartbeat.recovered
 			// Enrich payload with rich context via JOIN (immutable snapshot at event time).

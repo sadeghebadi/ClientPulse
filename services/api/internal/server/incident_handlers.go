@@ -53,6 +53,8 @@ func (h *IncidentHandler) List(w http.ResponseWriter, r *http.Request) {
 		MonitorID:          r.URL.Query().Get("monitor_id"),
 		HeartbeatMonitorID: r.URL.Query().Get("heartbeat_id"),
 		FailureCategory:    r.URL.Query().Get("failure_category"),
+		TargetType:         r.URL.Query().Get("target_type"),
+		AckState:           r.URL.Query().Get("ack_state"),
 		Limit:              limit,
 		Offset:             offset,
 	}
@@ -121,6 +123,10 @@ func (h *IncidentHandler) Acknowledge(w http.ResponseWriter, r *http.Request) {
 			sendJSONError(w, http.StatusNotFound, "NOT_FOUND", "Incident not found")
 			return
 		}
+		if errors.Is(err, repository.ErrIncidentAlreadyResolved) {
+			sendJSONError(w, http.StatusBadRequest, "ALREADY_RESOLVED", "Incident is already resolved")
+			return
+		}
 		if errors.Is(err, repository.ErrIncidentAlreadyAcked) {
 			sendJSONError(w, http.StatusBadRequest, "ALREADY_ACKNOWLEDGED", "Incident has already been acknowledged")
 			return
@@ -130,6 +136,42 @@ func (h *IncidentHandler) Acknowledge(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.logger.Info("incident acknowledged", "incident_id", id, "user_id", uc.UserID)
+
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"incident": inc,
+	})
+}
+
+// Resolve handles POST /api/v1/incidents/{id}/resolve (Tenant-scoped, RoleMember)
+func (h *IncidentHandler) Resolve(w http.ResponseWriter, r *http.Request) {
+	tc := tenant.GetTenantContext(r.Context())
+	uc := tenant.GetUserContext(r.Context())
+	id := strings.TrimSpace(r.PathValue("id"))
+
+	var body struct {
+		Note *string `json:"note"`
+	}
+	if r.Body != nil {
+		_ = json.NewDecoder(r.Body).Decode(&body)
+	}
+
+	inc, err := h.repo.ResolveIncidentManually(r.Context(), tc.OrganizationID, id, uc.UserID, body.Note)
+	if err != nil {
+		if errors.Is(err, repository.ErrIncidentNotFound) {
+			sendJSONError(w, http.StatusNotFound, "NOT_FOUND", "Incident not found")
+			return
+		}
+		if errors.Is(err, repository.ErrIncidentAlreadyResolved) {
+			sendJSONError(w, http.StatusBadRequest, "ALREADY_RESOLVED", "Incident is already resolved")
+			return
+		}
+		h.logger.Error("failed to manually resolve incident", "incident_id", id, "error", err)
+		sendJSONError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to resolve incident")
+		return
+	}
+
+	h.logger.Info("incident manually resolved", "incident_id", id, "user_id", uc.UserID)
 
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{

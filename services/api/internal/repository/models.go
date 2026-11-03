@@ -204,20 +204,25 @@ type ClaimedMonitorJob struct {
 
 // DashboardStats aggregates high-level metrics for the active workspace.
 type DashboardStats struct {
-	TotalClients          int            `json:"total_clients"`
-	TotalAssets           int            `json:"total_assets"`
-	MonitorsUp            int            `json:"monitors_up"`
-	MonitorsDown          int            `json:"monitors_down"`
-	MonitorsSuspectedDown int            `json:"monitors_suspected_down"`
-	MonitorsPending       int            `json:"monitors_pending"`
-	MonitorsPaused        int            `json:"monitors_paused"`
-	MonitorsUnknown       int            `json:"monitors_unknown"`
-	OpenIncidents         int            `json:"open_incidents"`
-	TotalHeartbeats       int            `json:"total_heartbeats"`
-	HeartbeatsHealthy     int            `json:"heartbeats_healthy"`
-	HeartbeatsMissed      int            `json:"heartbeats_missed"`
-	HeartbeatsPending     int            `json:"heartbeats_pending"`
-	RecentChecks          []*CheckResult `json:"recent_checks"`
+	TotalClients             int            `json:"total_clients"`
+	TotalAssets              int            `json:"total_assets"`
+	MonitorsUp               int            `json:"monitors_up"`
+	MonitorsDown             int            `json:"monitors_down"`
+	MonitorsSuspectedDown    int            `json:"monitors_suspected_down"`
+	MonitorsPending          int            `json:"monitors_pending"`
+	MonitorsPaused           int            `json:"monitors_paused"`
+	MonitorsUnknown          int            `json:"monitors_unknown"`
+	OpenIncidents            int            `json:"open_incidents"`
+	UnacknowledgedIncidents  int            `json:"unacknowledged_incidents"`
+	AcknowledgedIncidents    int            `json:"acknowledged_incidents"`
+	ResolvedIncidents        int            `json:"resolved_incidents"`
+	WebsiteOutageIncidents   int            `json:"website_outage_incidents"`
+	HeartbeatMissedIncidents int            `json:"heartbeat_missed_incidents"`
+	TotalHeartbeats          int            `json:"total_heartbeats"`
+	HeartbeatsHealthy        int            `json:"heartbeats_healthy"`
+	HeartbeatsMissed         int            `json:"heartbeats_missed"`
+	HeartbeatsPending        int            `json:"heartbeats_pending"`
+	RecentChecks             []*CheckResult `json:"recent_checks"`
 }
 
 // CheckAggregateHourly represents hourly aggregated check metrics.
@@ -291,6 +296,9 @@ type Incident struct {
 	RecoveryResultID     *string    `json:"recovery_result_id,omitempty"`
 	AcknowledgedAt       *time.Time `json:"acknowledged_at,omitempty"`
 	AcknowledgedBy       *string    `json:"acknowledged_by,omitempty"`
+	ResolvedBy           *string    `json:"resolved_by,omitempty"`
+	ResolutionType       *string    `json:"resolution_type,omitempty"`
+	ResolutionNote       *string    `json:"resolution_note,omitempty"`
 	NotificationState    string     `json:"notification_state"`
 	DurationSeconds      *int       `json:"duration_seconds,omitempty"`
 	Summary              *string    `json:"summary,omitempty"`
@@ -306,6 +314,9 @@ type Incident struct {
 	AssetName              *string      `json:"asset_name,omitempty"`
 	AcknowledgedByName     *string      `json:"acknowledged_by_name,omitempty"`
 	AcknowledgedByEmail    *string      `json:"acknowledged_by_email,omitempty"`
+	ResolvedByName         *string      `json:"resolved_by_name,omitempty"`
+	ResolvedByEmail        *string      `json:"resolved_by_email,omitempty"`
+	HeartbeatArchivedAt    *time.Time   `json:"heartbeat_archived_at,omitempty"`
 	FirstFailureResult     *CheckResult `json:"first_failure_result,omitempty"`
 	RecoveryResult         *CheckResult `json:"recovery_result,omitempty"`
 }

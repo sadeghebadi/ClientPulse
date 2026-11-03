@@ -230,6 +230,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 		mux.Handle("GET /api/v1/incidents", tenantScoped(s.deps.IncidentHdr.List, ""))
 		mux.Handle("GET /api/v1/incidents/{id}", tenantScoped(s.deps.IncidentHdr.Get, ""))
 		mux.Handle("POST /api/v1/incidents/{id}/acknowledge", sensitiveTenantScoped(s.deps.IncidentHdr.Acknowledge, tenant.RoleMember))
+		mux.Handle("POST /api/v1/incidents/{id}/resolve", sensitiveTenantScoped(s.deps.IncidentHdr.Resolve, tenant.RoleMember))
 		mux.Handle("GET /api/v1/monitors/{id}/uptime", tenantScoped(s.deps.IncidentHdr.Uptime, ""))
 	}
 

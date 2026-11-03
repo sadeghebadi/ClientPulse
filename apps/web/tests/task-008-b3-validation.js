@@ -326,6 +326,9 @@ async function runDashboardValidation() {
     // TEST 7: Interactive Acknowledge Incident Action
     // -------------------------------------------------------------------------
     console.log("\n>>> [TEST 7] Interactive Incident Acknowledge");
+    // Ensure user has verified email for sensitiveTenantScoped action
+    runSql(`UPDATE users SET email_verified_at = NOW() WHERE email = '${emptyEmail}';`);
+
     const emptyOrgId = runSql(`SELECT organization_id FROM organization_memberships WHERE user_id = (SELECT id FROM users WHERE email = '${emptyEmail}') LIMIT 1;`);
     const cId = runSql(`INSERT INTO clients (id, organization_id, name, status, created_at, updated_at) VALUES (gen_random_uuid(), '${emptyOrgId}', 'Test Client', 'active', NOW(), NOW()) RETURNING id;`);
     const aId = runSql(`INSERT INTO assets (id, organization_id, client_id, name, url, type, environment, is_active, created_at, updated_at) VALUES (gen_random_uuid(), '${emptyOrgId}', '${cId}', 'Test Web', 'https://example.org', 'website', 'production', true, NOW(), NOW()) RETURNING id;`);

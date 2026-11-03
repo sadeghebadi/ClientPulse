@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -513,24 +514,44 @@ func (r *MonitorRepository) RecordScheduledCheckOutcomeWithResult(ctx context.Co
 					SET status = 'resolved',
 					    resolved_at = $1,
 					    recovery_result_id = $2,
+					    resolution_type = 'automatic_recovery',
 					    duration_seconds = $3,
 					    updated_at = NOW()
 					WHERE id = $4 AND organization_id = $5
 					RETURNING id, organization_id, monitor_id, heartbeat_monitor_id, first_failure_at,
 					          confirmed_at, resolved_at, status, failure_category, first_failure_result_id,
-					          recovery_result_id, acknowledged_at, acknowledged_by, notification_state,
+					          recovery_result_id, acknowledged_at, acknowledged_by, resolved_by,
+					          resolution_type, resolution_note, notification_state,
 					          duration_seconds, summary, created_at, updated_at
 				`, params.CompletedAt, params.CheckResultID, durationSec, openIncID, params.OrganizationID).Scan(
 					&inc.ID, &inc.OrganizationID, &inc.MonitorID, &inc.HeartbeatMonitorID,
 					&inc.FirstFailureAt, &inc.ConfirmedAt, &inc.ResolvedAt, &inc.Status,
 					&inc.FailureCategory, &inc.FirstFailureResultID, &inc.RecoveryResultID,
-					&inc.AcknowledgedAt, &inc.AcknowledgedBy, &inc.NotificationState,
+					&inc.AcknowledgedAt, &inc.AcknowledgedBy, &inc.ResolvedBy,
+					&inc.ResolutionType, &inc.ResolutionNote, &inc.NotificationState,
 					&inc.DurationSeconds, &inc.Summary, &inc.CreatedAt, &inc.UpdatedAt,
 				)
 				if err != nil {
 					return fmt.Errorf("failed to resolve incident: %w", err)
 				}
 				resultingIncident = &inc
+
+				// Record audit log entry for automatic recovery
+				auditMeta := map[string]interface{}{
+					"incident_id":        inc.ID,
+					"monitor_id":         params.MonitorID,
+					"resolution_type":    "automatic_recovery",
+					"resolved_at":        params.CompletedAt.Format(time.RFC3339),
+					"duration_seconds":   durationSec,
+					"recovery_result_id": params.CheckResultID,
+				}
+				metaJSON, _ := json.Marshal(auditMeta)
+				_, _ = tx.Exec(ctx, `
+					INSERT INTO audit_logs (
+						organization_id, actor_user_id, action, entity_type, entity_id, metadata_json, ip_hash, created_at
+					)
+					VALUES ($1, NULL, 'incident.resolved', 'incident', $2, $3, '', NOW())
+				`, params.OrganizationID, inc.ID, metaJSON)
 
 				// Generate persistent notification event: incident.resolved
 				// Enrich payload with rich context via JOIN (immutable snapshot at event time).
@@ -619,13 +640,15 @@ func (r *MonitorRepository) RecordScheduledCheckOutcomeWithResult(ctx context.Co
 						VALUES ($1, $2, $3, $4, 'open', $5, $6, 'pending', $7, NOW(), NOW())
 						RETURNING id, organization_id, monitor_id, heartbeat_monitor_id, first_failure_at,
 						          confirmed_at, resolved_at, status, failure_category, first_failure_result_id,
-						          recovery_result_id, acknowledged_at, acknowledged_by, notification_state,
+						          recovery_result_id, acknowledged_at, acknowledged_by, resolved_by,
+						          resolution_type, resolution_note, notification_state,
 						          duration_seconds, summary, created_at, updated_at
 					`, params.OrganizationID, params.MonitorID, firstFailureAt, params.CompletedAt, failCat, firstResultID, summary).Scan(
 						&inc.ID, &inc.OrganizationID, &inc.MonitorID, &inc.HeartbeatMonitorID,
 						&inc.FirstFailureAt, &inc.ConfirmedAt, &inc.ResolvedAt, &inc.Status,
 						&inc.FailureCategory, &inc.FirstFailureResultID, &inc.RecoveryResultID,
-						&inc.AcknowledgedAt, &inc.AcknowledgedBy, &inc.NotificationState,
+						&inc.AcknowledgedAt, &inc.AcknowledgedBy, &inc.ResolvedBy,
+						&inc.ResolutionType, &inc.ResolutionNote, &inc.NotificationState,
 						&inc.DurationSeconds, &inc.Summary, &inc.CreatedAt, &inc.UpdatedAt,
 					)
 					if err != nil {

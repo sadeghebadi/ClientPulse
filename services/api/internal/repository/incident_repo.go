@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -24,6 +25,8 @@ type IncidentFilter struct {
 	MonitorID          string
 	HeartbeatMonitorID string
 	FailureCategory    string
+	TargetType         string // "monitor", "heartbeat", or "" for all
+	AckState           string // "ack", "unack", or "" for all
 	From               *time.Time
 	To                 *time.Time
 	Limit              int
@@ -68,7 +71,8 @@ func (r *IncidentRepository) CreateMonitorIncidentTx(
 	err := tx.QueryRow(ctx, `
 		SELECT id, organization_id, monitor_id, heartbeat_monitor_id, first_failure_at,
 		       confirmed_at, resolved_at, status, failure_category, first_failure_result_id,
-		       recovery_result_id, acknowledged_at, acknowledged_by, notification_state,
+		       recovery_result_id, acknowledged_at, acknowledged_by, resolved_by,
+		       resolution_type, resolution_note, notification_state,
 		       duration_seconds, summary, created_at, updated_at
 		FROM incidents
 		WHERE organization_id = $1 AND monitor_id = $2 AND status = 'open'
@@ -77,7 +81,8 @@ func (r *IncidentRepository) CreateMonitorIncidentTx(
 		&existing.ID, &existing.OrganizationID, &existing.MonitorID, &existing.HeartbeatMonitorID,
 		&existing.FirstFailureAt, &existing.ConfirmedAt, &existing.ResolvedAt, &existing.Status,
 		&existing.FailureCategory, &existing.FirstFailureResultID, &existing.RecoveryResultID,
-		&existing.AcknowledgedAt, &existing.AcknowledgedBy, &existing.NotificationState,
+		&existing.AcknowledgedAt, &existing.AcknowledgedBy, &existing.ResolvedBy,
+		&existing.ResolutionType, &existing.ResolutionNote, &existing.NotificationState,
 		&existing.DurationSeconds, &existing.Summary, &existing.CreatedAt, &existing.UpdatedAt,
 	)
 	if err == nil {
@@ -98,13 +103,15 @@ func (r *IncidentRepository) CreateMonitorIncidentTx(
 		VALUES ($1, $2, $3, $4, 'open', $5, $6, 'pending', $7, NOW(), NOW())
 		RETURNING id, organization_id, monitor_id, heartbeat_monitor_id, first_failure_at,
 		          confirmed_at, resolved_at, status, failure_category, first_failure_result_id,
-		          recovery_result_id, acknowledged_at, acknowledged_by, notification_state,
+		          recovery_result_id, acknowledged_at, acknowledged_by, resolved_by,
+		          resolution_type, resolution_note, notification_state,
 		          duration_seconds, summary, created_at, updated_at
 	`, orgID, monitorID, firstFailureAt, confirmedAt, failureCategory, firstResultID, summary).Scan(
 		&inc.ID, &inc.OrganizationID, &inc.MonitorID, &inc.HeartbeatMonitorID,
 		&inc.FirstFailureAt, &inc.ConfirmedAt, &inc.ResolvedAt, &inc.Status,
 		&inc.FailureCategory, &inc.FirstFailureResultID, &inc.RecoveryResultID,
-		&inc.AcknowledgedAt, &inc.AcknowledgedBy, &inc.NotificationState,
+		&inc.AcknowledgedAt, &inc.AcknowledgedBy, &inc.ResolvedBy,
+		&inc.ResolutionType, &inc.ResolutionNote, &inc.NotificationState,
 		&inc.DurationSeconds, &inc.Summary, &inc.CreatedAt, &inc.UpdatedAt,
 	)
 	if err != nil {
@@ -126,7 +133,8 @@ func (r *IncidentRepository) CreateHeartbeatIncidentTx(
 	err := tx.QueryRow(ctx, `
 		SELECT id, organization_id, monitor_id, heartbeat_monitor_id, first_failure_at,
 		       confirmed_at, resolved_at, status, failure_category, first_failure_result_id,
-		       recovery_result_id, acknowledged_at, acknowledged_by, notification_state,
+		       recovery_result_id, acknowledged_at, acknowledged_by, resolved_by,
+		       resolution_type, resolution_note, notification_state,
 		       duration_seconds, summary, created_at, updated_at
 		FROM incidents
 		WHERE organization_id = $1 AND heartbeat_monitor_id = $2 AND status = 'open'
@@ -135,7 +143,8 @@ func (r *IncidentRepository) CreateHeartbeatIncidentTx(
 		&existing.ID, &existing.OrganizationID, &existing.MonitorID, &existing.HeartbeatMonitorID,
 		&existing.FirstFailureAt, &existing.ConfirmedAt, &existing.ResolvedAt, &existing.Status,
 		&existing.FailureCategory, &existing.FirstFailureResultID, &existing.RecoveryResultID,
-		&existing.AcknowledgedAt, &existing.AcknowledgedBy, &existing.NotificationState,
+		&existing.AcknowledgedAt, &existing.AcknowledgedBy, &existing.ResolvedBy,
+		&existing.ResolutionType, &existing.ResolutionNote, &existing.NotificationState,
 		&existing.DurationSeconds, &existing.Summary, &existing.CreatedAt, &existing.UpdatedAt,
 	)
 	if err == nil {
@@ -153,13 +162,15 @@ func (r *IncidentRepository) CreateHeartbeatIncidentTx(
 		VALUES ($1, $2, $3, $4, 'open', $5, 'pending', $6, NOW(), NOW())
 		RETURNING id, organization_id, monitor_id, heartbeat_monitor_id, first_failure_at,
 		          confirmed_at, resolved_at, status, failure_category, first_failure_result_id,
-		          recovery_result_id, acknowledged_at, acknowledged_by, notification_state,
+		          recovery_result_id, acknowledged_at, acknowledged_by, resolved_by,
+		          resolution_type, resolution_note, notification_state,
 		          duration_seconds, summary, created_at, updated_at
 	`, orgID, heartbeatID, firstFailureAt, confirmedAt, failureCategory, summary).Scan(
 		&inc.ID, &inc.OrganizationID, &inc.MonitorID, &inc.HeartbeatMonitorID,
 		&inc.FirstFailureAt, &inc.ConfirmedAt, &inc.ResolvedAt, &inc.Status,
 		&inc.FailureCategory, &inc.FirstFailureResultID, &inc.RecoveryResultID,
-		&inc.AcknowledgedAt, &inc.AcknowledgedBy, &inc.NotificationState,
+		&inc.AcknowledgedAt, &inc.AcknowledgedBy, &inc.ResolvedBy,
+		&inc.ResolutionType, &inc.ResolutionNote, &inc.NotificationState,
 		&inc.DurationSeconds, &inc.Summary, &inc.CreatedAt, &inc.UpdatedAt,
 	)
 	if err != nil {
@@ -208,23 +219,47 @@ func (r *IncidentRepository) ResolveIncidentTx(
 		SET status = 'resolved',
 		    resolved_at = $1,
 		    recovery_result_id = $2,
+		    resolution_type = 'automatic_recovery',
 		    duration_seconds = $3,
 		    updated_at = NOW()
 		WHERE id = $4 AND organization_id = $5
 		RETURNING id, organization_id, monitor_id, heartbeat_monitor_id, first_failure_at,
 		          confirmed_at, resolved_at, status, failure_category, first_failure_result_id,
-		          recovery_result_id, acknowledged_at, acknowledged_by, notification_state,
+		          recovery_result_id, acknowledged_at, acknowledged_by, resolved_by,
+		          resolution_type, resolution_note, notification_state,
 		          duration_seconds, summary, created_at, updated_at
 	`, resolvedAt, recoveryResultID, durationSec, incidentID, orgID).Scan(
 		&inc.ID, &inc.OrganizationID, &inc.MonitorID, &inc.HeartbeatMonitorID,
 		&inc.FirstFailureAt, &inc.ConfirmedAt, &inc.ResolvedAt, &inc.Status,
 		&inc.FailureCategory, &inc.FirstFailureResultID, &inc.RecoveryResultID,
-		&inc.AcknowledgedAt, &inc.AcknowledgedBy, &inc.NotificationState,
+		&inc.AcknowledgedAt, &inc.AcknowledgedBy, &inc.ResolvedBy,
+		&inc.ResolutionType, &inc.ResolutionNote, &inc.NotificationState,
 		&inc.DurationSeconds, &inc.Summary, &inc.CreatedAt, &inc.UpdatedAt,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve incident: %w", err)
 	}
+
+	// Record audit event for automatic recovery
+	auditMeta := map[string]interface{}{
+		"incident_id":      inc.ID,
+		"resolution_type":  "automatic_recovery",
+		"resolved_at":      resolvedAt.Format(time.RFC3339),
+		"duration_seconds": durationSec,
+	}
+	if inc.MonitorID != nil {
+		auditMeta["monitor_id"] = *inc.MonitorID
+	}
+	if inc.HeartbeatMonitorID != nil {
+		auditMeta["heartbeat_monitor_id"] = *inc.HeartbeatMonitorID
+	}
+	metaJSON, _ := json.Marshal(auditMeta)
+	_, _ = tx.Exec(ctx, `
+		INSERT INTO audit_logs (
+			organization_id, actor_user_id, action, entity_type, entity_id, metadata_json, ip_hash, created_at
+		)
+		VALUES ($1, NULL, 'incident.resolved', 'incident', $2, $3, '', NOW())
+	`, orgID, inc.ID, metaJSON)
 
 	return &inc, nil
 }
@@ -248,6 +283,10 @@ func (r *IncidentRepository) AcknowledgeIncident(ctx context.Context, orgID, inc
 			return err
 		}
 
+		if status == "resolved" {
+			return ErrIncidentAlreadyResolved
+		}
+
 		if ackedAt != nil {
 			return ErrIncidentAlreadyAcked
 		}
@@ -261,13 +300,15 @@ func (r *IncidentRepository) AcknowledgeIncident(ctx context.Context, orgID, inc
 			WHERE id = $3 AND organization_id = $4
 			RETURNING id, organization_id, monitor_id, heartbeat_monitor_id, first_failure_at,
 			          confirmed_at, resolved_at, status, failure_category, first_failure_result_id,
-			          recovery_result_id, acknowledged_at, acknowledged_by, notification_state,
+			          recovery_result_id, acknowledged_at, acknowledged_by, resolved_by,
+			          resolution_type, resolution_note, notification_state,
 			          duration_seconds, summary, created_at, updated_at
 		`, now, userID, incidentID, orgID).Scan(
 			&inc.ID, &inc.OrganizationID, &inc.MonitorID, &inc.HeartbeatMonitorID,
 			&inc.FirstFailureAt, &inc.ConfirmedAt, &inc.ResolvedAt, &inc.Status,
 			&inc.FailureCategory, &inc.FirstFailureResultID, &inc.RecoveryResultID,
-			&inc.AcknowledgedAt, &inc.AcknowledgedBy, &inc.NotificationState,
+			&inc.AcknowledgedAt, &inc.AcknowledgedBy, &inc.ResolvedBy,
+			&inc.ResolutionType, &inc.ResolutionNote, &inc.NotificationState,
 			&inc.DurationSeconds, &inc.Summary, &inc.CreatedAt, &inc.UpdatedAt,
 		)
 		if err != nil {
@@ -306,6 +347,155 @@ func (r *IncidentRepository) AcknowledgeIncident(ctx context.Context, orgID, inc
 			VALUES ($1, 'incident.acknowledged', $2, $3, $4, $5, $6, 'pending', NOW())
 			ON CONFLICT (idempotency_key) DO NOTHING
 		`, orgID, inc.ID, inc.MonitorID, inc.HeartbeatMonitorID, idempKey, ackPayload)
+		if err != nil {
+			return err
+		}
+
+		// Insert audit log for acknowledgement
+		auditPayload := map[string]interface{}{
+			"incident_id":      inc.ID,
+			"action":           "incident.acknowledged",
+			"acknowledged_by":  userID,
+			"acknowledged_at":  now.Format(time.RFC3339),
+		}
+		if inc.MonitorID != nil {
+			auditPayload["monitor_id"] = *inc.MonitorID
+		}
+		if inc.HeartbeatMonitorID != nil {
+			auditPayload["heartbeat_monitor_id"] = *inc.HeartbeatMonitorID
+		}
+		metaJSON, _ := json.Marshal(auditPayload)
+		_, err = tx.Exec(ctx, `
+			INSERT INTO audit_logs (
+				organization_id, actor_user_id, action, entity_type, entity_id, metadata_json, ip_hash, created_at
+			)
+			VALUES ($1, $2, 'incident.acknowledged', 'incident', $3, $4, '', NOW())
+		`, orgID, userID, inc.ID, metaJSON)
+		return err
+	})
+
+	if err != nil {
+		return nil, err
+	}
+	return &inc, nil
+}
+
+// ResolveIncidentManually marks an open incident as resolved by an authorized operator.
+func (r *IncidentRepository) ResolveIncidentManually(ctx context.Context, orgID, incidentID, userID string, note *string) (*Incident, error) {
+	var inc Incident
+	err := WithTenantTx(ctx, r.pool, orgID, func(tx pgx.Tx) error {
+		var confirmedAt time.Time
+		var status string
+		err := tx.QueryRow(ctx, `
+			SELECT confirmed_at, status
+			FROM incidents
+			WHERE id = $1 AND organization_id = $2
+			FOR UPDATE
+		`, incidentID, orgID).Scan(&confirmedAt, &status)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrIncidentNotFound
+			}
+			return err
+		}
+
+		if status == "resolved" {
+			return ErrIncidentAlreadyResolved
+		}
+
+		now := time.Now().UTC()
+		durationSec := int(now.Sub(confirmedAt).Seconds())
+		if durationSec < 0 {
+			durationSec = 0
+		}
+
+		err = tx.QueryRow(ctx, `
+			UPDATE incidents
+			SET status = 'resolved',
+			    resolved_at = $1,
+			    resolved_by = $2,
+			    resolution_type = 'manual',
+			    resolution_note = $3,
+			    duration_seconds = $4,
+			    updated_at = NOW()
+			WHERE id = $5 AND organization_id = $6
+			RETURNING id, organization_id, monitor_id, heartbeat_monitor_id, first_failure_at,
+			          confirmed_at, resolved_at, status, failure_category, first_failure_result_id,
+			          recovery_result_id, acknowledged_at, acknowledged_by, resolved_by,
+			          resolution_type, resolution_note, notification_state,
+			          duration_seconds, summary, created_at, updated_at
+		`, now, userID, note, durationSec, incidentID, orgID).Scan(
+			&inc.ID, &inc.OrganizationID, &inc.MonitorID, &inc.HeartbeatMonitorID,
+			&inc.FirstFailureAt, &inc.ConfirmedAt, &inc.ResolvedAt, &inc.Status,
+			&inc.FailureCategory, &inc.FirstFailureResultID, &inc.RecoveryResultID,
+			&inc.AcknowledgedAt, &inc.AcknowledgedBy, &inc.ResolvedBy,
+			&inc.ResolutionType, &inc.ResolutionNote, &inc.NotificationState,
+			&inc.DurationSeconds, &inc.Summary, &inc.CreatedAt, &inc.UpdatedAt,
+		)
+		if err != nil {
+			return fmt.Errorf("failed to manually resolve incident: %w", err)
+		}
+
+		// Insert notification event: incident.resolved
+		idempKey := fmt.Sprintf("inc_res_man:%s:%d", inc.ID, now.Unix())
+		resPayload := map[string]interface{}{
+			"incident_id":      inc.ID,
+			"first_failure_at": inc.FirstFailureAt.Format(time.RFC3339),
+			"confirmed_at":     inc.ConfirmedAt.Format(time.RFC3339),
+			"resolved_at":      now.Format(time.RFC3339),
+			"resolved_by":      userID,
+			"resolution_type":  "manual",
+			"duration_sec":     durationSec,
+			"failure_category": inc.FailureCategory,
+		}
+		if note != nil && *note != "" {
+			resPayload["resolution_note"] = *note
+		}
+		if inc.Summary != nil {
+			resPayload["failure_reason"] = *inc.Summary
+		}
+		if inc.MonitorID != nil {
+			EnrichMonitorPayload(ctx, tx, *inc.MonitorID, orgID, resPayload)
+		} else if inc.HeartbeatMonitorID != nil {
+			EnrichHeartbeatPayload(ctx, tx, *inc.HeartbeatMonitorID, orgID, resPayload)
+		}
+
+		_, err = tx.Exec(ctx, `
+			INSERT INTO notification_events (
+				organization_id, event_type, incident_id, monitor_id, heartbeat_monitor_id,
+				idempotency_key, payload, status, created_at
+			)
+			VALUES ($1, 'incident.resolved', $2, $3, $4, $5, $6, 'pending', NOW())
+			ON CONFLICT (idempotency_key) DO NOTHING
+		`, orgID, inc.ID, inc.MonitorID, inc.HeartbeatMonitorID, idempKey, resPayload)
+		if err != nil {
+			return fmt.Errorf("failed to insert resolution notification event: %w", err)
+		}
+
+		// Insert audit log
+		auditMeta := map[string]interface{}{
+			"incident_id":      inc.ID,
+			"resolution_type":  "manual",
+			"resolved_by":      userID,
+			"resolved_at":      now.Format(time.RFC3339),
+			"duration_seconds": durationSec,
+		}
+		if note != nil && *note != "" {
+			auditMeta["resolution_note"] = *note
+		}
+		if inc.MonitorID != nil {
+			auditMeta["monitor_id"] = *inc.MonitorID
+		}
+		if inc.HeartbeatMonitorID != nil {
+			auditMeta["heartbeat_monitor_id"] = *inc.HeartbeatMonitorID
+		}
+		metaJSON, _ := json.Marshal(auditMeta)
+		_, err = tx.Exec(ctx, `
+			INSERT INTO audit_logs (
+				organization_id, actor_user_id, action, entity_type, entity_id, metadata_json, ip_hash, created_at
+			)
+			VALUES ($1, $2, 'incident.resolved', 'incident', $3, $4, '', NOW())
+		`, orgID, userID, inc.ID, metaJSON)
 		return err
 	})
 
@@ -319,13 +509,15 @@ func (r *IncidentRepository) AcknowledgeIncident(ctx context.Context, orgID, inc
 func (r *IncidentRepository) GetIncidentByID(ctx context.Context, orgID, incidentID string) (*Incident, error) {
 	var inc Incident
 	var clientID, clientName, targetName, targetType string
-	var assetID, assetName, ackByName, ackByEmail *string
+	var assetID, assetName, ackByName, ackByEmail, resByName, resByEmail *string
+	var hbArchivedAt *time.Time
 
 	err := WithTenantTx(ctx, r.pool, orgID, func(tx pgx.Tx) error {
 		query := `
 			SELECT i.id, i.organization_id, i.monitor_id, i.heartbeat_monitor_id, i.first_failure_at,
 			       i.confirmed_at, i.resolved_at, i.status, i.failure_category, i.first_failure_result_id,
-			       i.recovery_result_id, i.acknowledged_at, i.acknowledged_by, i.notification_state,
+			       i.recovery_result_id, i.acknowledged_at, i.acknowledged_by, i.resolved_by,
+			       i.resolution_type, i.resolution_note, i.notification_state,
 			       i.duration_seconds, i.summary, i.created_at, i.updated_at,
 			       CASE
 			           WHEN i.monitor_id IS NOT NULL THEN 'monitor'
@@ -337,7 +529,10 @@ func (r *IncidentRepository) GetIncidentByID(ctx context.Context, orgID, inciden
 			       a.id AS asset_id,
 			       a.name AS asset_name,
 			       u.display_name AS ack_by_name,
-			       u.email AS ack_by_email
+			       u.email AS ack_by_email,
+			       ru.display_name AS res_by_name,
+			       ru.email AS res_by_email,
+			       hm.archived_at AS heartbeat_archived_at
 			FROM incidents i
 			LEFT JOIN monitors m ON i.monitor_id = m.id
 			LEFT JOIN assets a ON m.asset_id = a.id
@@ -345,16 +540,19 @@ func (r *IncidentRepository) GetIncidentByID(ctx context.Context, orgID, inciden
 			LEFT JOIN heartbeat_monitors hm ON i.heartbeat_monitor_id = hm.id
 			LEFT JOIN clients hmc ON hm.client_id = hmc.id
 			LEFT JOIN users u ON i.acknowledged_by = u.id
+			LEFT JOIN users ru ON i.resolved_by = ru.id
 			WHERE i.id = $1 AND i.organization_id = $2
 		`
 		err := tx.QueryRow(ctx, query, incidentID, orgID).Scan(
 			&inc.ID, &inc.OrganizationID, &inc.MonitorID, &inc.HeartbeatMonitorID,
 			&inc.FirstFailureAt, &inc.ConfirmedAt, &inc.ResolvedAt, &inc.Status,
 			&inc.FailureCategory, &inc.FirstFailureResultID, &inc.RecoveryResultID,
-			&inc.AcknowledgedAt, &inc.AcknowledgedBy, &inc.NotificationState,
+			&inc.AcknowledgedAt, &inc.AcknowledgedBy, &inc.ResolvedBy,
+			&inc.ResolutionType, &inc.ResolutionNote, &inc.NotificationState,
 			&inc.DurationSeconds, &inc.Summary, &inc.CreatedAt, &inc.UpdatedAt,
 			&targetType, &targetName, &clientID, &clientName,
 			&assetID, &assetName, &ackByName, &ackByEmail,
+			&resByName, &resByEmail, &hbArchivedAt,
 		)
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
@@ -371,6 +569,9 @@ func (r *IncidentRepository) GetIncidentByID(ctx context.Context, orgID, inciden
 		inc.AssetName = assetName
 		inc.AcknowledgedByName = ackByName
 		inc.AcknowledgedByEmail = ackByEmail
+		inc.ResolvedByName = resByName
+		inc.ResolvedByEmail = resByEmail
+		inc.HeartbeatArchivedAt = hbArchivedAt
 
 		// If first_failure_result_id exists, fetch check result
 		if inc.FirstFailureResultID != nil {
@@ -465,6 +666,18 @@ func (r *IncidentRepository) ListIncidents(ctx context.Context, orgID string, fi
 			argIdx++
 		}
 
+		if filter.TargetType == "monitor" {
+			whereClauses = append(whereClauses, "i.monitor_id IS NOT NULL")
+		} else if filter.TargetType == "heartbeat" {
+			whereClauses = append(whereClauses, "i.heartbeat_monitor_id IS NOT NULL")
+		}
+
+		if filter.AckState == "ack" || filter.AckState == "acknowledged" {
+			whereClauses = append(whereClauses, "i.acknowledged_at IS NOT NULL")
+		} else if filter.AckState == "unack" || filter.AckState == "unacknowledged" {
+			whereClauses = append(whereClauses, "i.acknowledged_at IS NULL")
+		}
+
 		if filter.ClientID != "" {
 			whereClauses = append(whereClauses, fmt.Sprintf("(c.id = $%d OR hmc.id = $%d)", argIdx, argIdx))
 			args = append(args, filter.ClientID)
@@ -512,7 +725,8 @@ func (r *IncidentRepository) ListIncidents(ctx context.Context, orgID string, fi
 		listQuery := fmt.Sprintf(`
 			SELECT i.id, i.organization_id, i.monitor_id, i.heartbeat_monitor_id, i.first_failure_at,
 			       i.confirmed_at, i.resolved_at, i.status, i.failure_category, i.first_failure_result_id,
-			       i.recovery_result_id, i.acknowledged_at, i.acknowledged_by, i.notification_state,
+			       i.recovery_result_id, i.acknowledged_at, i.acknowledged_by, i.resolved_by,
+			       i.resolution_type, i.resolution_note, i.notification_state,
 			       i.duration_seconds, i.summary, i.created_at, i.updated_at,
 			       CASE
 			           WHEN i.monitor_id IS NOT NULL THEN 'monitor'
@@ -524,7 +738,10 @@ func (r *IncidentRepository) ListIncidents(ctx context.Context, orgID string, fi
 			       a.id AS asset_id,
 			       a.name AS asset_name,
 			       u.display_name AS ack_by_name,
-			       u.email AS ack_by_email
+			       u.email AS ack_by_email,
+			       ru.display_name AS res_by_name,
+			       ru.email AS res_by_email,
+			       hm.archived_at AS heartbeat_archived_at
 			FROM incidents i
 			LEFT JOIN monitors m ON i.monitor_id = m.id
 			LEFT JOIN assets a ON m.asset_id = a.id
@@ -532,6 +749,7 @@ func (r *IncidentRepository) ListIncidents(ctx context.Context, orgID string, fi
 			LEFT JOIN heartbeat_monitors hm ON i.heartbeat_monitor_id = hm.id
 			LEFT JOIN clients hmc ON hm.client_id = hmc.id
 			LEFT JOIN users u ON i.acknowledged_by = u.id
+			LEFT JOIN users ru ON i.resolved_by = ru.id
 			WHERE %s
 			ORDER BY i.created_at DESC
 			LIMIT $%d OFFSET $%d
@@ -548,16 +766,19 @@ func (r *IncidentRepository) ListIncidents(ctx context.Context, orgID string, fi
 		for rows.Next() {
 			var inc Incident
 			var clientID, clientName, targetName, targetType string
-			var assetID, assetName, ackByName, ackByEmail *string
+			var assetID, assetName, ackByName, ackByEmail, resByName, resByEmail *string
+			var hbArchivedAt *time.Time
 
 			if err := rows.Scan(
 				&inc.ID, &inc.OrganizationID, &inc.MonitorID, &inc.HeartbeatMonitorID,
 				&inc.FirstFailureAt, &inc.ConfirmedAt, &inc.ResolvedAt, &inc.Status,
 				&inc.FailureCategory, &inc.FirstFailureResultID, &inc.RecoveryResultID,
-				&inc.AcknowledgedAt, &inc.AcknowledgedBy, &inc.NotificationState,
+				&inc.AcknowledgedAt, &inc.AcknowledgedBy, &inc.ResolvedBy,
+				&inc.ResolutionType, &inc.ResolutionNote, &inc.NotificationState,
 				&inc.DurationSeconds, &inc.Summary, &inc.CreatedAt, &inc.UpdatedAt,
 				&targetType, &targetName, &clientID, &clientName,
 				&assetID, &assetName, &ackByName, &ackByEmail,
+				&resByName, &resByEmail, &hbArchivedAt,
 			); err != nil {
 				return fmt.Errorf("failed to scan incident row: %w", err)
 			}
@@ -570,6 +791,9 @@ func (r *IncidentRepository) ListIncidents(ctx context.Context, orgID string, fi
 			inc.AssetName = assetName
 			inc.AcknowledgedByName = ackByName
 			inc.AcknowledgedByEmail = ackByEmail
+			inc.ResolvedByName = resByName
+			inc.ResolvedByEmail = resByEmail
+			inc.HeartbeatArchivedAt = hbArchivedAt
 
 			incidents = append(incidents, &inc)
 		}

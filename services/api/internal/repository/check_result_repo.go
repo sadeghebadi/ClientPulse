@@ -213,8 +213,25 @@ func (r *CheckResultRepository) GetDashboardStats(ctx context.Context, orgID str
 			}
 		}
 
-		// Open incidents count
-		_ = tx.QueryRow(ctx, "SELECT COUNT(*) FROM incidents WHERE organization_id = $1 AND status = 'open'", orgID).Scan(&stats.OpenIncidents)
+		// Incident counts with proper lifecycle and source distinctions
+		_ = tx.QueryRow(ctx, `
+			SELECT
+				COUNT(*) FILTER (WHERE status = 'open'),
+				COUNT(*) FILTER (WHERE status = 'open' AND acknowledged_at IS NULL),
+				COUNT(*) FILTER (WHERE status = 'open' AND acknowledged_at IS NOT NULL),
+				COUNT(*) FILTER (WHERE status = 'resolved'),
+				COUNT(*) FILTER (WHERE status = 'open' AND monitor_id IS NOT NULL),
+				COUNT(*) FILTER (WHERE status = 'open' AND heartbeat_monitor_id IS NOT NULL)
+			FROM incidents
+			WHERE organization_id = $1
+		`, orgID).Scan(
+			&stats.OpenIncidents,
+			&stats.UnacknowledgedIncidents,
+			&stats.AcknowledgedIncidents,
+			&stats.ResolvedIncidents,
+			&stats.WebsiteOutageIncidents,
+			&stats.HeartbeatMissedIncidents,
+		)
 
 		// Heartbeats counts
 		hbRows, err := tx.Query(ctx, "SELECT status, COUNT(*) FROM heartbeat_monitors WHERE organization_id = $1 AND is_active = true AND archived_at IS NULL GROUP BY status", orgID)

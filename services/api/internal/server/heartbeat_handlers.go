@@ -332,9 +332,10 @@ func (h *HeartbeatHandler) Resume(w http.ResponseWriter, r *http.Request) {
 // Delete handles DELETE /api/v1/heartbeats/{id} (Tenant-scoped, RoleAdmin)
 func (h *HeartbeatHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	tc := tenant.GetTenantContext(r.Context())
+	uc := tenant.GetUserContext(r.Context())
 	id := strings.TrimSpace(r.PathValue("id"))
 
-	if err := h.repo.ArchiveHeartbeat(r.Context(), tc.OrganizationID, id); err != nil {
+	if err := h.repo.ArchiveHeartbeatWithActor(r.Context(), tc.OrganizationID, id, uc.UserID); err != nil {
 		if errors.Is(err, repository.ErrHeartbeatNotFound) {
 			sendJSONError(w, http.StatusNotFound, "NOT_FOUND", "Heartbeat monitor not found")
 			return
