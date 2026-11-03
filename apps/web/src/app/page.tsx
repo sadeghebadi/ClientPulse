@@ -1,21 +1,17 @@
 "use client";
 
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useMemo } from "react";
 import Link from "next/link";
 import { AppLayout } from "@/components/AppLayout";
-import { HealthChecker } from "@/components/HealthChecker";
 import { useAuth } from "@/lib/auth-context";
 import { useI18n } from "@/lib/i18n";
-import { apiFetch } from "@/lib/api";
+import { apiFetch, humanizeApiError } from "@/lib/api";
 import {
   ShieldCheck,
   Building,
   Users,
-  Settings,
   ArrowRight,
   ArrowLeft,
-  Cpu,
-  Database,
   CheckCircle2,
   XCircle,
   Clock,
@@ -24,22 +20,46 @@ import {
   Globe,
   Activity,
   Plus,
-  Zap,
-  PauseCircle,
   RotateCcw,
   AlertTriangle,
-  ExternalLink,
   Radio,
-  AlertOctagon,
   Wrench,
   FileText,
+  AlertCircle,
 } from "lucide-react";
-import { MetricCard } from "@/components/ui/MetricCard";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
-import { MetricSkeleton, TableSkeleton } from "@/components/ui/LoadingSkeleton";
 import { ErrorState } from "@/components/ui/ErrorState";
-import { EmptyState } from "@/components/ui/EmptyState";
+import { useToast } from "@/components/ui/Toast";
+
+// Dashboard Redesigned Components
+import {
+  SystemHealthBar,
+  HealthOverallState,
+} from "@/components/dashboard/SystemHealthBar";
+import { PrimaryKpiCards } from "@/components/dashboard/PrimaryKpiCards";
+import { MonitorDistribution } from "@/components/dashboard/MonitorDistribution";
+import {
+  ActiveIncidentsList,
+  ActiveIncidentItem,
+} from "@/components/dashboard/ActiveIncidentsList";
+import {
+  RecentFailedChecks,
+  FailedCheckItem,
+} from "@/components/dashboard/RecentFailedChecks";
+import {
+  HeartbeatSummary,
+  HeartbeatSummaryData,
+} from "@/components/dashboard/HeartbeatSummary";
+import {
+  RecentMaintenance,
+  MaintenanceActivityItem,
+} from "@/components/dashboard/RecentMaintenance";
+import {
+  CareReportsOverview,
+  CareReportSummaryItem,
+} from "@/components/dashboard/CareReportsOverview";
+import { DashboardSkeleton } from "@/components/dashboard/DashboardSkeleton";
 
 interface RecentCheck {
   id: string;
@@ -49,6 +69,7 @@ interface RecentCheck {
   latency_ms: number;
   result: "success" | "failure" | "timeout" | "blocked" | "error";
   http_status_code?: number;
+  error_category?: string;
   error_message?: string;
   execution_type: "scheduled" | "manual";
 }
@@ -83,38 +104,103 @@ interface DashboardStats {
 export default function Home() {
   const { user, activeOrg, role } = useAuth();
   const { t, isRTL, locale } = useI18n();
+  const toast = useToast();
 
+  // Core State
   const [stats, setStats] = useState<DashboardStats | null>(null);
+  const [incidents, setIncidents] = useState<ActiveIncidentItem[]>([]);
+  const [heartbeats, setHeartbeats] = useState<any[]>([]);
+  const [activities, setActivities] = useState<MaintenanceActivityItem[]>([]);
+  const [reports, setReports] = useState<CareReportSummaryItem[]>([]);
   const [clients, setClients] = useState<ClientSummary[]>([]);
-  const [recentActivities, setRecentActivities] = useState<any[]>([]);
+
+  // Metadata & Async State
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [error, setError] = useState<any>(null);
+  const [acknowledgingId, setAcknowledgingId] = useState<string | null>(null);
 
-  const reloadDashboardData = useCallback(() => {
-    if (!user || !activeOrg) {
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
-    setError(null);
+  const canModify = role === "owner" || role === "admin" || role === "member";
 
-    Promise.all([
-      apiFetch<DashboardStats>("/api/v1/dashboard/stats"),
-      apiFetch<{ clients: ClientSummary[] }>("/api/v1/clients?limit=5&status=active"),
-      apiFetch<{ activities: any[] }>("/api/v1/maintenance-activities?limit=5").catch(() => ({ activities: [] })),
-    ])
-      .then(([statsData, clientsData, actData]) => {
-        setStats(statsData);
-        setClients(clientsData.clients || []);
-        setRecentActivities(actData.activities || []);
-      })
-      .catch((err) => {
+  const [currentTime, setCurrentTime] = useState<number>(0);
+
+  // Data Reload with Isolated Widget Resilience
+  const loadDashboardData = useCallback(
+    async (isManualRefresh = false) => {
+      if (!user || !activeOrg) {
+        return;
+      }
+
+      if (isManualRefresh) {
+        setRefreshing(true);
+      } else {
+        setLoading(true);
+      }
+      setError(null);
+
+      // Execute queries with graceful individual fallbacks so one failure does not blank the dashboard
+      try {
+        const [
+          statsRes,
+          incidentsRes,
+          heartbeatsRes,
+          activitiesRes,
+          reportsRes,
+          clientsRes,
+        ] = await Promise.all([
+          apiFetch<DashboardStats>("/api/v1/dashboard/stats"),
+          apiFetch<{ incidents: ActiveIncidentItem[]; total: number }>(
+            "/api/v1/incidents?status=open&limit=10"
+          ).catch((e) => {
+            console.warn("Failed to fetch open incidents:", e);
+            return { incidents: [], total: 0 };
+          }),
+          apiFetch<{ heartbeats: any[]; total: number }>(
+            "/api/v1/heartbeats?limit=10"
+          ).catch((e) => {
+            console.warn("Failed to fetch heartbeats list:", e);
+            return { heartbeats: [], total: 0 };
+          }),
+          apiFetch<{ activities: MaintenanceActivityItem[] }>(
+            "/api/v1/maintenance-activities?limit=5"
+          ).catch((e) => {
+            console.warn("Failed to fetch maintenance activities:", e);
+            return { activities: [] };
+          }),
+          apiFetch<{ reports: CareReportSummaryItem[] }>(
+            "/api/v1/reports?limit=5"
+          ).catch((e) => {
+            console.warn("Failed to fetch care reports:", e);
+            return { reports: [] };
+          }),
+          apiFetch<{ clients: ClientSummary[] }>(
+            "/api/v1/clients?limit=5&status=active"
+          ).catch((e) => {
+            console.warn("Failed to fetch clients summary:", e);
+            return { clients: [] };
+          }),
+        ]);
+
+        setStats(statsRes);
+        setIncidents(incidentsRes.incidents || []);
+        setHeartbeats(heartbeatsRes.heartbeats || []);
+        setActivities(activitiesRes.activities || []);
+        setReports(reportsRes.reports || []);
+        setClients(clientsRes.clients || []);
+        const now = new Date();
+        setLastUpdated(now);
+        setCurrentTime(now.getTime());
+      } catch (err: any) {
+        console.error("Dashboard primary stats failed to load:", err);
         setError(err);
-      })
-      .finally(() => {
+      } finally {
         setLoading(false);
-      });
-  }, [user, activeOrg]);
+        setRefreshing(false);
+      }
+    },
+    [user, activeOrg]
+  );
 
   useEffect(() => {
     if (!user || !activeOrg) return;
@@ -122,25 +208,41 @@ export default function Home() {
 
     Promise.all([
       apiFetch<DashboardStats>("/api/v1/dashboard/stats"),
-      apiFetch<{ clients: ClientSummary[] }>("/api/v1/clients?limit=5&status=active"),
-      apiFetch<{ activities: any[] }>("/api/v1/maintenance-activities?limit=5").catch(() => ({ activities: [] })),
+      apiFetch<{ incidents: ActiveIncidentItem[]; total: number }>(
+        "/api/v1/incidents?status=open&limit=10"
+      ).catch(() => ({ incidents: [], total: 0 })),
+      apiFetch<{ heartbeats: any[]; total: number }>(
+        "/api/v1/heartbeats?limit=10"
+      ).catch(() => ({ heartbeats: [], total: 0 })),
+      apiFetch<{ activities: MaintenanceActivityItem[] }>(
+        "/api/v1/maintenance-activities?limit=5"
+      ).catch(() => ({ activities: [] })),
+      apiFetch<{ reports: CareReportSummaryItem[] }>(
+        "/api/v1/reports?limit=5"
+      ).catch(() => ({ reports: [] })),
+      apiFetch<{ clients: ClientSummary[] }>(
+        "/api/v1/clients?limit=5&status=active"
+      ).catch(() => ({ clients: [] })),
     ])
-      .then(([statsData, clientsData, actData]) => {
-        if (isMounted) {
-          setStats(statsData);
-          setClients(clientsData.clients || []);
-          setRecentActivities(actData.activities || []);
-        }
+      .then(([statsRes, incidentsRes, heartbeatsRes, activitiesRes, reportsRes, clientsRes]) => {
+        if (!isMounted) return;
+        setStats(statsRes);
+        setIncidents(incidentsRes.incidents || []);
+        setHeartbeats(heartbeatsRes.heartbeats || []);
+        setActivities(activitiesRes.activities || []);
+        setReports(reportsRes.reports || []);
+        setClients(clientsRes.clients || []);
+        const now = new Date();
+        setLastUpdated(now);
+        setCurrentTime(now.getTime());
       })
       .catch((err) => {
-        if (isMounted) {
-          setError(err);
-        }
+        if (!isMounted) return;
+        setError(err);
       })
       .finally(() => {
-        if (isMounted) {
-          setLoading(false);
-        }
+        if (!isMounted) return;
+        setLoading(false);
       });
 
     return () => {
@@ -148,510 +250,325 @@ export default function Home() {
     };
   }, [user, activeOrg]);
 
-  const failedChecks = stats?.recent_checks.filter((c) => c.result !== "success") || [];
+  // Acknowledge incident handler
+  const handleAcknowledge = async (id: string) => {
+    setAcknowledgingId(id);
+    try {
+      await apiFetch(`/api/v1/incidents/${id}/acknowledge`, { method: "POST" });
+      toast.success(
+        isRTL ? "حادثه با موفقیت تأیید شد" : "Incident acknowledged successfully"
+      );
+      // Reload incidents without full reload
+      const res = await apiFetch<{
+        incidents: ActiveIncidentItem[];
+        total: number;
+      }>("/api/v1/incidents?status=open&limit=10");
+      setIncidents(res.incidents || []);
+    } catch (err: any) {
+      toast.error(
+        err.message ||
+          (isRTL
+            ? "خطا در تأیید رخداد"
+            : "Failed to acknowledge incident")
+      );
+    } finally {
+      setAcknowledgingId(null);
+    }
+  };
+
+  // Derive Monitor Counts strictly according to TASK-008.B.3 rules
+  const counts = useMemo(() => {
+    const up = stats?.monitors_up || 0;
+    const down = stats?.monitors_down || 0;
+    const suspectedDown = stats?.monitors_suspected_down || 0;
+    const pending = stats?.monitors_pending || 0;
+    const paused = stats?.monitors_paused || 0;
+    const unknown = stats?.monitors_unknown || 0;
+    const openIncidents = stats?.open_incidents ?? incidents.length;
+    const totalMonitors = up + down + suspectedDown + pending + paused + unknown;
+
+    return {
+      up,
+      down,
+      suspectedDown,
+      pending,
+      paused,
+      unknown,
+      openIncidents,
+      totalMonitors,
+    };
+  }, [stats, incidents.length]);
+
+  // Derive Average Response Latency ms from valid scheduled check results
+  const latencyData = useMemo(() => {
+    if (!stats || !stats.recent_checks || stats.recent_checks.length === 0) {
+      return { avgMs: null, count: 0 };
+    }
+    const validSuccessChecks = stats.recent_checks.filter(
+      (c) => c.result === "success" && typeof c.latency_ms === "number" && c.latency_ms >= 0
+    );
+    if (validSuccessChecks.length === 0) {
+      return { avgMs: null, count: 0 };
+    }
+    const totalLatency = validSuccessChecks.reduce(
+      (acc, c) => acc + c.latency_ms,
+      0
+    );
+    return {
+      avgMs: Math.round(totalLatency / validSuccessChecks.length),
+      count: validSuccessChecks.length,
+    };
+  }, [stats]);
+
+  // Derive Recent Failed Checks (result !== "success")
+  const failedChecks: FailedCheckItem[] = useMemo(() => {
+    if (!stats || !stats.recent_checks) return [];
+    return stats.recent_checks.filter((c) => c.result !== "success");
+  }, [stats]);
+
+  // Derive Heartbeat Summary
+  const heartbeatSummary: HeartbeatSummaryData = useMemo(() => {
+    const total = stats?.total_heartbeats ?? heartbeats.length;
+    const healthy = stats?.heartbeats_healthy ?? heartbeats.filter((h) => h.status === "healthy").length;
+    const missed = stats?.heartbeats_missed ?? heartbeats.filter((h) => h.status === "missed").length;
+    const pending = stats?.heartbeats_pending ?? heartbeats.filter((h) => h.status === "pending").length;
+
+    const missedItem = heartbeats.find((h) => h.status === "missed");
+
+    return {
+      total,
+      healthy,
+      missed,
+      pending,
+      latestMissedName: missedItem?.name,
+      latestMissedAt: missedItem?.last_received_at,
+    };
+  }, [stats, heartbeats]);
+
+  // Derive Overall System Health State
+  const overallState: HealthOverallState = useMemo(() => {
+    if (error && !stats) return "unavailable";
+    if (counts.totalMonitors === 0) return "empty";
+    // Confirmed outage takes highest precedence
+    if (counts.down > 0 || counts.openIncidents > 0) return "outage";
+    // Degraded / suspected down
+    if (counts.suspectedDown > 0) return "degraded";
+    // All operational
+    return "operational";
+  }, [counts, error, stats]);
+
+  // Check if monitoring data is stale (over 10 minutes without refresh)
+  const isStale = useMemo(() => {
+    if (!lastUpdated || !currentTime) return false;
+    const diffMs = currentTime - lastUpdated.getTime();
+    return diffMs > 10 * 60 * 1000;
+  }, [lastUpdated, currentTime]);
 
   return (
     <AppLayout>
       {user ? (
-        /* Authenticated Dashboard View */
-        <div className="space-y-8">
-          {/* Header Banner */}
-          <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-blue-950 rounded-2xl p-6 sm:p-8 text-white shadow-lg flex flex-col md:flex-row items-start md:items-center justify-between gap-6 border border-slate-800">
+        /* Authenticated Executive Dashboard */
+        <div className="space-y-6 sm:space-y-8">
+          {/* Section A — Professional Page Heading (No oversized gradient hero) */}
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-2 border-b border-slate-200">
             <div>
-              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 mb-3">
-                <ShieldCheck className="w-3.5 h-3.5" />
-                <span>Multi-Tenant Monitoring Active</span>
-              </div>
-              <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
-                {t.welcomeBack}, {user.display_name}!
-              </h1>
-              <div className="flex flex-wrap items-center gap-2 mt-2 text-blue-200 text-xs sm:text-sm">
-                <span>{t.activeWorkspace}:</span>
-                <span className="font-bold text-white bg-white/10 px-2.5 py-0.5 rounded-lg border border-white/10">
+              <div className="flex items-center gap-2 mb-1">
+                <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
+                  {t.overview}
+                </span>
+                <span className="text-slate-300">·</span>
+                <span className="text-xs font-semibold text-slate-700 bg-slate-100 px-2 py-0.5 rounded-md">
                   {activeOrg?.name || "Agency Workspace"}
                 </span>
                 {role && <Badge variant={role} />}
               </div>
+              <h1 className="text-xl sm:text-2xl font-extrabold text-slate-900 tracking-tight">
+                {t.welcomeBack}, {user.display_name}!
+              </h1>
+              <p className="text-xs text-slate-500 mt-0.5">
+                {isRTL
+                  ? "مرکز پایش عملیاتی وضعیت وب‌سایت‌ها، APIها و جاب‌های پس‌زمینه مشتریان."
+                  : "Operational monitoring control center for client websites, APIs, and background heartbeat jobs."}
+              </p>
             </div>
 
-            {/* Quick Actions in Header */}
-            <div className="flex flex-wrap items-center gap-2.5">
-              <Link href="/clients/new">
-                <Button size="sm" variant="primary" icon={<Plus className="w-4 h-4" />}>
-                  {t.createClient}
-                </Button>
-              </Link>
-              <Link href="/assets/new">
-                <Button size="sm" variant="secondary" icon={<Globe className="w-4 h-4" />}>
-                  {t.createAsset}
-                </Button>
-              </Link>
+            {/* Header Right: Last Updated Timestamp & Quick Action Buttons */}
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
+              {lastUpdated && (
+                <div
+                  className="text-xs text-slate-500 flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-50 border border-slate-200 tabular-nums"
+                  title={lastUpdated.toISOString()}
+                >
+                  <Clock className="w-3.5 h-3.5 text-slate-400" />
+                  <span>
+                    {t.lastUpdated}:{" "}
+                    {lastUpdated.toLocaleTimeString(locale === "fa" ? "fa-IR" : "en-US", {
+                      timeZone: activeOrg?.timezone || "UTC",
+                      hour: "2-digit",
+                      minute: "2-digit",
+                      second: "2-digit",
+                    })}
+                  </span>
+                </div>
+              )}
+
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => loadDashboardData(true)}
+                disabled={refreshing}
+                icon={
+                  <RotateCcw
+                    className={`w-3.5 h-3.5 ${refreshing ? "animate-spin" : ""}`}
+                  />
+                }
+              >
+                {t.refresh}
+              </Button>
+
               <Link href="/monitors/new">
-                <Button size="sm" variant="secondary" icon={<Activity className="w-4 h-4" />}>
+                <Button size="sm" variant="primary" icon={<Plus className="w-4 h-4" />}>
                   {t.createMonitor}
                 </Button>
               </Link>
-              <Link href="/heartbeats/new">
-                <Button size="sm" variant="secondary" icon={<Radio className="w-4 h-4" />}>
-                  {t.createHeartbeat}
-                </Button>
-              </Link>
-              <Link href="/maintenance">
-                <Button size="sm" variant="secondary" icon={<Wrench className="w-4 h-4" />}>
-                  {t.maintenance}
-                </Button>
-              </Link>
-              <Link href="/reports">
-                <Button size="sm" variant="secondary" icon={<FileText className="w-4 h-4" />}>
-                  {t.reports}
-                </Button>
-              </Link>
             </div>
           </div>
 
-          {error && <ErrorState error={error} onRetry={reloadDashboardData} />}
+          {/* Primary Error Notification */}
+          {error && <ErrorState error={error} onRetry={() => loadDashboardData(true)} />}
 
-          {/* Active Incidents Alert Banner */}
-          {stats && (stats.open_incidents || 0) > 0 && (
-            <div className="bg-rose-50 border-2 border-rose-200 rounded-2xl p-4 sm:p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm">
-              <div className="flex items-center gap-3">
-                <div className="p-2.5 bg-rose-600 text-white rounded-xl shadow-sm">
-                  <AlertOctagon className="w-6 h-6" />
-                </div>
-                <div>
-                  <h3 className="text-sm font-bold text-rose-950">
-                    {stats.open_incidents} {t.openIncidents}
-                  </h3>
-                  <p className="text-xs text-rose-700 mt-0.5">
-                    {isRTL
-                      ? "یک یا چند هدف مانیتورینگ یا هارت‌بیت دچار قطعی تأییدشده هستند و نیاز به رسیدگی دارند."
-                      : "One or more monitors or heartbeats are currently down or missed and require attention."}
-                  </p>
-                </div>
-              </div>
-              <Link href="/incidents?status=open">
-                <Button size="sm" variant="danger">
-                  {t.incidents}
-                </Button>
-              </Link>
-            </div>
-          )}
-
-          {/* Section 1: Real Summary Metrics Grid */}
           {loading ? (
-            <MetricSkeleton />
+            <DashboardSkeleton />
           ) : (
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 sm:gap-6">
-              <MetricCard
-                title={t.totalClients}
-                value={stats ? stats.total_clients : 0}
-                icon={<Users className="w-5 h-5" />}
-                href="/clients"
-                trendColor="blue"
-                actionText={t.manageClients}
+            <>
+              {/* Section B — Executive System Health Bar */}
+              <SystemHealthBar
+                state={overallState}
+                monitorsUp={counts.up}
+                monitorsDown={counts.down}
+                monitorsSuspectedDown={counts.suspectedDown}
+                openIncidents={counts.openIncidents}
+                totalMonitors={counts.totalMonitors}
+                isStale={isStale}
+                onRefresh={() => loadDashboardData(true)}
+                refreshing={refreshing}
               />
-              <MetricCard
-                title={t.totalAssets}
-                value={stats ? stats.total_assets : 0}
-                icon={<Globe className="w-5 h-5" />}
-                href="/assets"
-                trendColor="indigo"
-                actionText={t.viewAllAssets}
+
+              {/* Section C — Four Primary KPI Cards */}
+              <PrimaryKpiCards
+                totalMonitoredTargets={counts.totalMonitors}
+                confirmedDown={counts.down}
+                suspectedDown={counts.suspectedDown}
+                openIncidents={counts.openIncidents}
+                avgLatencyMs={latencyData.avgMs}
+                successfulMeasurementsCount={latencyData.count}
               />
-              <MetricCard
-                title={t.monitorsUp}
-                value={stats ? stats.monitors_up : 0}
-                icon={<CheckCircle2 className="w-5 h-5" />}
-                href="/monitors?status=up"
-                trendColor="emerald"
-                actionText={t.statusUp}
-              />
-              <MetricCard
-                title={t.monitorsDown}
-                value={stats ? stats.monitors_down : 0}
-                icon={<XCircle className="w-5 h-5" />}
-                href="/monitors?status=down"
-                trendColor="rose"
-                actionText={t.statusDown}
-              />
-              <MetricCard
-                title={t.openIncidents}
-                value={stats ? stats.open_incidents || 0 : 0}
-                icon={<AlertTriangle className="w-5 h-5" />}
-                href="/incidents?status=open"
-                trendColor={(stats?.open_incidents || 0) > 0 ? "rose" : "emerald"}
-                actionText={t.incidents}
-              />
-              <MetricCard
-                title={t.heartbeats}
-                value={stats ? stats.total_heartbeats || 0 : 0}
-                icon={<Radio className="w-5 h-5" />}
-                href="/heartbeats"
-                trendColor="indigo"
-                actionText={t.heartbeats}
-              />
-            </div>
-          )}
 
-          {/* Section 2: Monitor Health Overview Distribution Bar */}
-          {stats && (
-            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
-              <div className="flex items-center justify-between mb-4">
-                <div>
-                  <h2 className="text-base font-bold text-slate-900 tracking-tight">
-                    {t.monitorHealthOverview}
-                  </h2>
-                  <p className="text-xs text-slate-500 mt-0.5">
-                    Live operational distribution across all active agency monitors.
-                  </p>
-                </div>
-                <Link
-                  href="/monitors"
-                  className="text-xs font-semibold text-blue-600 hover:text-blue-800 flex items-center gap-1"
-                >
-                  <span>{t.viewAllMonitors}</span>
-                  {isRTL ? <ArrowLeft className="w-3.5 h-3.5" /> : <ArrowRight className="w-3.5 h-3.5" />}
-                </Link>
-              </div>
+              {/* Section F — Balanced Operational Split View (65% / 35%) */}
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+                {/* Main Operational Column (col-span-8 ~67%) */}
+                <div className="lg:col-span-8 space-y-6">
+                  {/* Section D — Monitor Health Distribution */}
+                  <MonitorDistribution
+                    up={counts.up}
+                    suspectedDown={counts.suspectedDown}
+                    down={counts.down}
+                    paused={counts.paused}
+                    pending={counts.pending}
+                    unknown={counts.unknown}
+                  />
 
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 pt-2">
-                <Link
-                  href="/monitors?status=up"
-                  className="p-3 rounded-xl border border-emerald-100 bg-emerald-50/40 hover:bg-emerald-50 transition-colors block"
-                >
-                  <div className="text-[11px] font-semibold text-emerald-800">{t.statusUp}</div>
-                  <div className="text-xl font-bold text-emerald-700 mt-1">{stats.monitors_up}</div>
-                </Link>
+                  {/* Section E.1 — Active Incidents */}
+                  <ActiveIncidentsList
+                    incidents={incidents}
+                    onAcknowledge={handleAcknowledge}
+                    acknowledgingId={acknowledgingId}
+                    canAcknowledge={canModify}
+                  />
 
-                <Link
-                  href="/monitors?status=suspected_down"
-                  className="p-3 rounded-xl border border-amber-200 bg-amber-50/40 hover:bg-amber-50 transition-colors block"
-                >
-                  <div className="text-[11px] font-semibold text-amber-800">{t.statusSuspectedDown}</div>
-                  <div className="text-xl font-bold text-amber-700 mt-1">
-                    {stats.monitors_suspected_down || 0}
-                  </div>
-                </Link>
-
-                <Link
-                  href="/monitors?status=down"
-                  className="p-3 rounded-xl border border-rose-200 bg-rose-50/40 hover:bg-rose-50 transition-colors block"
-                >
-                  <div className="text-[11px] font-semibold text-rose-800">{t.statusDown}</div>
-                  <div className="text-xl font-bold text-rose-700 mt-1">{stats.monitors_down}</div>
-                </Link>
-
-                <Link
-                  href="/monitors?status=pending"
-                  className="p-3 rounded-xl border border-blue-100 bg-blue-50/40 hover:bg-blue-50 transition-colors block"
-                >
-                  <div className="text-[11px] font-semibold text-blue-800">{t.statusPending}</div>
-                  <div className="text-xl font-bold text-blue-700 mt-1">{stats.monitors_pending}</div>
-                </Link>
-
-                <Link
-                  href="/monitors?status=paused"
-                  className="p-3 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 transition-colors block"
-                >
-                  <div className="text-[11px] font-semibold text-slate-700">{t.statusPaused}</div>
-                  <div className="text-xl font-bold text-slate-800 mt-1">{stats.monitors_paused}</div>
-                </Link>
-
-                <Link
-                  href="/monitors?status=unknown"
-                  className="p-3 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 transition-colors block"
-                >
-                  <div className="text-[11px] font-semibold text-slate-700">{t.statusUnknown}</div>
-                  <div className="text-xl font-bold text-slate-800 mt-1">{stats.monitors_unknown || 0}</div>
-                </Link>
-              </div>
-            </div>
-          )}
-
-          {/* Section 3: Recently Failed Checks Panel */}
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-            <div className="p-6 border-b border-slate-100 flex items-center justify-between">
-              <div className="flex items-center gap-2.5">
-                <div className="p-2 rounded-xl bg-rose-50 text-rose-600">
-                  <AlertTriangle className="w-5 h-5" />
-                </div>
-                <div>
-                  <h2 className="text-base font-bold text-slate-900 tracking-tight">
-                    {t.recentlyFailedChecks}
-                  </h2>
-                  <p className="text-xs text-slate-500 mt-0.5">
-                    Critical checks reporting HTTP error codes, timeout, or policy blocks.
-                  </p>
-                </div>
-              </div>
-              <Badge variant={failedChecks.length > 0 ? "failure" : "success"} />
-            </div>
-
-            {failedChecks.length === 0 ? (
-              <div className="p-8 text-center text-xs text-slate-500">
-                <CheckCircle2 className="w-8 h-8 text-emerald-500 mx-auto mb-2" />
-                <p className="font-semibold text-slate-700">{t.noFailedChecks}</p>
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-sm" dir={isRTL ? "rtl" : "ltr"}>
-                  <thead className="bg-slate-50 text-slate-600 text-xs uppercase font-semibold border-b border-slate-200">
-                    <tr>
-                      <th className="px-6 py-3.5">{t.status}</th>
-                      <th className="px-6 py-3.5">{t.latestCheck}</th>
-                      <th className="px-6 py-3.5">{t.latency}</th>
-                      <th className="px-6 py-3.5">{t.statusCode}</th>
-                      <th className="px-6 py-3.5">Error Message</th>
-                      <th className="px-6 py-3.5 text-right">{t.actions}</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100 text-xs">
-                    {failedChecks.map((chk) => (
-                      <tr key={chk.id} className="hover:bg-rose-50/30 transition-colors">
-                        <td className="px-6 py-3.5">
-                          <Badge variant={chk.result} />
-                        </td>
-                        <td className="px-6 py-3.5 text-slate-600">
-                          {new Date(chk.completed_at).toLocaleTimeString(undefined, {
-                            timeZone: activeOrg?.timezone || "UTC",
-                          })}
-                        </td>
-                        <td className="px-6 py-3.5 font-mono font-medium text-slate-800">
-                          {chk.latency_ms} ms
-                        </td>
-                        <td className="px-6 py-3.5 font-mono font-bold text-rose-600">
-                          {chk.http_status_code || "—"}
-                        </td>
-                        <td className="px-6 py-3.5 text-rose-700 font-mono text-[11px] max-w-xs truncate">
-                          {chk.error_message || "Target unresponsive"}
-                        </td>
-                        <td className="px-6 py-3.5 text-right">
-                          <Link
-                            href={`/monitors/${chk.monitor_id}`}
-                            className="font-semibold text-blue-600 hover:underline"
-                          >
-                            {t.viewMonitor}
-                          </Link>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-
-          {/* Section 4 & 5: Latest Monitoring Activity & Clients Summary */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-            {/* Latest Checks (2 Cols) */}
-            <div className="lg:col-span-2 bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-              <div className="p-6 border-b border-slate-100 flex items-center justify-between">
-                <div>
-                  <h2 className="text-base font-bold text-slate-900 tracking-tight flex items-center gap-2">
-                    <Activity className="w-5 h-5 text-blue-600" />
-                    <span>{t.latestMonitoringActivity}</span>
-                  </h2>
-                  <p className="text-xs text-slate-500 mt-0.5">
-                    Continuous verification cycles recorded by the background Go worker.
-                  </p>
-                </div>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={reloadDashboardData}
-                  icon={<RotateCcw className="w-3.5 h-3.5" />}
-                >
-                  {t.refresh}
-                </Button>
-              </div>
-
-              {!stats || stats.recent_checks.length === 0 ? (
-                <div className="p-12 text-center text-slate-500 text-xs">{t.noHistory}</div>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-sm" dir={isRTL ? "rtl" : "ltr"}>
-                    <thead className="bg-slate-50 text-slate-600 text-xs uppercase font-semibold border-b border-slate-200">
-                      <tr>
-                        <th className="px-5 py-3.5">{t.status}</th>
-                        <th className="px-5 py-3.5">{t.latestCheck}</th>
-                        <th className="px-5 py-3.5">{t.latency}</th>
-                        <th className="px-5 py-3.5">{t.statusCode}</th>
-                        <th className="px-5 py-3.5 text-right">{t.actions}</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100 text-xs">
-                      {stats.recent_checks.slice(0, 10).map((chk) => (
-                        <tr key={chk.id} className="hover:bg-slate-50/70 transition-colors">
-                          <td className="px-5 py-3.5">
-                            <Badge variant={chk.result} />
-                          </td>
-                          <td className="px-5 py-3.5 text-slate-600">
-                            {new Date(chk.completed_at).toLocaleTimeString(undefined, {
-                              timeZone: activeOrg?.timezone || "UTC",
-                            })}
-                          </td>
-                          <td className="px-5 py-3.5 font-mono font-medium text-slate-800">
-                            {chk.latency_ms} ms
-                          </td>
-                          <td className="px-5 py-3.5 font-mono font-bold text-slate-800">
-                            {chk.http_status_code || "—"}
-                          </td>
-                          <td className="px-5 py-3.5 text-right">
-                            <Link
-                              href={`/monitors/${chk.monitor_id}`}
-                              className="font-semibold text-blue-600 hover:underline"
-                            >
-                              {t.viewMonitor}
-                            </Link>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
-
-            {/* Clients Summary Panel (1 Col) */}
-            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden flex flex-col justify-between">
-              <div>
-                <div className="p-6 border-b border-slate-100 flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Users className="w-5 h-5 text-blue-600" />
-                    <h2 className="text-base font-bold text-slate-900 tracking-tight">
-                      {t.clientsSummary}
-                    </h2>
-                  </div>
-                  <Link
-                    href="/clients"
-                    className="text-xs font-semibold text-blue-600 hover:underline"
-                  >
-                    {t.viewDetails}
-                  </Link>
+                  {/* Section E.2 — Recent Failed Checks */}
+                  <RecentFailedChecks
+                    failedChecks={failedChecks}
+                    timezone={activeOrg?.timezone || "UTC"}
+                  />
                 </div>
 
-                <div className="p-4 space-y-3">
-                  {clients.length === 0 ? (
-                    <div className="py-8 text-center text-xs text-slate-400">
-                      {t.noClientsFound}
-                    </div>
-                  ) : (
-                    clients.map((c) => (
+                {/* Supporting Information Column (col-span-4 ~33%) */}
+                <div className="lg:col-span-4 space-y-6">
+                  {/* Section G — Heartbeat Summary */}
+                  <HeartbeatSummary summary={heartbeatSummary} />
+
+                  {/* Section H — Recent Maintenance Activities */}
+                  <RecentMaintenance activities={activities} />
+
+                  {/* Section I — Care Reports Overview */}
+                  <CareReportsOverview reports={reports} canGenerate={canModify} />
+
+                  {/* Clients Quick Link Summary */}
+                  <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 sm:p-6">
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center gap-2">
+                        <Users className="w-4 h-4 text-blue-600" />
+                        <h3 className="text-sm font-bold text-slate-900 tracking-tight">
+                          {t.clientsSummary}
+                        </h3>
+                      </div>
                       <Link
-                        key={c.id}
-                        href={`/clients/${c.id}`}
-                        className="p-3 rounded-xl border border-slate-100 hover:border-blue-200 hover:bg-slate-50/80 transition-all flex items-center justify-between group block"
+                        href="/clients"
+                        className="text-xs font-semibold text-blue-600 hover:text-blue-800 flex items-center gap-1 transition-colors"
                       >
-                        <div>
-                          <div className="font-bold text-xs text-slate-900 group-hover:text-blue-600 transition-colors">
-                            {c.name}
-                          </div>
-                          <div className="text-[11px] text-slate-500 mt-0.5">
-                            {c.contact_name || c.website || "No contact info"}
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2 text-[11px] font-semibold text-slate-600">
-                          <span title="Assets" className="flex items-center gap-1">
-                            <Globe className="w-3 h-3 text-slate-400" />
-                            <span>{c.asset_count}</span>
-                          </span>
-                          <span title="Monitors" className="flex items-center gap-1">
-                            <Activity className="w-3 h-3 text-slate-400" />
-                            <span>{c.monitor_count}</span>
-                          </span>
-                        </div>
+                        <span>{t.manageClients}</span>
+                        {isRTL ? (
+                          <ArrowLeft className="w-3.5 h-3.5" />
+                        ) : (
+                          <ArrowRight className="w-3.5 h-3.5" />
+                        )}
                       </Link>
-                    ))
-                  )}
+                    </div>
+
+                    {clients.length === 0 ? (
+                      <div className="p-4 text-center text-xs text-slate-400 bg-slate-50 rounded-xl">
+                        {t.noClientsFound}
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        {clients.slice(0, 4).map((c) => (
+                          <Link
+                            key={c.id}
+                            href={`/clients/${c.id}`}
+                            className="p-2.5 rounded-xl border border-slate-100 hover:border-blue-200 hover:bg-slate-50 transition-all flex items-center justify-between group block"
+                          >
+                            <span className="text-xs font-bold text-slate-800 group-hover:text-blue-600 transition-colors truncate">
+                              {c.name}
+                            </span>
+                            <div className="flex items-center gap-2 text-[11px] font-semibold text-slate-500 tabular-nums">
+                              <span
+                                title="Assets"
+                                className="flex items-center gap-0.5"
+                              >
+                                <Globe className="w-3 h-3 text-slate-400" />
+                                <span>{c.asset_count}</span>
+                              </span>
+                              <span
+                                title="Monitors"
+                                className="flex items-center gap-0.5"
+                              >
+                                <Activity className="w-3 h-3 text-slate-400" />
+                                <span>{c.monitor_count}</span>
+                              </span>
+                            </div>
+                          </Link>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
-
-              <div className="p-4 bg-slate-50 border-t border-slate-100">
-                <Link href="/clients/new">
-                  <Button size="sm" variant="outline" className="w-full" icon={<Plus className="w-3.5 h-3.5" />}>
-                    {t.createClient}
-                  </Button>
-                </Link>
-              </div>
-            </div>
-          </div>
-
-          {/* Section 5.5: Recent Maintenance Activities */}
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-            <div className="p-6 border-b border-slate-100 flex items-center justify-between">
-              <div>
-                <h2 className="text-base font-bold text-slate-900 tracking-tight flex items-center gap-2">
-                  <Wrench className="w-5 h-5 text-indigo-600" />
-                  <span>{t.maintenance}</span>
-                </h2>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  {isRTL
-                    ? "اقدامات و کارهای اخیر انجام‌شده برای سایت‌های مشتریان جهت درج در گزارش‌های ماهانه."
-                    : "Recent maintenance work performed for client assets, ready for monthly care reporting."}
-                </p>
-              </div>
-              <Link href="/maintenance">
-                <Button size="sm" variant="outline">
-                  {isRTL ? "مشاهده همه کارها" : "View All"}
-                </Button>
-              </Link>
-            </div>
-
-            {recentActivities.length === 0 ? (
-              <div className="p-8 text-center text-slate-400 text-xs">
-                {t.noActivitiesFound}
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-sm" dir={isRTL ? "rtl" : "ltr"}>
-                  <thead className="bg-slate-50 text-slate-600 text-xs uppercase font-semibold border-b border-slate-200">
-                    <tr>
-                      <th className="px-5 py-3.5">{t.clientName}</th>
-                      <th className="px-5 py-3.5">{t.activityTitle}</th>
-                      <th className="px-5 py-3.5">{t.activityCategory}</th>
-                      <th className="px-5 py-3.5">{t.activityPerformedAt}</th>
-                      <th className="px-5 py-3.5">{t.activityDuration}</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100 text-xs">
-                    {recentActivities.map((act) => (
-                      <tr key={act.id} className="hover:bg-slate-50/70 transition-colors">
-                        <td className="px-5 py-3.5 font-medium text-slate-900">
-                          {act.client_name || act.client_id}
-                        </td>
-                        <td className="px-5 py-3.5">
-                          <span className="font-semibold text-slate-800">{act.title}</span>
-                          {act.asset_name && (
-                            <span className="text-slate-400 text-[11px] block">{act.asset_name}</span>
-                          )}
-                        </td>
-                        <td className="px-5 py-3.5">
-                          <span className="px-2 py-0.5 text-[11px] font-medium rounded-full bg-slate-100 text-slate-700">
-                            {act.category}
-                          </span>
-                        </td>
-                        <td className="px-5 py-3.5 text-slate-500">
-                          {new Date(act.performed_at).toLocaleDateString(locale === "fa" ? "fa-IR" : "en-US", {
-                            month: "short",
-                            day: "numeric",
-                          })}
-                        </td>
-                        <td className="px-5 py-3.5 text-slate-600">
-                          {act.duration_minutes ? `${act.duration_minutes} min` : "—"}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-
-          {/* Section 6: Live Infrastructure Health Checker */}
-          <HealthChecker locale={locale} />
+            </>
+          )}
         </div>
       ) : (
-        /* Public Guest View */
+        /* Public Guest View (Unauthenticated) - Keeps public landing clean */
         <div className="max-w-4xl mx-auto py-8">
           <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-blue-950 rounded-2xl p-8 sm:p-12 mb-8 text-white shadow-xl border border-slate-800">
             <div className="max-w-2xl">
@@ -672,21 +589,26 @@ export default function Home() {
 
               <div className="flex flex-wrap items-center gap-3">
                 <Link href="/signup">
-                  <Button size="lg" variant="primary" icon={<UserPlus className="w-4 h-4" />}>
+                  <Button
+                    size="lg"
+                    variant="primary"
+                    icon={<UserPlus className="w-4 h-4" />}
+                  >
                     {t.createAccount}
                   </Button>
                 </Link>
                 <Link href="/login">
-                  <Button size="lg" variant="secondary" icon={<LogIn className="w-4 h-4" />}>
+                  <Button
+                    size="lg"
+                    variant="secondary"
+                    icon={<LogIn className="w-4 h-4" />}
+                  >
                     {t.login}
                   </Button>
                 </Link>
               </div>
             </div>
           </div>
-
-          {/* Live Service Health Checker */}
-          <HealthChecker locale={locale} />
         </div>
       )}
     </AppLayout>

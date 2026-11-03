@@ -7,7 +7,7 @@ import { useI18n } from "@/lib/i18n";
 
 interface MetricCardProps {
   title: string;
-  value: number | string;
+  value: React.ReactNode;
   icon: React.ReactNode;
   subtitle?: string;
   href?: string;
