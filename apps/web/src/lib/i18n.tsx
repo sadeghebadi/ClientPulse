@@ -1,6 +1,6 @@
 "use client";
 
-import React, { createContext, useContext, useState, useEffect } from "react";
+import React, { createContext, useContext, useSyncExternalStore } from "react";
 
 export type Locale = "en" | "fa";
 
@@ -827,26 +827,41 @@ interface I18nContextType {
 
 const I18nContext = createContext<I18nContextType | null>(null);
 
-export function I18nProvider({ children }: { children: React.ReactNode }) {
-  const [locale, setLocale] = useState<Locale>(() => {
-    if (typeof window !== "undefined") {
-      const saved = localStorage.getItem("clientpulse_locale") as Locale;
-      if (saved === "en" || saved === "fa") return saved;
-    }
-    return "en";
-  });
+function subscribeToLocale(callback: () => void) {
+  if (typeof window === "undefined") return () => {};
+  window.addEventListener("clientpulse:locale_changed", callback);
+  window.addEventListener("storage", callback);
+  return () => {
+    window.removeEventListener("clientpulse:locale_changed", callback);
+    window.removeEventListener("storage", callback);
+  };
+}
 
-  useEffect(() => {
-    document.documentElement.lang = locale;
-    document.documentElement.dir = locale === "fa" ? "rtl" : "ltr";
-  }, [locale]);
+function getLocaleSnapshot(): Locale {
+  if (typeof window !== "undefined") {
+    const saved = localStorage.getItem("clientpulse_locale");
+    if (saved === "fa" || saved === "en") return saved;
+  }
+  return "en";
+}
+
+function getServerLocaleSnapshot(): Locale {
+  return "en";
+}
+
+export function I18nProvider({ children }: { children: React.ReactNode }) {
+  const locale = useSyncExternalStore(
+    subscribeToLocale,
+    getLocaleSnapshot,
+    getServerLocaleSnapshot
+  );
 
   const changeLocale = (newLocale: Locale) => {
-    setLocale(newLocale);
     if (typeof window !== "undefined") {
       localStorage.setItem("clientpulse_locale", newLocale);
       document.documentElement.lang = newLocale;
       document.documentElement.dir = newLocale === "fa" ? "rtl" : "ltr";
+      window.dispatchEvent(new Event("clientpulse:locale_changed"));
     }
   };
 
@@ -866,7 +881,11 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
         isRTL,
       }}
     >
-      <div dir={isRTL ? "rtl" : "ltr"} className={isRTL ? "font-persian" : "font-sans"}>
+      <div
+        dir={isRTL ? "rtl" : "ltr"}
+        className={isRTL ? "font-persian" : "font-sans"}
+        suppressHydrationWarning
+      >
         {children}
       </div>
     </I18nContext.Provider>
