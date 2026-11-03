@@ -11,16 +11,18 @@ import (
 	"time"
 
 	"clientpulse/services/api/internal/config"
+	"clientpulse/services/api/internal/entitlement"
 	"clientpulse/services/api/internal/rate"
 	"clientpulse/services/api/internal/repository"
 	"clientpulse/services/api/internal/tenant"
 )
 
 type HeartbeatHandler struct {
-	repo        *repository.HeartbeatRepository
-	cfg         *config.Config
-	logger      *slog.Logger
-	pingLimiter *rate.Limiter
+	repo         *repository.HeartbeatRepository
+	cfg          *config.Config
+	logger       *slog.Logger
+	pingLimiter  *rate.Limiter
+	entitlements *entitlement.Service
 }
 
 func NewHeartbeatHandler(repo *repository.HeartbeatRepository, cfg *config.Config, logger *slog.Logger) *HeartbeatHandler {
@@ -34,6 +36,12 @@ func NewHeartbeatHandler(repo *repository.HeartbeatRepository, cfg *config.Confi
 		logger:      logger,
 		pingLimiter: rate.NewLimiter(60, 1*time.Minute),
 	}
+}
+
+// WithEntitlements attaches the entitlement service for heartbeat quota checks.
+func (h *HeartbeatHandler) WithEntitlements(svc *entitlement.Service) *HeartbeatHandler {
+	h.entitlements = svc
+	return h
 }
 
 // Ping processes an unauthenticated public heartbeat ping: POST /api/v1/heartbeat-pings/{token}
@@ -123,6 +131,13 @@ func (h *HeartbeatHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.ExpectedIntervalSeconds <= 0 {
 		req.ExpectedIntervalSeconds = 3600 // 1 hour default
+	}
+
+	if h.entitlements != nil {
+		if err := h.entitlements.CheckHeartbeatCreation(r.Context(), tc.OrganizationID); err != nil {
+			sendJSONError(w, http.StatusForbidden, "LIMIT_EXCEEDED", err.Error())
+			return
+		}
 	}
 
 	hb, plaintextToken, err := h.repo.CreateHeartbeat(r.Context(), tc.OrganizationID, repository.CreateHeartbeatParams{

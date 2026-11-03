@@ -28,6 +28,7 @@ type Dependencies struct {
 	BrandingHdr      *BrandingHandler
 	ReportHdr        *ReportHandler
 	NotificationHdr  *NotificationHandler
+	PlatformAdminHdr *PlatformAdminHandler
 	AuthMiddleware   *AuthMiddleware
 	TenantMiddleware *TenantMiddleware
 }
@@ -291,6 +292,63 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 
 		// Public webhook for incoming Telegram updates
 		mux.HandleFunc("POST /api/v1/integrations/telegram/webhook", s.deps.NotificationHdr.TelegramWebhook)
+	}
+
+	// 17. Platform Admin & Subscription Management Routes
+	if s.deps.PlatformAdminHdr != nil {
+		platformAdminMutationLimiter := rate.NewLimiter(30, 1*time.Minute)
+
+		platformAdminScoped := func(h http.HandlerFunc) http.Handler {
+			return s.deps.AuthMiddleware.Authenticate(RequireAuth(RequirePlatformAdmin(http.HandlerFunc(h))))
+		}
+		platformAdminMutation := func(h http.HandlerFunc) http.Handler {
+			return RateLimit(platformAdminMutationLimiter, "platform-admin-mutation")(
+				s.deps.AuthMiddleware.Authenticate(RequireAuth(RequirePlatformAdmin(http.HandlerFunc(h)))),
+			)
+		}
+
+		userAuthOnly := func(h http.HandlerFunc) http.Handler {
+			return s.deps.AuthMiddleware.Authenticate(RequireAuth(http.HandlerFunc(h)))
+		}
+
+		// Overview & Check
+		mux.Handle("GET /api/v1/platform-admin/overview", platformAdminScoped(s.deps.PlatformAdminHdr.GetOverview))
+		mux.Handle("GET /api/v1/platform-admin/check", userAuthOnly(s.deps.PlatformAdminHdr.CheckPrivilege))
+		mux.Handle("GET /api/v1/platform-admin/privilege", userAuthOnly(s.deps.PlatformAdminHdr.CheckPrivilege))
+
+		// User Management
+		mux.Handle("GET /api/v1/platform-admin/users", platformAdminScoped(s.deps.PlatformAdminHdr.ListUsers))
+		mux.Handle("GET /api/v1/platform-admin/users/{id}", platformAdminScoped(s.deps.PlatformAdminHdr.GetUser))
+		mux.Handle("POST /api/v1/platform-admin/users/{id}/suspend", platformAdminMutation(s.deps.PlatformAdminHdr.SuspendUser))
+		mux.Handle("POST /api/v1/platform-admin/users/{id}/reactivate", platformAdminMutation(s.deps.PlatformAdminHdr.ReactivateUser))
+
+		// Organization Management
+		mux.Handle("GET /api/v1/platform-admin/organizations", platformAdminScoped(s.deps.PlatformAdminHdr.ListOrganizations))
+		mux.Handle("GET /api/v1/platform-admin/organizations/{id}", platformAdminScoped(s.deps.PlatformAdminHdr.GetOrganization))
+		mux.Handle("POST /api/v1/platform-admin/organizations/{id}/suspend", platformAdminMutation(s.deps.PlatformAdminHdr.SuspendOrganization))
+		mux.Handle("POST /api/v1/platform-admin/organizations/{id}/reactivate", platformAdminMutation(s.deps.PlatformAdminHdr.ReactivateOrganization))
+
+		// Subscription Plan Management
+		mux.Handle("GET /api/v1/platform-admin/plans", platformAdminScoped(s.deps.PlatformAdminHdr.ListPlans))
+		mux.Handle("POST /api/v1/platform-admin/plans", platformAdminMutation(s.deps.PlatformAdminHdr.CreateDraftPlan))
+		mux.Handle("GET /api/v1/platform-admin/plans/{id}", platformAdminScoped(s.deps.PlatformAdminHdr.GetPlan))
+		mux.Handle("PUT /api/v1/platform-admin/plans/{id}", platformAdminMutation(s.deps.PlatformAdminHdr.UpdatePlan))
+		mux.Handle("PATCH /api/v1/platform-admin/plans/{id}", platformAdminMutation(s.deps.PlatformAdminHdr.UpdatePlan))
+		mux.Handle("POST /api/v1/platform-admin/plans/{id}/publish", platformAdminMutation(s.deps.PlatformAdminHdr.PublishPlan))
+		mux.Handle("POST /api/v1/platform-admin/plans/{id}/archive", platformAdminMutation(s.deps.PlatformAdminHdr.ArchivePlan))
+		mux.Handle("GET /api/v1/platform-admin/plans/{id}/assignments", platformAdminScoped(s.deps.PlatformAdminHdr.GetPlanAssignments))
+
+		// Subscription Assignments & Lifecycle
+		mux.Handle("GET /api/v1/platform-admin/subscriptions", platformAdminScoped(s.deps.PlatformAdminHdr.ListSubscriptions))
+		mux.Handle("POST /api/v1/platform-admin/subscriptions", platformAdminMutation(s.deps.PlatformAdminHdr.AssignSubscription))
+		mux.Handle("POST /api/v1/platform-admin/subscriptions/assign", platformAdminMutation(s.deps.PlatformAdminHdr.AssignSubscription))
+		mux.Handle("POST /api/v1/platform-admin/subscriptions/check-limits", platformAdminScoped(s.deps.PlatformAdminHdr.CheckLimits))
+		mux.Handle("POST /api/v1/platform-admin/subscriptions/{id}/suspend", platformAdminMutation(s.deps.PlatformAdminHdr.SuspendSubscription))
+		mux.Handle("POST /api/v1/platform-admin/subscriptions/{id}/reactivate", platformAdminMutation(s.deps.PlatformAdminHdr.ReactivateSubscription))
+		mux.Handle("POST /api/v1/platform-admin/subscriptions/{id}/cancel", platformAdminMutation(s.deps.PlatformAdminHdr.CancelSubscription))
+
+		// Audit Logs
+		mux.Handle("GET /api/v1/platform-admin/audit-logs", platformAdminScoped(s.deps.PlatformAdminHdr.ListAuditLogs))
 	}
 }
 

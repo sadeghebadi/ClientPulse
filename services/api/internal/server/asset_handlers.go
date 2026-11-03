@@ -7,16 +7,18 @@ import (
 	"strconv"
 	"strings"
 
+	"clientpulse/services/api/internal/entitlement"
 	"clientpulse/services/api/internal/repository"
 	"clientpulse/services/api/internal/ssrf"
 	"clientpulse/services/api/internal/tenant"
 )
 
 type AssetHandler struct {
-	assetRepo *repository.AssetRepository
-	auditRepo *repository.AuditRepository
-	ssrfGuard *ssrf.Guard
-	appEnv    string
+	assetRepo    *repository.AssetRepository
+	auditRepo    *repository.AuditRepository
+	ssrfGuard    *ssrf.Guard
+	entitlements *entitlement.Service
+	appEnv       string
 }
 
 func NewAssetHandler(assetRepo *repository.AssetRepository, auditRepo *repository.AuditRepository, ssrfGuard *ssrf.Guard, appEnv string) *AssetHandler {
@@ -29,6 +31,12 @@ func NewAssetHandler(assetRepo *repository.AssetRepository, auditRepo *repositor
 		ssrfGuard: ssrfGuard,
 		appEnv:    appEnv,
 	}
+}
+
+// WithEntitlements attaches the entitlement service for quota enforcement.
+func (h *AssetHandler) WithEntitlements(svc *entitlement.Service) *AssetHandler {
+	h.entitlements = svc
+	return h
 }
 
 type CreateAssetRequest struct {
@@ -73,6 +81,13 @@ func (h *AssetHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if req.URL == "" {
 		sendJSONError(w, http.StatusBadRequest, "VALIDATION_ERROR", "Asset URL is required")
 		return
+	}
+
+	if h.entitlements != nil {
+		if err := h.entitlements.CheckAssetCreation(r.Context(), tc.OrganizationID); err != nil {
+			sendJSONError(w, http.StatusForbidden, "LIMIT_EXCEEDED", err.Error())
+			return
+		}
 	}
 
 	// 1. SSRF Validation

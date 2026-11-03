@@ -24,7 +24,7 @@ func isValidUUID(u string) bool {
 }
 
 func printUsage() {
-	fmt.Println(`Platform Admin Management CLI (ClientPulse)
+	fmt.Print(`Platform Admin Management CLI (ClientPulse)
 
 Usage:
   platformadmin grant --user-id <uuid> [--reason <reason>] [--granted-by <uuid>]

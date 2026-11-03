@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"strings"
 
+	"clientpulse/services/api/internal/entitlement"
 	"clientpulse/services/api/internal/repository"
 	"clientpulse/services/api/internal/storage"
 	"clientpulse/services/api/internal/tenant"
@@ -22,9 +23,10 @@ import (
 )
 
 type BrandingHandler struct {
-	repo    *repository.BrandingRepository
-	storage storage.Storage
-	logger  *slog.Logger
+	repo         *repository.BrandingRepository
+	storage      storage.Storage
+	logger       *slog.Logger
+	entitlements *entitlement.Service
 }
 
 func NewBrandingHandler(repo *repository.BrandingRepository, st storage.Storage, logger *slog.Logger) *BrandingHandler {
@@ -36,6 +38,12 @@ func NewBrandingHandler(repo *repository.BrandingRepository, st storage.Storage,
 		storage: st,
 		logger:  logger,
 	}
+}
+
+// WithEntitlements attaches the entitlement service for branding feature gating.
+func (h *BrandingHandler) WithEntitlements(svc *entitlement.Service) *BrandingHandler {
+	h.entitlements = svc
+	return h
 }
 
 // Get handles GET /api/v1/settings/branding (Tenant-scoped)
@@ -78,6 +86,13 @@ func (h *BrandingHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		sendJSONError(w, http.StatusBadRequest, "INVALID_REQUEST", "Invalid request body")
 		return
+	}
+
+	if h.entitlements != nil {
+		if err := h.entitlements.CheckCustomBranding(r.Context(), tc.OrganizationID); err != nil {
+			sendJSONError(w, http.StatusForbidden, "FEATURE_NOT_AVAILABLE", "Custom branding is not available on your organization's subscription plan")
+			return
+		}
 	}
 
 	b, err := h.repo.UpsertBranding(r.Context(), tc.OrganizationID, repository.UpdateBrandingParams{

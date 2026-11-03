@@ -4,16 +4,24 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"clientpulse/services/api/internal/entitlement"
 	"clientpulse/services/api/internal/service"
 	"clientpulse/services/api/internal/tenant"
 )
 
 type OrgHandler struct {
-	orgService *service.OrgService
+	orgService   *service.OrgService
+	entitlements *entitlement.Service
 }
 
 func NewOrgHandler(orgService *service.OrgService) *OrgHandler {
 	return &OrgHandler{orgService: orgService}
+}
+
+// WithEntitlements attaches the entitlement service for member limit checks.
+func (h *OrgHandler) WithEntitlements(svc *entitlement.Service) *OrgHandler {
+	h.entitlements = svc
+	return h
 }
 
 // ListUserOrganizations returns all organizations the authenticated user belongs to.
@@ -181,6 +189,13 @@ func (h *OrgHandler) AddMember(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		sendJSONError(w, http.StatusBadRequest, "INVALID_REQUEST", "Invalid request payload format.")
 		return
+	}
+
+	if h.entitlements != nil {
+		if err := h.entitlements.CheckMemberAddition(r.Context(), t.OrganizationID); err != nil {
+			sendJSONError(w, http.StatusForbidden, "LIMIT_EXCEEDED", err.Error())
+			return
+		}
 	}
 
 	membership, err := h.orgService.AddMember(r.Context(), t.OrganizationID, u.UserID, req)

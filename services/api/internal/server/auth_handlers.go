@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"time"
 
@@ -113,6 +114,10 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 
 	result, err := h.authService.Login(r.Context(), req.Email, req.Password, ip, userAgent)
 	if err != nil {
+		if errors.Is(err, service.ErrUserSuspended) {
+			sendJSONError(w, http.StatusForbidden, "USER_SUSPENDED", "Your account has been suspended by platform administration.")
+			return
+		}
 		sendJSONError(w, http.StatusUnauthorized, "INVALID_CREDENTIALS", "Invalid email or password.")
 		return
 	}
@@ -283,6 +288,12 @@ func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
 		"message": "Password changed successfully. Please log in again.",
 	})
+}
+
+func sendJSONResponse(w http.ResponseWriter, status int, data interface{}) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(data)
 }
 
 func sendJSONError(w http.ResponseWriter, status int, code, message string) {

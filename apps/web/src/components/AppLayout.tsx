@@ -52,7 +52,7 @@ interface NavGroup {
 
 export function AppLayout({ children }: AppLayoutProps) {
   const pathname = usePathname();
-  const { user, activeOrg, role, memberships, switchOrganization, logout, loading } = useAuth();
+  const { user, activeOrg, role, memberships, switchOrganization, logout, loading, isPlatformAdmin } = useAuth();
   const { t, locale, toggleLocale, isRTL } = useI18n();
 
   // Mobile drawer state
@@ -227,10 +227,62 @@ export function AppLayout({ children }: AppLayoutProps) {
         },
       ],
     },
+    ...(isPlatformAdmin
+      ? [
+          {
+            groupKey: "platformAdmin",
+            label: t.navPlatformAdmin,
+            items: [
+              {
+                label: t.platformOverview,
+                href: "/platform-admin",
+                icon: Shield,
+                isActive: (p: string) => p === "/platform-admin",
+              },
+              {
+                label: t.platformUsers,
+                href: "/platform-admin/users",
+                icon: Users,
+                isActive: (p: string) => p === "/platform-admin/users" || p.startsWith("/platform-admin/users/"),
+              },
+              {
+                label: t.platformOrgs,
+                href: "/platform-admin/organizations",
+                icon: Building,
+                isActive: (p: string) => p === "/platform-admin/organizations" || p.startsWith("/platform-admin/organizations/"),
+              },
+              {
+                label: t.platformPlans,
+                href: "/platform-admin/plans",
+                icon: Palette,
+                isActive: (p: string) => p === "/platform-admin/plans" || p.startsWith("/platform-admin/plans/"),
+              },
+              {
+                label: t.platformSubscriptions,
+                href: "/platform-admin/subscriptions",
+                icon: Activity,
+                isActive: (p: string) => p === "/platform-admin/subscriptions" || p.startsWith("/platform-admin/subscriptions/"),
+              },
+              {
+                label: t.platformAuditLogs,
+                href: "/platform-admin/audit-logs",
+                icon: FileText,
+                isActive: (p: string) => p === "/platform-admin/audit-logs",
+              },
+            ],
+          },
+        ]
+      : []),
   ];
 
   // Helper to determine active breadcrumb label for the top header
   const getPageContextLabel = (): string => {
+    if (pathname.startsWith("/platform-admin/users")) return t.platformUsers;
+    if (pathname.startsWith("/platform-admin/organizations")) return t.platformOrgs;
+    if (pathname.startsWith("/platform-admin/plans")) return t.platformPlans;
+    if (pathname.startsWith("/platform-admin/subscriptions")) return t.platformSubscriptions;
+    if (pathname.startsWith("/platform-admin/audit-logs")) return t.platformAuditLogs;
+    if (pathname.startsWith("/platform-admin")) return t.platformOverview;
     if (pathname === "/dashboard" || pathname === "/") return t.dashboard;
     if (pathname.startsWith("/clients")) return t.clients;
     if (pathname.startsWith("/assets")) return t.assets;

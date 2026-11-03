@@ -19,6 +19,7 @@ import (
 
 var (
 	ErrInvalidCredentials     = errors.New("invalid email or password")
+	ErrUserSuspended          = errors.New("user account has been suspended")
 	ErrEmailNotVerified       = errors.New("email address must be verified")
 	ErrUnauthorized           = errors.New("unauthorized")
 	ErrPasswordSameAsCurrent  = errors.New("new password cannot be identical to current password")
@@ -30,6 +31,7 @@ type AuthService struct {
 	orgRepo     *repository.OrganizationRepository
 	tokenRepo   *repository.TokenRepository
 	auditRepo   *repository.AuditRepository
+	adminRepo   *repository.PlatformAdminRepository
 	mailer      mail.EmailSender
 	cfg         *config.Config
 }
@@ -54,6 +56,12 @@ func NewAuthService(
 	}
 }
 
+// WithPlatformAdminRepo injects platform admin repo for global privilege resolution.
+func (s *AuthService) WithPlatformAdminRepo(adminRepo *repository.PlatformAdminRepository) *AuthService {
+	s.adminRepo = adminRepo
+	return s
+}
+
 type SignupRequest struct {
 	Email            string `json:"email"`
 	Password         string `json:"password"`
@@ -64,17 +72,19 @@ type SignupRequest struct {
 }
 
 type AuthResult struct {
-	User         *repository.User         `json:"user"`
-	Organization *repository.Organization `json:"organization,omitempty"`
-	Role         string                   `json:"role,omitempty"`
-	RawSession   string                   `json:"-"`
-	RawCSRF      string                   `json:"csrf_token"`
+	User            *repository.User         `json:"user"`
+	Organization    *repository.Organization `json:"organization,omitempty"`
+	Role            string                   `json:"role,omitempty"`
+	IsPlatformAdmin bool                     `json:"is_platform_admin"`
+	RawSession      string                   `json:"-"`
+	RawCSRF         string                   `json:"csrf_token"`
 }
 
 type MeResult struct {
 	User                *repository.User        `json:"user"`
 	ActiveOrganization  *repository.Organization `json:"active_organization,omitempty"`
 	Role                string                  `json:"role,omitempty"`
+	IsPlatformAdmin     bool                    `json:"is_platform_admin"`
 	Memberships         []repository.Membership `json:"memberships"`
 }
 
@@ -200,6 +210,10 @@ func (s *AuthService) Login(ctx context.Context, email, password, ip, userAgent 
 		return nil, ErrInvalidCredentials
 	}
 
+	if user.Status == "suspended" || user.Status == "deactivated" {
+		return nil, ErrUserSuspended
+	}
+
 	// Resolve user's organizations
 	memberships, err := s.orgRepo.ListUserMemberships(ctx, user.ID)
 	if err != nil {
@@ -240,12 +254,18 @@ func (s *AuthService) Login(ctx context.Context, email, password, ip, userAgent 
 	ipHash := hashIP(ip)
 	_ = s.auditRepo.RecordEvent(ctx, activeOrgID, &user.ID, "auth.login", "user", user.ID, nil, ipHash)
 
+	isAdmin := false
+	if s.adminRepo != nil {
+		isAdmin, _ = s.adminRepo.IsUserPlatformAdmin(ctx, user.ID)
+	}
+
 	return &AuthResult{
-		User:         user,
-		Organization: activeOrg,
-		Role:         activeRole,
-		RawSession:   rawSessionToken,
-		RawCSRF:      rawCSRFToken,
+		User:            user,
+		Organization:    activeOrg,
+		Role:            activeRole,
+		IsPlatformAdmin: isAdmin,
+		RawSession:      rawSessionToken,
+		RawCSRF:         rawCSRFToken,
 	}, nil
 }
 
@@ -301,10 +321,16 @@ func (s *AuthService) GetMe(ctx context.Context, userID, sessionID string) (*MeR
 		}
 	}
 
+	isAdmin := false
+	if s.adminRepo != nil {
+		isAdmin, _ = s.adminRepo.IsUserPlatformAdmin(ctx, userID)
+	}
+
 	return &MeResult{
 		User:               user,
 		ActiveOrganization: activeOrg,
 		Role:               activeRole,
+		IsPlatformAdmin:    isAdmin,
 		Memberships:        memberships,
 	}, nil
 }

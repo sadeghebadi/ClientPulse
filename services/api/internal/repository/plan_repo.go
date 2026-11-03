@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -549,3 +548,4 @@ func (r *PlanRepository) GetPlanAssignments(ctx context.Context, planID string) 
 	}
 	return subs, nil
 }
+

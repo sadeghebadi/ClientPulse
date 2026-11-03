@@ -17,9 +17,10 @@ const (
 )
 
 type AuthMiddleware struct {
-	sessionRepo *repository.SessionRepository
-	userRepo    *repository.UserRepository
-	cfg         *config.Config
+	sessionRepo       *repository.SessionRepository
+	userRepo          *repository.UserRepository
+	platformAdminRepo *repository.PlatformAdminRepository
+	cfg               *config.Config
 }
 
 func NewAuthMiddleware(sessionRepo *repository.SessionRepository, userRepo *repository.UserRepository, cfg *config.Config) *AuthMiddleware {
@@ -28,6 +29,12 @@ func NewAuthMiddleware(sessionRepo *repository.SessionRepository, userRepo *repo
 		userRepo:    userRepo,
 		cfg:         cfg,
 	}
+}
+
+// WithPlatformAdminRepo configures platform admin repository for global permission checks.
+func (m *AuthMiddleware) WithPlatformAdminRepo(repo *repository.PlatformAdminRepository) *AuthMiddleware {
+	m.platformAdminRepo = repo
+	return m
 }
 
 // Authenticate extracts session token from cookie or Authorization header,
@@ -70,12 +77,19 @@ func (m *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
 		// Update last seen
 		_ = m.sessionRepo.TouchSession(r.Context(), session.ID)
 
+		isAdmin := false
+		if m.platformAdminRepo != nil {
+			isAdmin, _ = m.platformAdminRepo.IsUserPlatformAdmin(r.Context(), user.ID)
+		}
+
 		userCtx := &tenant.UserContext{
-			UserID:        user.ID,
-			Email:         user.Email,
-			DisplayName:   user.DisplayName,
-			EmailVerified: user.EmailVerifiedAt != nil,
-			SessionID:     session.ID,
+			UserID:          user.ID,
+			Email:           user.Email,
+			DisplayName:     user.DisplayName,
+			EmailVerified:   user.EmailVerifiedAt != nil,
+			SessionID:       session.ID,
+			IsPlatformAdmin: isAdmin,
+			Status:          user.Status,
 		}
 
 		ctx := tenant.WithUserContext(r.Context(), userCtx)
@@ -94,6 +108,17 @@ func RequireAuth(next http.Handler) http.Handler {
 				"error": map[string]interface{}{
 					"code":    "UNAUTHORIZED",
 					"message": "Authentication is required to access this resource.",
+				},
+			})
+			return
+		}
+		if u.Status == "suspended" {
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			w.WriteHeader(http.StatusForbidden)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": map[string]interface{}{
+					"code":    "USER_SUSPENDED",
+					"message": "Your account has been suspended by platform administration.",
 				},
 			})
 			return

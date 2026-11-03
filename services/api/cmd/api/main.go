@@ -13,6 +13,7 @@ import (
 	"clientpulse/services/api/internal/checker"
 	"clientpulse/services/api/internal/config"
 	"clientpulse/services/api/internal/database"
+	"clientpulse/services/api/internal/entitlement"
 	"clientpulse/services/api/internal/health"
 	"clientpulse/services/api/internal/logger"
 	"clientpulse/services/api/internal/mail"
@@ -141,21 +142,27 @@ func main() {
 			mailer = mail.NewMockMailer()
 		}
 
-		authService := service.NewAuthService(userRepo, sessionRepo, orgRepo, tokenRepo, auditRepo, mailer, cfg)
+		platformAdminRepo := repository.NewPlatformAdminRepository(db.Pool)
+		planRepo := repository.NewPlanRepository(db.Pool)
+		subscriptionRepo := repository.NewSubscriptionRepository(db.Pool)
+		entitlementSvc := entitlement.NewService(db.Pool, subscriptionRepo)
+
+		authService := service.NewAuthService(userRepo, sessionRepo, orgRepo, tokenRepo, auditRepo, mailer, cfg).WithPlatformAdminRepo(platformAdminRepo)
 		orgService := service.NewOrgService(orgRepo, userRepo, sessionRepo, auditRepo, cfg)
 
 		deps.AuthHdr = server.NewAuthHandler(authService, cfg.IsProduction())
-		deps.OrgHdr = server.NewOrgHandler(orgService)
-		deps.ClientHdr = server.NewClientHandler(clientRepo, auditRepo)
-		deps.AssetHdr = server.NewAssetHandler(assetRepo, auditRepo, ssrfGuard, cfg.AppEnv)
-		deps.MonitorHdr = server.NewMonitorHandler(monitorRepo, resultRepo, assetRepo, auditRepo, chk, ssrfGuard)
-		deps.HeartbeatHdr = server.NewHeartbeatHandler(heartbeatRepo, cfg, log)
+		deps.OrgHdr = server.NewOrgHandler(orgService).WithEntitlements(entitlementSvc)
+		deps.ClientHdr = server.NewClientHandler(clientRepo, auditRepo).WithEntitlements(entitlementSvc)
+		deps.AssetHdr = server.NewAssetHandler(assetRepo, auditRepo, ssrfGuard, cfg.AppEnv).WithEntitlements(entitlementSvc)
+		deps.MonitorHdr = server.NewMonitorHandler(monitorRepo, resultRepo, assetRepo, auditRepo, chk, ssrfGuard).WithEntitlements(entitlementSvc)
+		deps.HeartbeatHdr = server.NewHeartbeatHandler(heartbeatRepo, cfg, log).WithEntitlements(entitlementSvc)
 		deps.IncidentHdr = server.NewIncidentHandler(incidentRepo, eventRepo, log)
 		deps.MaintenanceHdr = server.NewMaintenanceHandler(maintRepo, log)
-		deps.BrandingHdr = server.NewBrandingHandler(brandingRepo, st, log)
+		deps.BrandingHdr = server.NewBrandingHandler(brandingRepo, st, log).WithEntitlements(entitlementSvc)
 		deps.ReportHdr = server.NewReportHandler(reportRepo, brandingRepo, eventRepo, st, pdfGen, log)
 		deps.NotificationHdr = server.NewNotificationHandler(notifRepo, telegramUpdateHdr, telegramSender, emailClient, cfg, log)
-		deps.AuthMiddleware = server.NewAuthMiddleware(sessionRepo, userRepo, cfg)
+		deps.PlatformAdminHdr = server.NewPlatformAdminHandler(platformAdminRepo, planRepo, subscriptionRepo, log)
+		deps.AuthMiddleware = server.NewAuthMiddleware(sessionRepo, userRepo, cfg).WithPlatformAdminRepo(platformAdminRepo)
 		deps.TenantMiddleware = server.NewTenantMiddleware(orgRepo, sessionRepo)
 	}
 

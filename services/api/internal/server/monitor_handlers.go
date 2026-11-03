@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"clientpulse/services/api/internal/checker"
+	"clientpulse/services/api/internal/entitlement"
 	"clientpulse/services/api/internal/rate"
 	"clientpulse/services/api/internal/repository"
 	"clientpulse/services/api/internal/ssrf"
@@ -22,6 +23,7 @@ type MonitorHandler struct {
 	auditRepo      *repository.AuditRepository
 	checker        *checker.Checker
 	ssrfGuard      *ssrf.Guard
+	entitlements   *entitlement.Service
 	testNowLimiter *rate.Limiter
 }
 
@@ -49,6 +51,12 @@ func NewMonitorHandler(
 		ssrfGuard:      ssrfGuard,
 		testNowLimiter: rate.NewLimiter(10, 1*time.Minute), // Rate limit: max 10 Test Now checks per minute
 	}
+}
+
+// WithEntitlements configures entitlement enforcement for monitor creation and interval restrictions.
+func (h *MonitorHandler) WithEntitlements(svc *entitlement.Service) *MonitorHandler {
+	h.entitlements = svc
+	return h
 }
 
 type CreateMonitorRequest struct {
@@ -104,6 +112,13 @@ func (h *MonitorHandler) Create(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		req.URLOverride = &trimmedURL
+	}
+
+	if h.entitlements != nil {
+		if err := h.entitlements.CheckMonitorCreation(r.Context(), tc.OrganizationID, req.IntervalSeconds); err != nil {
+			sendJSONError(w, http.StatusForbidden, "LIMIT_EXCEEDED", err.Error())
+			return
+		}
 	}
 
 	followRedirects := true
@@ -221,6 +236,13 @@ func (h *MonitorHandler) Update(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		req.URLOverride = &trimmedURL
+	}
+
+	if h.entitlements != nil {
+		if err := h.entitlements.CheckMonitorInterval(r.Context(), tc.OrganizationID, req.IntervalSeconds); err != nil {
+			sendJSONError(w, http.StatusForbidden, "LIMIT_EXCEEDED", err.Error())
+			return
+		}
 	}
 
 	followRedirects := true

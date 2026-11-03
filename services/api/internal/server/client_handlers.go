@@ -7,13 +7,15 @@ import (
 	"strconv"
 	"strings"
 
+	"clientpulse/services/api/internal/entitlement"
 	"clientpulse/services/api/internal/repository"
 	"clientpulse/services/api/internal/tenant"
 )
 
 type ClientHandler struct {
-	clientRepo *repository.ClientRepository
-	auditRepo  *repository.AuditRepository
+	clientRepo   *repository.ClientRepository
+	auditRepo    *repository.AuditRepository
+	entitlements *entitlement.Service
 }
 
 func NewClientHandler(clientRepo *repository.ClientRepository, auditRepo *repository.AuditRepository) *ClientHandler {
@@ -21,6 +23,12 @@ func NewClientHandler(clientRepo *repository.ClientRepository, auditRepo *reposi
 		clientRepo: clientRepo,
 		auditRepo:  auditRepo,
 	}
+}
+
+// WithEntitlements attaches the entitlement service for quota enforcement.
+func (h *ClientHandler) WithEntitlements(svc *entitlement.Service) *ClientHandler {
+	h.entitlements = svc
+	return h
 }
 
 type CreateClientRequest struct {
@@ -53,6 +61,13 @@ func (h *ClientHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if req.Name == "" {
 		sendJSONError(w, http.StatusBadRequest, "VALIDATION_ERROR", "Client name is required")
 		return
+	}
+
+	if h.entitlements != nil {
+		if err := h.entitlements.CheckClientCreation(r.Context(), tc.OrganizationID); err != nil {
+			sendJSONError(w, http.StatusForbidden, "LIMIT_EXCEEDED", err.Error())
+			return
+		}
 	}
 
 	client, err := h.clientRepo.CreateClient(r.Context(), tc.OrganizationID, req.Name, req.ContactName, req.ContactEmail, req.Website, req.Notes)

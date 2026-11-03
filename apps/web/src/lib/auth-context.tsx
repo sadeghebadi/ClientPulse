@@ -10,6 +10,7 @@ export interface User {
   display_name: string;
   email_verified_at?: string;
   status: string;
+  is_platform_admin?: boolean;
 }
 
 export interface Organization {
@@ -36,6 +37,7 @@ interface AuthContextType {
   role: string | null;
   memberships: Membership[];
   loading: boolean;
+  isPlatformAdmin: boolean;
   refreshUser: () => Promise<void>;
   logout: () => Promise<void>;
   switchOrganization: (orgID: string) => Promise<void>;
@@ -50,6 +52,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [activeOrg, setActiveOrg] = useState<Organization | null>(null);
   const [role, setRole] = useState<string | null>(null);
   const [memberships, setMemberships] = useState<Membership[]>([]);
+  const [isPlatformAdmin, setIsPlatformAdmin] = useState(false);
   const [loading, setLoading] = useState(true);
 
   const refreshUser = useCallback(async () => {
@@ -58,17 +61,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         user: User;
         active_organization?: Organization;
         role?: string;
+        is_platform_admin?: boolean;
         memberships: Membership[];
       }>("/api/v1/auth/me");
 
-      setUser(data.user);
+      const admin = Boolean(data.is_platform_admin || data.user?.is_platform_admin);
+      setUser(data.user ? { ...data.user, is_platform_admin: admin } : null);
       setActiveOrg(data.active_organization || null);
       setRole(data.role || null);
+      setIsPlatformAdmin(admin);
       setMemberships(data.memberships || []);
     } catch {
       setUser(null);
       setActiveOrg(null);
       setRole(null);
+      setIsPlatformAdmin(false);
       setMemberships([]);
     } finally {
       setLoading(false);
@@ -81,13 +88,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       user: User;
       active_organization?: Organization;
       role?: string;
+      is_platform_admin?: boolean;
       memberships: Membership[];
     }>("/api/v1/auth/me")
       .then((data) => {
         if (!isMounted) return;
-        setUser(data.user);
+        const admin = Boolean(data.is_platform_admin || data.user?.is_platform_admin);
+        setUser(data.user ? { ...data.user, is_platform_admin: admin } : null);
         setActiveOrg(data.active_organization || null);
         setRole(data.role || null);
+        setIsPlatformAdmin(admin);
         setMemberships(data.memberships || []);
       })
       .catch(() => {
@@ -95,6 +105,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setUser(null);
         setActiveOrg(null);
         setRole(null);
+        setIsPlatformAdmin(false);
         setMemberships([]);
       })
       .finally(() => {
@@ -106,6 +117,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setUser(null);
       setActiveOrg(null);
       setRole(null);
+      setIsPlatformAdmin(false);
       setMemberships([]);
       router.push("/login?session_expired=true");
     };
@@ -125,6 +137,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setUser(null);
       setActiveOrg(null);
       setRole(null);
+      setIsPlatformAdmin(false);
       setMemberships([]);
       if (typeof window !== "undefined") {
         window.location.replace(window.location.origin + "/login");
@@ -152,6 +165,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         role,
         memberships,
         loading,
+        isPlatformAdmin: isPlatformAdmin || Boolean(user?.is_platform_admin),
         refreshUser,
         logout,
         switchOrganization,

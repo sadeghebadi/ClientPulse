@@ -46,6 +46,33 @@ func (r *PlatformAdminRepository) IsUserPlatformAdmin(ctx context.Context, userI
 	return exists, nil
 }
 
+// GrantAdmin grants global platform admin privileges to a user.
+func (r *PlatformAdminRepository) GrantAdmin(ctx context.Context, userID string, grantedBy *string, reason string) (string, error) {
+	var grantID string
+	err := r.pool.QueryRow(ctx, `
+		INSERT INTO platform_admin_grants (user_id, role, granted_at, granted_by, reason)
+		VALUES ($1, 'platform_admin', NOW(), $2, $3)
+		RETURNING id
+	`, userID, grantedBy, reason).Scan(&grantID)
+	if err != nil {
+		return "", fmt.Errorf("grant platform admin: %w", err)
+	}
+	return grantID, nil
+}
+
+// RevokeAdmin revokes active platform admin privileges for a user.
+func (r *PlatformAdminRepository) RevokeAdmin(ctx context.Context, userID string, revokedBy *string, reason string) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE platform_admin_grants
+		SET revoked_at = NOW(), revoked_by = $2, reason = COALESCE(reason || ' | Revocation: ' || $3, $3)
+		WHERE user_id = $1 AND role = 'platform_admin' AND revoked_at IS NULL
+	`, userID, revokedBy, reason)
+	if err != nil {
+		return fmt.Errorf("revoke platform admin: %w", err)
+	}
+	return nil
+}
+
 // GetOverviewStats retrieves platform-wide aggregates via the hardened definer function.
 func (r *PlatformAdminRepository) GetOverviewStats(ctx context.Context) (*PlatformOverviewStats, error) {
 	stats := &PlatformOverviewStats{}
@@ -228,8 +255,8 @@ func (r *PlatformAdminRepository) SetUserStatus(ctx context.Context, userID, sta
 		return ErrUserNotFound
 	}
 
-	// If suspended, revoke all active user sessions immediately
-	if status == "suspended" || status == "deactivated" {
+	// If deactivated, revoke all active user sessions immediately
+	if status == "deactivated" {
 		_, err = tx.Exec(ctx, `
 			UPDATE sessions 
 			SET revoked_at = NOW() 
@@ -573,3 +600,4 @@ func (r *PlatformAdminRepository) ListAuditLogs(ctx context.Context, actorID, ac
 
 	return logs, total, nil
 }
+
