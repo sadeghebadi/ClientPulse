@@ -61,7 +61,7 @@ func ValidateParams(p *CreatePlanVersionParams) error {
 		if c == "" {
 			p.Currency = nil
 		} else {
-			if !currencyRegex.MatchString(c) {
+			if !IsValidCurrency(c) {
 				return ErrInvalidCurrency
 			}
 			p.Currency = &c

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import {
@@ -124,7 +124,7 @@ export default function PlatformAdminOrganizationDetailPage() {
 
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  const fetchDetail = async () => {
+  const fetchDetail = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -140,11 +140,11 @@ export default function PlatformAdminOrganizationDetailPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [id]);
 
   useEffect(() => {
     if (id) fetchDetail();
-  }, [id]);
+  }, [id, fetchDetail]);
 
   // When plan selection changes in modal, check warnings
   const handlePlanSelectionChange = async (planId: string) => {

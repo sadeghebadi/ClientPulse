@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import {
   Palette,
@@ -87,7 +87,7 @@ export default function PlatformAdminPlanDetailPage() {
   const [publishing, setPublishing] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  const fetchDetail = async () => {
+  const fetchDetail = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -119,11 +119,11 @@ export default function PlatformAdminPlanDetailPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [id]);
 
   useEffect(() => {
     if (id) fetchDetail();
-  }, [id]);
+  }, [id, fetchDetail]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

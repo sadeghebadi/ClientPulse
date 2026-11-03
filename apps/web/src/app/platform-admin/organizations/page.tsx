@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import {
   Building,
@@ -57,7 +57,7 @@ export default function PlatformAdminOrganizationsPage() {
   const [actionLoading, setActionLoading] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  const fetchOrgs = async () => {
+  const fetchOrgs = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -83,11 +83,11 @@ export default function PlatformAdminOrganizationsPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [page, limit, search, statusFilter]);
 
   useEffect(() => {
     fetchOrgs();
-  }, [page, statusFilter]);
+  }, [fetchOrgs]);
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();

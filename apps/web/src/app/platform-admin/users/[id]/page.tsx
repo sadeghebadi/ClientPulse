@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import {
@@ -63,7 +63,7 @@ export default function PlatformAdminUserDetailPage() {
   const [actionLoading, setActionLoading] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  const fetchDetail = async () => {
+  const fetchDetail = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -75,11 +75,11 @@ export default function PlatformAdminUserDetailPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [id]);
 
   useEffect(() => {
     if (id) fetchDetail();
-  }, [id]);
+  }, [id, fetchDetail]);
 
   const handleStatusToggle = async () => {
     if (!detail) return;

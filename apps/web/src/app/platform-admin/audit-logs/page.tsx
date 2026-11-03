@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import {
   FileText,
   Search,
@@ -48,7 +48,7 @@ export default function PlatformAdminAuditLogsPage() {
   // JSON metadata viewer modal
   const [selectedLog, setSelectedLog] = useState<AuditLogItem | null>(null);
 
-  const fetchLogs = async () => {
+  const fetchLogs = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -74,11 +74,11 @@ export default function PlatformAdminAuditLogsPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [page, limit, actionFilter, targetTypeFilter]);
 
   useEffect(() => {
     fetchLogs();
-  }, [page, actionFilter, targetTypeFilter]);
+  }, [fetchLogs]);
 
   const totalPages = Math.ceil(total / limit) || 1;
 

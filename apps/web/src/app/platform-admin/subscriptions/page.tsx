@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import {
   Activity,
@@ -85,7 +85,7 @@ export default function PlatformAdminSubscriptionsPage() {
 
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  const fetchSubscriptions = async () => {
+  const fetchSubscriptions = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -110,7 +110,7 @@ export default function PlatformAdminSubscriptionsPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [page, limit, statusFilter]);
 
   const loadAssignOptions = async () => {
     try {
@@ -128,7 +128,7 @@ export default function PlatformAdminSubscriptionsPage() {
 
   useEffect(() => {
     fetchSubscriptions();
-  }, [page, statusFilter]);
+  }, [fetchSubscriptions]);
 
   const handlePlanOrOrgChange = async (orgId: string, planId: string) => {
     setAssignWarnings([]);

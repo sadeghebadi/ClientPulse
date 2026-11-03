@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import {
   Users,
@@ -52,7 +52,7 @@ export default function PlatformAdminUsersPage() {
   const [actionLoading, setActionLoading] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  const fetchUsers = async () => {
+  const fetchUsers = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -78,11 +78,11 @@ export default function PlatformAdminUsersPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [page, limit, search, statusFilter]);
 
   useEffect(() => {
     fetchUsers();
-  }, [page, statusFilter]);
+  }, [fetchUsers]);
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
