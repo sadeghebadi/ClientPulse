@@ -125,7 +125,7 @@ export default function DashboardPage() {
   // Protected route guard: redirect to login if unauthenticated
   useEffect(() => {
     if (!authLoading && !user) {
-      router.replace("/login?session_expired=true");
+      router.replace("/login");
     }
   }, [user, authLoading, router]);
 

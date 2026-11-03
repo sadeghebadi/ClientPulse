@@ -14,11 +14,13 @@ const (
 
 // UserContext carries the authenticated user's identity.
 type UserContext struct {
-	UserID        string
-	Email         string
-	DisplayName   string
-	EmailVerified bool
-	SessionID     string
+	UserID          string
+	Email           string
+	DisplayName     string
+	EmailVerified   bool
+	SessionID       string
+	IsPlatformAdmin bool
+	Status          string
 }
 
 // TenantContext carries the verified active organization and user's role within it.
@@ -27,6 +29,7 @@ type TenantContext struct {
 	Slug           string
 	Name           string
 	Role           string
+	Status         string
 }
 
 type userContextKeyType struct{}

@@ -66,6 +66,7 @@ func (m *TenantMiddleware) ResolveTenant(next http.Handler) http.Handler {
 						Slug:           org.Slug,
 						Name:           org.Name,
 						Role:           membership.Role,
+						Status:         org.Status,
 					}
 					ctx := tenant.WithTenantContext(r.Context(), tenantCtx)
 					next.ServeHTTP(w, r.WithContext(ctx))
@@ -89,6 +90,17 @@ func RequireTenant(next http.Handler) http.Handler {
 				"error": map[string]interface{}{
 					"code":    "NO_ACTIVE_ORGANIZATION",
 					"message": "No active organization found or membership is invalid.",
+				},
+			})
+			return
+		}
+		if t.Status == "suspended" {
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			w.WriteHeader(http.StatusForbidden)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": map[string]interface{}{
+					"code":    "ORGANIZATION_SUSPENDED",
+					"message": "This organization has been suspended by platform administration. Access to organization resources is restricted.",
 				},
 			})
 			return

@@ -97,8 +97,10 @@ export function HeroSection() {
               </div>
 
               <div className="flex items-center gap-1.5 text-xs text-slate-400 font-semibold shrink-0">
-                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                <span className="hidden sm:inline">LIVE</span>
+                <span className="w-2 h-2 rounded-full bg-blue-400" />
+                <span className="text-[11px] font-medium text-slate-300">
+                  {isRTL ? "پیش‌نمایش محصول · داده‌های نمونه" : "Product Preview · Sample Data"}
+                </span>
               </div>
             </div>
 

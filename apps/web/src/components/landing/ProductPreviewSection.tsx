@@ -37,7 +37,8 @@ export function ProductPreviewSection() {
         {/* Section Header */}
         <div className="max-w-3xl mx-auto text-center space-y-3 sm:space-y-4 mb-10 sm:mb-12">
           <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold text-slate-700 bg-white border border-slate-200 shadow-2xs">
-            <span>{isRTL ? "محیط واقعی نرم‌افزار" : "Authentic Product Preview"}</span>
+            <span className="w-2 h-2 rounded-full bg-blue-500" />
+            <span>{isRTL ? "پیش‌نمایش محصول · داده‌های نمونه" : "Product Preview · Sample Data"}</span>
           </div>
 
           <h2 className="text-2xl sm:text-4xl font-extrabold text-slate-900 tracking-tight">
@@ -80,8 +81,8 @@ export function ProductPreviewSection() {
               <span className="w-2 h-2 rounded-full bg-blue-500" />
               <span>mindu.ir / {activeTab}</span>
             </div>
-            <span className="text-[10px] text-slate-400 uppercase font-semibold">
-              ClientPulse SaaS
+            <span className="text-[10px] text-slate-400 font-semibold">
+              {isRTL ? "پیش‌نمایش محصول · داده‌های نمونه" : "Product Preview · Sample Data"}
             </span>
           </div>
 
