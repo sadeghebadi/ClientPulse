@@ -50,9 +50,15 @@ export async function apiFetch<T>(
     err.status = response.status;
 
     // Handle session expiration (401) cleanly on protected routes
+    // Note: /api/v1/auth/me is used for session probing, so 401 there simply means unauthenticated guest.
+    // Furthermore, public paths (including root '/' and public pages) must never trigger session expiration redirects.
     if (response.status === 401 && typeof window !== "undefined") {
-      const publicPaths = ["/login", "/signup", "/forgot-password", "/reset-password", "/verify-email", "/public"];
-      if (!publicPaths.some((p) => window.location.pathname.startsWith(p))) {
+      const publicPaths = ["/", "/login", "/signup", "/forgot-password", "/reset-password", "/verify-email", "/public"];
+      const currentPath = window.location.pathname;
+      const isPublicPath = currentPath === "/" || publicPaths.slice(1).some((p) => currentPath.startsWith(p));
+      const isSessionProbe = path.includes("/api/v1/auth/me");
+
+      if (!isPublicPath && !isSessionProbe) {
         // Dispatch custom event for auth context to react
         window.dispatchEvent(new CustomEvent("clientpulse:session_expired"));
       }

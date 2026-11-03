@@ -399,6 +399,16 @@ export const translations = {
     all: "All",
     timeAgo: "ago",
     justNow: "Just now",
+
+    // Shell Navigation Groups & Sections
+    navOverview: "Overview",
+    navManagement: "Management",
+    navOperations: "Operations",
+    navSettings: "Settings",
+    switchWorkspace: "Switch Workspace",
+    userAccount: "User Account",
+    collapseSidebar: "Collapse sidebar",
+    expandSidebar: "Expand sidebar",
   },
   fa: {
     brandName: "کلاینت‌پالس",
@@ -794,6 +804,16 @@ export const translations = {
     all: "همه",
     timeAgo: "پیش",
     justNow: "هم‌اکنون",
+
+    // Shell Navigation Groups & Sections
+    navOverview: "نمای کلی",
+    navManagement: "مدیریت",
+    navOperations: "عملیات",
+    navSettings: "تنظیمات",
+    switchWorkspace: "تغییر فضای کاری",
+    userAccount: "حساب کاربری",
+    collapseSidebar: "جمع کردن نوار کناری",
+    expandSidebar: "باز کردن نوار کناری",
   },
 };
 
