@@ -1,29 +1,35 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { AppLayout } from "@/components/AppLayout";
 import { useAuth } from "@/lib/auth-context";
 import { useI18n } from "@/lib/i18n";
 import { apiFetch, humanizeApiError } from "@/lib/api";
+import { PageHeader } from "@/components/ui/PageHeader";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Badge } from "@/components/ui/Badge";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { ErrorState } from "@/components/ui/ErrorState";
+import { TableSkeleton } from "@/components/ui/LoadingSkeleton";
 import {
   FileText,
   Plus,
   Download,
-  Share2,
   Calendar,
-  ExternalLink,
-  ShieldCheck,
-  AlertCircle,
   Eye,
   X,
-  Clock,
   Sparkles,
+  Search,
+  Filter,
   CheckCircle2,
+  FileCheck,
+  Building2,
+  ShieldCheck,
+  ChevronRight,
+  ChevronLeft,
 } from "lucide-react";
 
 interface ReportItem {
@@ -79,6 +85,8 @@ export default function ReportsPage() {
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
 
+  const modalRef = useRef<HTMLDivElement>(null);
+
   const canGenerate = role === "owner" || role === "admin" || role === "member";
 
   // Calculate default previous month date strings for form helpers
@@ -111,29 +119,8 @@ export default function ReportsPage() {
   }, [selectedClient, isRTL]);
 
   useEffect(() => {
-    let isMounted = true;
-    let url = "/api/v1/reports?limit=100";
-    if (selectedClient) {
-      url += `&client_id=${selectedClient}`;
-    }
-    apiFetch<{ reports: ReportItem[]; total: number }>(url)
-      .then((data) => {
-        if (isMounted) {
-          setReports(data.reports || []);
-          setLoading(false);
-        }
-      })
-      .catch((err: unknown) => {
-        if (isMounted) {
-          setError(humanizeApiError(err, isRTL));
-          setLoading(false);
-        }
-      });
-
-    return () => {
-      isMounted = false;
-    };
-  }, [selectedClient, isRTL]);
+    fetchReports();
+  }, [fetchReports]);
 
   useEffect(() => {
     let isMounted = true;
@@ -156,6 +143,25 @@ export default function ReportsPage() {
     };
   }, []);
 
+  // Modal accessibility (Escape key handler)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && modalOpen && !generating) {
+        setModalOpen(false);
+      }
+    };
+    if (modalOpen) {
+      window.addEventListener("keydown", handleKeyDown);
+      document.body.style.overflow = "hidden";
+    } else {
+      document.body.style.overflow = "unset";
+    }
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      document.body.style.overflow = "unset";
+    };
+  }, [modalOpen, generating]);
+
   const handleOpenModal = () => {
     const { start, end } = getPrevMonthBoundaries();
     setCustomStart(start);
@@ -164,6 +170,7 @@ export default function ReportsPage() {
     setPreviewData(null);
     setPreviewError(null);
     setReportTitle("");
+    setReportLocale(locale === "fa" ? "fa" : "en");
     setModalOpen(true);
   };
 
@@ -230,7 +237,6 @@ export default function ReportsPage() {
 
       setModalOpen(false);
       fetchReports();
-      // Redirect to report details
       if (res?.report?.id) {
         router.push(`/reports/${res.report.id}`);
       }
@@ -266,40 +272,41 @@ export default function ReportsPage() {
 
   return (
     <AppLayout>
-      <div className="space-y-6">
-        {/* Header */}
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100 flex items-center gap-2">
-              <FileText className="w-7 h-7 text-indigo-600 dark:text-indigo-400" />
-              {t.reports}
-            </h1>
-            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-              {t.reportsDesc}
-            </p>
-          </div>
+      <div className="space-y-6 max-w-7xl mx-auto">
+        {/* Page Header */}
+        <PageHeader
+          title={t.reports}
+          description={t.reportsDesc}
+          icon={<FileText className="w-6 h-6 text-indigo-600" />}
+          badge={
+            <Badge variant="outline" className="text-xs font-mono">
+              {reports.length} {t.reports}
+            </Badge>
+          }
+          actions={
+            canGenerate ? (
+              <Button
+                variant="primary"
+                onClick={handleOpenModal}
+                icon={<Plus className="w-4 h-4" />}
+                className="bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm"
+              >
+                {t.generateReport}
+              </Button>
+            ) : undefined
+          }
+        />
 
-          {canGenerate && (
-            <Button
-              onClick={handleOpenModal}
-              className="bg-indigo-600 hover:bg-indigo-700 text-white flex items-center gap-2"
-            >
-              <Plus className="w-4 h-4" />
-              {t.generateReport}
-            </Button>
-          )}
-        </div>
-
-        {/* Filters */}
-        <div className="bg-white dark:bg-gray-800 p-4 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 flex flex-col sm:flex-row items-center gap-4">
+        {/* Filter & Search Bar */}
+        <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
           <div className="w-full sm:w-64">
-            <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">
+            <label className="block text-xs font-semibold text-slate-600 mb-1">
               {t.filterByClient}
             </label>
             <select
               value={selectedClient}
               onChange={(e) => setSelectedClient(e.target.value)}
-              className="w-full px-3 py-2 text-sm bg-gray-50 dark:bg-gray-900 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-indigo-500"
+              className="w-full px-3 py-2 text-xs sm:text-sm bg-slate-50 border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
             >
               <option value="">{t.allClients}</option>
               {clients.map((c) => (
@@ -310,105 +317,157 @@ export default function ReportsPage() {
             </select>
           </div>
 
-          <div className="w-full sm:flex-1">
-            <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">
+          <div className="flex-1">
+            <label className="block text-xs font-semibold text-slate-600 mb-1">
               {t.search}
             </label>
-            <Input
-              type="text"
-              placeholder={isRTL ? "جستجو در گزارش‌ها..." : "Search reports by title or client..."}
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full text-sm"
-            />
+            <div className="relative">
+              <Input
+                type="text"
+                placeholder={isRTL ? "جستجو بر اساس عنوان یا نام مشتری..." : "Search by title or client name..."}
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full text-xs sm:text-sm pe-8"
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery("")}
+                  className="absolute end-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs"
+                  aria-label={t.clearFilters}
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
+            </div>
           </div>
+
+          {(selectedClient || searchQuery) && (
+            <div className="self-end sm:self-auto sm:mt-5">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setSelectedClient("");
+                  setSearchQuery("");
+                }}
+                className="text-xs text-slate-600"
+              >
+                {t.clearFilters}
+              </Button>
+            </div>
+          )}
         </div>
 
-        {/* Content Table / Empty States */}
+        {/* Content States */}
         {loading ? (
-          <div className="bg-white dark:bg-gray-800 p-12 rounded-xl text-center border border-gray-200 dark:border-gray-700">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600 mx-auto" />
-            <p className="mt-3 text-sm text-gray-500">{t.loading}</p>
-          </div>
+          <TableSkeleton rows={5} cols={5} />
         ) : error ? (
-          <div className="bg-red-50 dark:bg-red-900/20 p-6 rounded-xl border border-red-200 dark:border-red-800 text-red-700 dark:text-red-400 flex items-center gap-3">
-            <AlertCircle className="w-6 h-6 flex-shrink-0" />
-            <span>{error}</span>
-          </div>
+          <ErrorState error={error} onRetry={fetchReports} />
+        ) : reports.length === 0 ? (
+          <EmptyState
+            icon={<FileText className="w-8 h-8 text-indigo-500" />}
+            title={t.noReportsFound}
+            description={
+              isRTL
+                ? "گزارش‌های دوره‌ای ماهانه شامل وضعیت قطعی، هارت‌بیت‌ها، پایش آپتایم و کارهای نگهداری را با برند وایت‌لیبل برای مشتریان خود صادر نمایید."
+                : "Generate monthly care reports with verifiable SLA uptime proof, heartbeat health, and deterministic maintenance logs for your retainer clients."
+            }
+            actionLabel={canGenerate ? t.generateReport : undefined}
+            onAction={canGenerate ? handleOpenModal : undefined}
+          />
         ) : filteredReports.length === 0 ? (
-          <div className="bg-white dark:bg-gray-800 p-12 rounded-xl text-center border border-gray-200 dark:border-gray-700">
-            <FileText className="w-12 h-12 text-gray-400 mx-auto mb-3" />
-            <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
-              {t.noReportsFound}
-            </h3>
-            <p className="text-sm text-gray-500 dark:text-gray-400 mt-1 max-w-md mx-auto">
-              {isRTL
-                ? "گزارش‌های دوره‌ای ماهانه وب‌سایت شامل بررسی آپتایم، فعالیت‌های نگهداری و وضعیت امنیتی را تولید و با مشتریان خود به اشتراک بگذارید."
-                : "Generate monthly care reports with uptime analytics, maintenance activity logs, and deterministic recommendations."}
-            </p>
-            {canGenerate && (
-              <Button onClick={handleOpenModal} className="mt-4 bg-indigo-600 hover:bg-indigo-700 text-white">
-                <Plus className="w-4 h-4 mr-2" />
-                {t.generateReport}
-              </Button>
-            )}
-          </div>
+          <EmptyState
+            icon={<Search className="w-8 h-8 text-slate-400" />}
+            title={t.noReportsFiltered}
+            description={
+              isRTL
+                ? "هیچ گزارشی با فیلترهای انتخابی تطابق ندارد. لطفاً عبارت جستجو یا مشتری انتخابی را تغییر دهید."
+                : "No care reports match your active search and filter criteria."
+            }
+            actionLabel={t.clearFilters}
+            onAction={() => {
+              setSelectedClient("");
+              setSearchQuery("");
+            }}
+          />
         ) : (
-          <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden">
-            <div className="overflow-x-auto">
+          <div className="space-y-4">
+            {/* Desktop Table View */}
+            <div className="hidden md:block bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
               <table className="w-full text-sm text-left rtl:text-right">
-                <thead className="bg-gray-50 dark:bg-gray-700/50 text-gray-700 dark:text-gray-300 border-b border-gray-200 dark:border-gray-700">
+                <thead className="bg-slate-50 text-slate-700 border-b border-slate-200 text-xs uppercase tracking-wider font-semibold">
                   <tr>
-                    <th className="px-6 py-3 font-semibold">{t.clientName}</th>
-                    <th className="px-6 py-3 font-semibold">{isRTL ? "عنوان گزارش" : "Report Title"}</th>
-                    <th className="px-6 py-3 font-semibold">{t.reportPeriod}</th>
-                    <th className="px-6 py-3 font-semibold">{t.version}</th>
-                    <th className="px-6 py-3 font-semibold">{isRTL ? "تاریخ صدور" : "Generated At"}</th>
-                    <th className="px-6 py-3 font-semibold text-center">{isRTL ? "عملیات" : "Actions"}</th>
+                    <th className="px-6 py-3.5">{t.clientName}</th>
+                    <th className="px-6 py-3.5">{t.reportTitle}</th>
+                    <th className="px-6 py-3.5">{t.reportPeriod}</th>
+                    <th className="px-6 py-3.5">{t.version}</th>
+                    <th className="px-6 py-3.5">{t.generatedAt}</th>
+                    <th className="px-6 py-3.5 text-center">{isRTL ? "عملیات" : "Actions"}</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
+                <tbody className="divide-y divide-slate-100">
                   {filteredReports.map((r) => (
-                    <tr key={r.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/30 transition-colors">
-                      <td className="px-6 py-4 font-medium text-gray-900 dark:text-gray-100">
-                        {r.client_name || r.client_id}
-                      </td>
-                      <td className="px-6 py-4">
-                        <Link
-                          href={`/reports/${r.id}`}
-                          className="text-indigo-600 dark:text-indigo-400 font-medium hover:underline flex items-center gap-1.5"
-                        >
-                          {r.title}
-                        </Link>
-                      </td>
-                      <td className="px-6 py-4 text-gray-500 dark:text-gray-400">
-                        <div className="flex items-center gap-1.5 text-xs">
-                          <Calendar className="w-3.5 h-3.5 text-gray-400" />
-                          <span>
-                            {formatDate(r.period_start)} - {formatDate(r.period_end)}
+                    <tr
+                      key={r.id}
+                      className="hover:bg-slate-50/60 transition-colors"
+                    >
+                      <td className="px-6 py-4 font-semibold text-slate-900">
+                        <div className="flex items-center gap-2">
+                          <Building2 className="w-4 h-4 text-slate-400 shrink-0" />
+                          <span className="truncate max-w-[180px]">
+                            {r.client_name || r.client_id}
                           </span>
                         </div>
                       </td>
                       <td className="px-6 py-4">
-                        <Badge variant="outline" className="font-mono text-xs">
-                          v{r.version_number}
-                        </Badge>
+                        <Link
+                          href={`/reports/${r.id}`}
+                          className="text-indigo-600 hover:text-indigo-700 font-medium hover:underline flex items-center gap-1.5"
+                        >
+                          <FileText className="w-4 h-4 shrink-0 text-indigo-500" />
+                          <span className="truncate max-w-[240px]">{r.title}</span>
+                        </Link>
                       </td>
-                      <td className="px-6 py-4 text-xs text-gray-500 dark:text-gray-400">
+                      <td className="px-6 py-4 text-slate-600">
+                        <div className="flex items-center gap-1.5 text-xs text-slate-500 font-mono" dir="ltr">
+                          <Calendar className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                          <span>
+                            {formatDate(r.period_start)} – {formatDate(r.period_end)}
+                          </span>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4">
+                        <div className="flex items-center gap-1.5">
+                          <Badge variant="outline" className="font-mono text-xs">
+                            v{r.version_number}
+                          </Badge>
+                          <Badge
+                            variant={r.pdf_storage_key ? "success" : "secondary"}
+                            className="text-[10px]"
+                          >
+                            {r.pdf_storage_key ? t.statusPdfReady : t.statusSnapshotReady}
+                          </Badge>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 text-xs text-slate-500 font-mono" dir="ltr">
                         {formatDate(r.generated_at)}
                       </td>
                       <td className="px-6 py-4 text-center">
                         <div className="flex items-center justify-center gap-2">
                           <Link href={`/reports/${r.id}`}>
-                            <Button variant="outline" size="sm" className="h-8 px-2.5">
+                            <Button variant="outline" size="sm" className="h-8 px-2.5 text-xs">
                               <Eye className="w-3.5 h-3.5 mr-1" />
                               {t.reportDetails}
                             </Button>
                           </Link>
-                          <a href={`/api/v1/reports/${r.id}/pdf`} download>
-                            <Button variant="outline" size="sm" className="h-8 px-2 text-indigo-600 hover:text-indigo-700">
-                              <Download className="w-3.5 h-3.5" />
-                            </Button>
+                          <a
+                            href={`/api/v1/reports/${r.id}/pdf`}
+                            download
+                            className="inline-flex items-center justify-center h-8 px-2.5 rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-100 hover:text-indigo-600 transition-colors"
+                            title={t.downloadPDF}
+                          >
+                            <Download className="w-3.5 h-3.5" />
                           </a>
                         </div>
                       </td>
@@ -417,30 +476,114 @@ export default function ReportsPage() {
                 </tbody>
               </table>
             </div>
+
+            {/* Mobile Card View (< 768px) */}
+            <div className="md:hidden space-y-3">
+              {filteredReports.map((r) => (
+                <div
+                  key={r.id}
+                  className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs space-y-3 hover:border-slate-300 transition-colors"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <Building2 className="w-4 h-4 text-slate-400 shrink-0" />
+                      <span className="text-xs font-bold text-slate-700 truncate">
+                        {r.client_name || r.client_id}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <Badge variant="outline" className="font-mono text-xs">
+                        v{r.version_number}
+                      </Badge>
+                      <Badge
+                        variant={r.pdf_storage_key ? "success" : "secondary"}
+                        className="text-[10px]"
+                      >
+                        {r.pdf_storage_key ? t.statusPdfReady : t.statusSnapshotReady}
+                      </Badge>
+                    </div>
+                  </div>
+
+                  <div>
+                    <Link
+                      href={`/reports/${r.id}`}
+                      className="text-sm font-bold text-slate-900 hover:text-indigo-600 transition-colors block line-clamp-2"
+                    >
+                      {r.title}
+                    </Link>
+                  </div>
+
+                  <div className="pt-2 border-t border-slate-100 flex flex-col gap-1 text-xs text-slate-500">
+                    <div className="flex items-center gap-1.5 font-mono" dir="ltr">
+                      <Calendar className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                      <span>
+                        {formatDate(r.period_start)} – {formatDate(r.period_end)}
+                      </span>
+                    </div>
+                    <div className="text-[11px] text-slate-400">
+                      {t.generatedAt}: <span dir="ltr">{formatDate(r.generated_at)}</span>
+                    </div>
+                  </div>
+
+                  <div className="pt-2 border-t border-slate-100 flex items-center justify-end gap-2">
+                    <a
+                      href={`/api/v1/reports/${r.id}/pdf`}
+                      download
+                      className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-100 hover:text-indigo-600 flex items-center gap-1 transition-colors"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      <span>PDF</span>
+                    </a>
+                    <Link href={`/reports/${r.id}`}>
+                      <Button variant="primary" size="sm" className="h-8 px-3 text-xs bg-indigo-600 text-white">
+                        <Eye className="w-3.5 h-3.5 mr-1" />
+                        {t.reportDetails}
+                      </Button>
+                    </Link>
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         )}
 
         {/* Generate Report Modal */}
         {modalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in">
-            <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl w-full max-w-2xl overflow-hidden border border-gray-200 dark:border-gray-700">
-              <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-800/50">
-                <h3 className="text-lg font-bold text-gray-900 dark:text-gray-100 flex items-center gap-2">
-                  <Sparkles className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="generate-modal-title"
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm animate-in fade-in duration-150"
+          >
+            <div
+              ref={modalRef}
+              className="bg-white rounded-2xl shadow-xl w-full max-w-2xl overflow-hidden border border-slate-200 animate-in zoom-in-95 duration-150"
+              dir={isRTL ? "rtl" : "ltr"}
+            >
+              {/* Modal Header */}
+              <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 bg-slate-50/70">
+                <h3
+                  id="generate-modal-title"
+                  className="text-base font-bold text-slate-900 flex items-center gap-2"
+                >
+                  <Sparkles className="w-5 h-5 text-indigo-600 shrink-0" />
                   {t.generateReport}
                 </h3>
                 <button
-                  onClick={() => setModalOpen(false)}
-                  className="text-gray-400 hover:text-gray-500 rounded-lg p-1"
+                  onClick={() => !generating && setModalOpen(false)}
+                  disabled={generating}
+                  className="text-slate-400 hover:text-slate-600 rounded-lg p-1 transition-colors"
+                  aria-label={t.close}
                 >
                   <X className="w-5 h-5" />
                 </button>
               </div>
 
-              <div className="p-6 space-y-4 max-h-[75vh] overflow-y-auto">
+              {/* Modal Body */}
+              <div className="p-6 space-y-5 max-h-[75vh] overflow-y-auto">
                 {/* Client Select */}
                 <div>
-                  <label className="block text-xs font-semibold uppercase tracking-wider text-gray-700 dark:text-gray-300 mb-1">
+                  <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700 mb-1.5">
                     {t.clientName} *
                   </label>
                   <select
@@ -449,7 +592,7 @@ export default function ReportsPage() {
                       setGenClientId(e.target.value);
                       setPreviewData(null);
                     }}
-                    className="w-full px-3 py-2 text-sm bg-gray-50 dark:bg-gray-900 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                    className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
                   >
                     {clients.map((c) => (
                       <option key={c.id} value={c.id}>
@@ -461,7 +604,7 @@ export default function ReportsPage() {
 
                 {/* Period Select */}
                 <div>
-                  <label className="block text-xs font-semibold uppercase tracking-wider text-gray-700 dark:text-gray-300 mb-1">
+                  <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700 mb-1.5">
                     {t.reportPeriod}
                   </label>
                   <div className="grid grid-cols-2 gap-3 mb-3">
@@ -471,10 +614,10 @@ export default function ReportsPage() {
                         setPeriodPreset("prev_month");
                         setPreviewData(null);
                       }}
-                      className={`px-3 py-2 text-sm font-medium rounded-lg border transition-all text-center ${
+                      className={`px-3 py-2 text-xs sm:text-sm font-medium rounded-xl border transition-all text-center ${
                         periodPreset === "prev_month"
-                          ? "bg-indigo-50 dark:bg-indigo-950/40 border-indigo-500 text-indigo-700 dark:text-indigo-300"
-                          : "border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700"
+                          ? "bg-indigo-50 border-indigo-500 text-indigo-700 font-bold"
+                          : "border-slate-300 text-slate-700 hover:bg-slate-50"
                       }`}
                     >
                       {t.defaultPreviousMonth}
@@ -485,20 +628,20 @@ export default function ReportsPage() {
                         setPeriodPreset("custom");
                         setPreviewData(null);
                       }}
-                      className={`px-3 py-2 text-sm font-medium rounded-lg border transition-all text-center ${
+                      className={`px-3 py-2 text-xs sm:text-sm font-medium rounded-xl border transition-all text-center ${
                         periodPreset === "custom"
-                          ? "bg-indigo-50 dark:bg-indigo-950/40 border-indigo-500 text-indigo-700 dark:text-indigo-300"
-                          : "border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700"
+                          ? "bg-indigo-50 border-indigo-500 text-indigo-700 font-bold"
+                          : "border-slate-300 text-slate-700 hover:bg-slate-50"
                       }`}
                     >
-                      {isRTL ? "بازه زمانی سفارشی" : "Custom Date Range"}
+                      {t.customDateRange}
                     </button>
                   </div>
 
                   {periodPreset === "custom" && (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3 bg-gray-50 dark:bg-gray-900/50 rounded-xl border border-gray-200 dark:border-gray-700">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3.5 bg-slate-50 rounded-xl border border-slate-200">
                       <div>
-                        <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">
+                        <label className="block text-xs text-slate-500 mb-1">
                           {t.periodStart}
                         </label>
                         <Input
@@ -508,10 +651,11 @@ export default function ReportsPage() {
                             setCustomStart(e.target.value);
                             setPreviewData(null);
                           }}
+                          className="text-xs"
                         />
                       </div>
                       <div>
-                        <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">
+                        <label className="block text-xs text-slate-500 mb-1">
                           {t.periodEnd}
                         </label>
                         <Input
@@ -521,6 +665,7 @@ export default function ReportsPage() {
                             setCustomEnd(e.target.value);
                             setPreviewData(null);
                           }}
+                          className="text-xs"
                         />
                       </div>
                     </div>
@@ -530,8 +675,8 @@ export default function ReportsPage() {
                 {/* Locale & Title */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-xs font-semibold uppercase tracking-wider text-gray-700 dark:text-gray-300 mb-1">
-                      {isRTL ? "زبان گزارش" : "Report Language"}
+                    <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700 mb-1.5">
+                      {t.reportLanguage}
                     </label>
                     <select
                       value={reportLocale}
@@ -539,33 +684,34 @@ export default function ReportsPage() {
                         setReportLocale(e.target.value as "en" | "fa");
                         setPreviewData(null);
                       }}
-                      className="w-full px-3 py-2 text-sm bg-gray-50 dark:bg-gray-900 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                      className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
                     >
-                      <option value="en">English (LTR)</option>
-                      <option value="fa">فارسی (Persian - RTL)</option>
+                      <option value="en">{t.englishLtr}</option>
+                      <option value="fa">{t.persianRtl}</option>
                     </select>
                   </div>
                   <div>
-                    <label className="block text-xs font-semibold uppercase tracking-wider text-gray-700 dark:text-gray-300 mb-1">
-                      {isRTL ? "عنوان اختصاصی (اختیاری)" : "Custom Title (Optional)"}
+                    <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700 mb-1.5">
+                      {t.customTitleOptional}
                     </label>
                     <Input
                       type="text"
                       placeholder={isRTL ? "گزارش ماهانه نگهداری وب‌سایت" : "Monthly Website Care Report"}
                       value={reportTitle}
                       onChange={(e) => setReportTitle(e.target.value)}
+                      className="text-sm"
                     />
                   </div>
                 </div>
 
-                {/* Preview Button */}
-                <div className="pt-2">
+                {/* Preview Trigger Button */}
+                <div className="pt-1">
                   <Button
                     type="button"
                     variant="outline"
                     onClick={handlePreview}
                     disabled={previewLoading || !genClientId}
-                    className="w-full flex items-center justify-center gap-2"
+                    className="w-full flex items-center justify-center gap-2 text-xs sm:text-sm font-semibold"
                   >
                     <Eye className="w-4 h-4 text-indigo-600" />
                     {previewLoading ? t.loading : t.reportPreview}
@@ -574,85 +720,88 @@ export default function ReportsPage() {
 
                 {/* Preview Error */}
                 {previewError && (
-                  <div className="p-3 bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400 text-xs rounded-lg border border-red-200 dark:border-red-800">
+                  <div className="p-3 bg-rose-50 text-rose-700 text-xs rounded-xl border border-rose-200">
                     {previewError}
                   </div>
                 )}
 
-                {/* Preview Card */}
+                {/* Preview Calculated Card */}
                 {previewData && (
-                  <div className="p-4 bg-indigo-50/50 dark:bg-indigo-950/20 rounded-xl border border-indigo-100 dark:border-indigo-900/40 space-y-3">
-                    <div className="flex items-center justify-between border-b border-indigo-100 dark:border-indigo-900/30 pb-2">
-                      <span className="font-semibold text-sm text-indigo-900 dark:text-indigo-200">
+                  <div className="p-4 bg-indigo-50/50 rounded-2xl border border-indigo-100 space-y-3">
+                    <div className="flex items-center justify-between border-b border-indigo-100 pb-2">
+                      <span className="font-bold text-sm text-indigo-950">
                         {previewData.title}
                       </span>
-                      <Badge variant="outline" className="text-xs bg-white dark:bg-gray-800">
+                      <Badge variant="outline" className="text-xs bg-white">
                         {previewData.locale === "fa" ? "فارسی" : "English"}
                       </Badge>
                     </div>
 
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
-                      <div className="p-2 bg-white dark:bg-gray-800 rounded-lg shadow-xs">
-                        <div className="text-xs text-gray-500 dark:text-gray-400">
-                          {isRTL ? "آپتایم میانگین" : "Avg Uptime"}
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-center">
+                      <div className="p-2.5 bg-white rounded-xl shadow-2xs border border-indigo-50">
+                        <div className="text-[11px] text-slate-500">
+                          {t.previewAvgUptime}
                         </div>
-                        <div className="text-base font-bold text-gray-900 dark:text-gray-100">
+                        <div className="text-base font-extrabold text-slate-900 mt-0.5">
                           {previewData.summary?.average_uptime != null
                             ? `${previewData.summary.average_uptime.toFixed(2)}%`
                             : t.insufficientData}
                         </div>
                       </div>
 
-                      <div className="p-2 bg-white dark:bg-gray-800 rounded-lg shadow-xs">
-                        <div className="text-xs text-gray-500 dark:text-gray-400">
+                      <div className="p-2.5 bg-white rounded-xl shadow-2xs border border-indigo-50">
+                        <div className="text-[11px] text-slate-500">
                           {t.coveragePercentage}
                         </div>
-                        <div className="text-base font-bold text-gray-900 dark:text-gray-100">
+                        <div className="text-base font-extrabold text-indigo-600 mt-0.5">
                           {previewData.monitors && previewData.monitors.length > 0 && previewData.monitors[0].coverage_percentage != null
                             ? `${previewData.monitors[0].coverage_percentage.toFixed(1)}%`
                             : "100.0%"}
                         </div>
                       </div>
 
-                      <div className="p-2 bg-white dark:bg-gray-800 rounded-lg shadow-xs">
-                        <div className="text-xs text-gray-500 dark:text-gray-400">
-                          {isRTL ? "رخدادهای قطعی" : "Incidents"}
+                      <div className="p-2.5 bg-white rounded-xl shadow-2xs border border-indigo-50">
+                        <div className="text-[11px] text-slate-500">
+                          {t.previewIncidents}
                         </div>
-                        <div className="text-base font-bold text-gray-900 dark:text-gray-100">
+                        <div className="text-base font-extrabold text-slate-900 mt-0.5">
                           {previewData.summary?.total_incidents ?? 0}
                         </div>
                       </div>
 
-                      <div className="p-2 bg-white dark:bg-gray-800 rounded-lg shadow-xs">
-                        <div className="text-xs text-gray-500 dark:text-gray-400">
-                          {t.maintenance}
+                      <div className="p-2.5 bg-white rounded-xl shadow-2xs border border-indigo-50">
+                        <div className="text-[11px] text-slate-500">
+                          {t.previewMaintenance}
                         </div>
-                        <div className="text-base font-bold text-gray-900 dark:text-gray-100">
+                        <div className="text-base font-extrabold text-slate-900 mt-0.5">
                           {previewData.summary?.total_activities ?? (previewData.maintenance ? previewData.maintenance.length : 0)}
                         </div>
                       </div>
                     </div>
 
-                    <p className="text-xs text-gray-500 dark:text-gray-400 text-center">
-                      {isRTL
-                        ? "این پیش‌نمایش به صورت قطعی محاسبه شده است. تأیید شما یک نسخه دائمی و غیرقابل تغییر (Immutable Snapshot) ایجاد خواهد کرد."
-                        : "Deterministic preview calculated. Generating will seal an immutable report version."}
+                    <p className="text-[11px] text-slate-500 text-center leading-relaxed">
+                      {t.previewDisclaimer}
                     </p>
                   </div>
                 )}
               </div>
 
-              <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-800/50">
-                <Button variant="outline" onClick={() => setModalOpen(false)}>
+              {/* Modal Footer */}
+              <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-slate-200 bg-slate-50/70">
+                <Button
+                  variant="outline"
+                  onClick={() => setModalOpen(false)}
+                  disabled={generating}
+                >
                   {t.close}
                 </Button>
                 <Button
                   onClick={handleGenerate}
                   disabled={generating || !genClientId}
-                  className="bg-indigo-600 hover:bg-indigo-700 text-white flex items-center gap-2"
+                  className="bg-indigo-600 hover:bg-indigo-700 text-white flex items-center gap-2 shadow-sm font-semibold"
                 >
                   <Sparkles className="w-4 h-4" />
-                  {generating ? (isRTL ? "در حال صدور..." : "Generating...") : t.generateReport}
+                  {generating ? t.generatingAction : t.generateReport}
                 </Button>
               </div>
             </div>
