@@ -284,8 +284,8 @@ export default function IncidentDetailPage({
                   {incident.status === "open" && incident.acknowledged_at && (
                     <Badge variant="acknowledged" label={t.statusAcknowledged} />
                   )}
-                  {incident.status === "resolved" && incident.resolution_type && (
-                    <Badge variant={incident.resolution_type} />
+                  {incident.status === "resolved" && (
+                    <Badge variant={incident.resolution_type || "legacy_resolution"} />
                   )}
                 </div>
               </div>
@@ -396,7 +396,13 @@ export default function IncidentDetailPage({
                       <span>
                         {incident.resolved_by_name || incident.resolved_by_email
                           ? `${t.resolvedBy} ${incident.resolved_by_name || incident.resolved_by_email}`
-                          : (isRTL ? "رفع خودکار" : "Automatic")}
+                          : incident.resolution_type === "automatic_recovery"
+                          ? t.automaticRecovery
+                          : incident.resolution_type === "source_monitor_deleted"
+                          ? t.sourceMonitorDeleted
+                          : incident.resolution_type === "manual"
+                          ? t.manualResolution
+                          : t.legacyResolutionReasonNotRecorded}
                       </span>
                       <div className="text-[10px] text-slate-400">
                         {new Date(incident.resolved_at).toLocaleString()}
@@ -415,6 +421,18 @@ export default function IncidentDetailPage({
                     </span>
                     <p className="text-slate-800 text-xs leading-relaxed whitespace-pre-wrap">
                       {incident.resolution_note}
+                    </p>
+                  </div>
+                )}
+
+                {/* Legacy Resolution Display */}
+                {incident.status === "resolved" && !incident.resolution_type && (
+                  <div className="col-span-2 md:col-span-4 p-3.5 bg-slate-50 border border-slate-200/80 rounded-xl space-y-1">
+                    <span className="block text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
+                      {t.resolutionType}
+                    </span>
+                    <p className="text-slate-700 text-xs italic">
+                      {t.legacyResolutionReasonNotRecorded}
                     </p>
                   </div>
                 )}
@@ -495,14 +513,16 @@ export default function IncidentDetailPage({
                     )}
                   </div>
                 ) : (
-                  <p className="text-xs text-slate-400 italic">
+                  <p className="text-xs text-slate-500 italic">
                     {incident.status === "open"
                       ? (isRTL ? "حادثه هنوز باز است و ریکاور نشده است" : "Incident is currently open; awaiting recovery check")
                       : incident.resolution_type === "source_monitor_deleted"
                       ? (isRTL ? "بسته شده به دلیل حذف مانیتور منبع (بدون تست ریکاور)" : "Resolved via source monitor deletion (no recovery check required)")
                       : incident.resolution_type === "manual"
                       ? (isRTL ? "بسته شده با رفع دستی اپراتور (بدون تست ریکاور)" : "Resolved manually by operator (no recovery check required)")
-                      : (isRTL ? "اطلاعات ریکاور مستقلی ضمیمه نشده است" : "Recovery diagnostics not recorded")}
+                      : incident.resolution_type === "automatic_recovery"
+                      ? (isRTL ? "اطلاعات ریکاور مستقلی ضمیمه نشده است" : "Recovery diagnostics not recorded")
+                      : t.legacyResolutionReasonNotRecorded}
                   </p>
                 )}
               </div>
@@ -516,8 +536,10 @@ export default function IncidentDetailPage({
               </h3>
 
               {events.length === 0 ? (
-                <p className="text-xs text-slate-400 italic">
-                  {isRTL ? "هیچ رویدادی برای این حادثه ثبت نشده است." : "No notification events logged for this incident."}
+                <p className="text-xs text-slate-500 italic">
+                  {incident.status === "resolved" && !incident.resolution_type
+                    ? t.legacyResolutionReasonNotRecorded
+                    : (isRTL ? "هیچ رویدادی برای این حادثه ثبت نشده است." : "No notification events logged for this incident.")}
                 </p>
               ) : (
                 <div className="space-y-4 relative before:absolute before:inset-0 before:left-3.5 rtl:before:right-3.5 rtl:before:left-auto before:w-0.5 before:bg-slate-100">

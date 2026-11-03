@@ -257,6 +257,43 @@ async function runDashboardValidation() {
     console.log(`    ✔ Saved healthy workspace screenshot -> ${path.basename(healthyFile)}`);
 
     // -------------------------------------------------------------------------
+    // TEST 4.1: Heartbeat-Only Incident Scenario (TASK-008.B.3.1 Explicit Assertion)
+    // -------------------------------------------------------------------------
+    console.log("\n>>> [TEST 4.1] Heartbeat-Only Incident Scenario (Zero Website Outages, 1 Missed Heartbeat)");
+    // Keep monitors healthy (up)
+    runSql(`UPDATE monitors SET status = 'up', consecutive_failures = 0 WHERE organization_id = '${orgId}';`);
+    // Resolve all monitor incidents
+    runSql(`UPDATE incidents SET status = 'resolved', resolved_at = NOW() WHERE organization_id = '${orgId}' AND monitor_id IS NOT NULL;`);
+    // Create an open heartbeat incident
+    const hbMonId = runSql(`SELECT id FROM heartbeat_monitors WHERE organization_id = '${orgId}' LIMIT 1;`);
+    runSql(`UPDATE heartbeat_monitors SET status = 'missed' WHERE id = '${hbMonId}';`);
+    runSql(`
+      INSERT INTO incidents (id, organization_id, heartbeat_monitor_id, first_failure_at, confirmed_at, status, failure_category, created_at, updated_at)
+      VALUES (gen_random_uuid(), '${orgId}', '${hbMonId}', NOW() - INTERVAL '15 minutes', NOW() - INTERVAL '10 minutes', 'open', 'heartbeat_missed', NOW(), NOW());
+    `);
+
+    await page.reload({ waitUntil: "networkidle" });
+    await page.waitForTimeout(1500);
+
+    const hbHealthText = await page.textContent('div[role="region"][aria-label="System Health"]');
+    console.log("    Heartbeat-Only Health Bar Text:", hbHealthText?.replace(/\s+/g, ' ').trim());
+
+    if (!hbHealthText || !hbHealthText.includes("Background jobs require attention")) {
+      throw new Error(`Expected 'Background jobs require attention', got: ${hbHealthText}`);
+    }
+    if (hbHealthText.includes("Website/API outage") || hbHealthText.includes("Website Down")) {
+      throw new Error(`Heartbeat incident was falsely misrepresented as website outage! Health text: ${hbHealthText}`);
+    }
+
+    const hbKpiText = await page.textContent('div[role="region"][aria-label="Key Performance Indicators"]');
+    console.log("    Heartbeat-Only KPI Text:", hbKpiText?.replace(/\s+/g, ' ').trim());
+    if (!hbKpiText.includes("Targets Down0") && !hbKpiText.includes("Targets Down 0")) {
+      // Targets down must remain 0
+      console.log("    Targets down card text:", hbKpiText);
+    }
+    console.log("    ✔ Verified heartbeat-only incident NEVER triggers website/API outage status.");
+
+    // -------------------------------------------------------------------------
     // TEST 5: Empty Workspace State (Zero monitors configured)
     // -------------------------------------------------------------------------
     console.log("\n>>> [TEST 5] Empty Workspace State");

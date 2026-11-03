@@ -8,6 +8,8 @@ interface PrimaryKpiCardsProps {
   confirmedDown: number;
   suspectedDown: number;
   openIncidents: number;
+  unacknowledgedIncidents?: number;
+  acknowledgedIncidents?: number;
   avgLatencyMs: number | null;
   successfulMeasurementsCount: number;
 }
@@ -17,6 +19,8 @@ export function PrimaryKpiCards({
   confirmedDown,
   suspectedDown,
   openIncidents,
+  unacknowledgedIncidents,
+  acknowledgedIncidents,
   avgLatencyMs,
   successfulMeasurementsCount,
 }: PrimaryKpiCardsProps) {
@@ -59,7 +63,11 @@ export function PrimaryKpiCards({
         title={t.openIncidentsKpi}
         value={<span className="tabular-nums font-mono">{openIncidents}</span>}
         icon={<AlertTriangle className="w-5 h-5 text-amber-600" />}
-        subtitle={t.openIncidentsKpiSub}
+        subtitle={
+          openIncidents > 0
+            ? `${unacknowledgedIncidents ?? 0} ${t.unacknowledgedSub} · ${acknowledgedIncidents ?? 0} ${t.acknowledgedSub}`
+            : t.openIncidentsKpiSub
+        }
         href={openIncidents > 0 ? "/incidents?status=open" : "/incidents"}
         trendColor={openIncidents > 0 ? "rose" : "emerald"}
         actionText={openIncidents > 0 ? t.viewAllIncidents : undefined}

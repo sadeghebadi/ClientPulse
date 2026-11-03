@@ -26,6 +26,7 @@ export type BadgeVariant =
   | "revoked"
   | "open"
   | "resolved"
+  | "legacy_resolution"
   | "source_monitor_deleted"
   | "monitor_deleted"
   | "manual"
@@ -104,6 +105,16 @@ const BADGE_CONFIG_MAP: Record<string, BadgeConfig> = {
     icon: CheckCircle2,
     iconClass: "text-emerald-600",
     defaultLabelKey: "statusResolved",
+    isPill: true,
+  },
+  legacy_resolution: {
+    bg: "bg-slate-100",
+    text: "text-slate-700",
+    border: "border-slate-300",
+    icon: HelpCircle,
+    iconClass: "text-slate-500",
+    defaultLabelKey: "legacyResolutionReasonNotRecorded",
+    defaultLabelFallback: "Legacy incident — resolution reason not recorded",
     isPill: true,
   },
   source_monitor_deleted: {

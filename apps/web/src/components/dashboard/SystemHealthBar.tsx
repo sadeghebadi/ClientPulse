@@ -18,6 +18,9 @@ export type HealthOverallState =
   | "operational"
   | "degraded"
   | "outage"
+  | "heartbeat_attention"
+  | "incomplete"
+  | "no_active"
   | "empty"
   | "stale"
   | "unavailable";
@@ -27,7 +30,12 @@ interface SystemHealthBarProps {
   monitorsUp: number;
   monitorsDown: number;
   monitorsSuspectedDown: number;
-  openIncidents: number;
+  monitorsPending?: number;
+  monitorsPaused?: number;
+  monitorsUnknown?: number;
+  openIncidents?: number;
+  websiteOutageIncidents?: number;
+  heartbeatMissedIncidents?: number;
   totalMonitors: number;
   isStale?: boolean;
   onRefresh?: () => void;
@@ -39,13 +47,23 @@ export function SystemHealthBar({
   monitorsUp,
   monitorsDown,
   monitorsSuspectedDown,
-  openIncidents,
+  monitorsPending = 0,
+  monitorsPaused = 0,
+  monitorsUnknown = 0,
+  openIncidents = 0,
+  websiteOutageIncidents = 0,
+  heartbeatMissedIncidents = 0,
   totalMonitors,
   isStale = false,
   onRefresh,
   refreshing = false,
 }: SystemHealthBarProps) {
   const { t, isRTL } = useI18n();
+
+  const activeMonitors =
+    monitorsUp + monitorsDown + monitorsSuspectedDown + monitorsPending + monitorsUnknown;
+  const pausedText =
+    monitorsPaused > 0 ? ` · ${monitorsPaused} ${t.statusPausedLabel.toLowerCase()}` : "";
 
   // Pick semantic styling and content based on strict operational state
   const config = {
@@ -54,7 +72,10 @@ export function SystemHealthBar({
       badge: "bg-emerald-100 text-emerald-800 border-emerald-300",
       icon: <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />,
       title: t.allMonitoredTargetsOperational,
-      description: `${monitorsUp} ${t.allMonitorsOperationalDesc.replace("{total}", String(totalMonitors))}`,
+      description: `${monitorsUp} ${t.allMonitorsOperationalDesc.replace(
+        "{total}",
+        String(activeMonitors || totalMonitors)
+      )}${pausedText}`,
       accentLink: "/monitors?status=up",
       linkText: t.viewAllMonitors,
     },
@@ -63,7 +84,9 @@ export function SystemHealthBar({
       badge: "bg-amber-100 text-amber-800 border-amber-300",
       icon: <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0" />,
       title: `${t.attentionRequired} — ${t.statusSuspectedDownLabel}`,
-      description: `${monitorsSuspectedDown} ${t.degradedHealthDesc} · ${monitorsUp}/${totalMonitors} ${t.statusOperational.toLowerCase()}`,
+      description: `${monitorsSuspectedDown} ${t.degradedHealthDesc} · ${monitorsUp}/${
+        activeMonitors || totalMonitors
+      } ${t.statusOperational.toLowerCase()}`,
       accentLink: "/monitors?status=suspected_down",
       linkText: t.viewAllMonitors,
     },
@@ -71,12 +94,49 @@ export function SystemHealthBar({
       container: "bg-rose-50 border-rose-300 text-rose-950",
       badge: "bg-rose-100 text-rose-800 border-rose-300",
       icon: <XCircle className="w-5 h-5 text-rose-600 shrink-0" />,
-      title: `${t.attentionRequired} — ${monitorsDown} ${t.outageHealthDesc}`,
-      description: `${openIncidents} ${t.openIncidentsCountDesc}${
+      title: `${t.attentionRequired} — ${t.websiteOutageDetected}`,
+      description: `${
+        monitorsDown > 0 ? `${monitorsDown} ${t.outageHealthDesc}` : ""
+      }${
+        monitorsDown > 0 && websiteOutageIncidents > 0 ? " · " : ""
+      }${
+        websiteOutageIncidents > 0
+          ? `${websiteOutageIncidents} ${t.websiteOutageIncidentsDesc}`
+          : ""
+      }${
         monitorsSuspectedDown > 0 ? ` · ${monitorsSuspectedDown} ${t.suspectedDownSub}` : ""
-      }`,
-      accentLink: "/incidents?status=open",
+      }`.trim() || `${monitorsDown} ${t.outageHealthDesc}`,
+      accentLink: "/incidents?status=open&target_type=monitor",
       linkText: t.viewAllIncidents,
+    },
+    heartbeat_attention: {
+      container: "bg-amber-50 border-amber-300 text-amber-950",
+      badge: "bg-amber-100 text-amber-800 border-amber-300",
+      icon: <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0" />,
+      title: t.heartbeatAttentionTitle,
+      description: `${heartbeatMissedIncidents} ${t.heartbeatIncidentsCountDesc} · ${t.heartbeatAttentionDesc}`,
+      accentLink: "/incidents?status=open&target_type=heartbeat",
+      linkText: t.viewBackgroundJobs,
+    },
+    incomplete: {
+      container: "bg-blue-50/80 border-blue-200 text-blue-950",
+      badge: "bg-blue-100 text-blue-800 border-blue-300",
+      icon: <HelpCircle className="w-5 h-5 text-blue-600 shrink-0" />,
+      title: t.monitoringIncompleteTitle,
+      description: `${monitorsPending + monitorsUnknown} ${t.incompleteHealthDesc} · ${monitorsUp}/${
+        totalMonitors
+      } ${t.statusOperational.toLowerCase()}`,
+      accentLink: "/monitors",
+      linkText: t.viewAllMonitors,
+    },
+    no_active: {
+      container: "bg-slate-100 border-slate-300 text-slate-800",
+      badge: "bg-slate-200 text-slate-700 border-slate-300",
+      icon: <HelpCircle className="w-5 h-5 text-slate-500 shrink-0" />,
+      title: t.noActiveMonitoringTitle,
+      description: t.noActiveMonitoringDesc.replace("{total}", String(totalMonitors)),
+      accentLink: "/monitors?status=paused",
+      linkText: t.viewAllMonitors,
     },
     empty: {
       container: "bg-slate-50 border-slate-200 text-slate-800",

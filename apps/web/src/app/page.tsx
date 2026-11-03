@@ -94,6 +94,11 @@ interface DashboardStats {
   monitors_paused: number;
   monitors_unknown?: number;
   open_incidents?: number;
+  unacknowledged_incidents?: number;
+  acknowledged_incidents?: number;
+  resolved_incidents?: number;
+  website_outage_incidents?: number;
+  heartbeat_missed_incidents?: number;
   total_heartbeats?: number;
   heartbeats_healthy?: number;
   heartbeats_missed?: number;
@@ -276,16 +281,33 @@ export default function Home() {
     }
   };
 
-  // Derive Monitor Counts strictly according to TASK-008.B.3 rules
+  // Derive Monitor Counts strictly according to TASK-008.B.3.1 rules
   const counts = useMemo(() => {
-    const up = stats?.monitors_up || 0;
-    const down = stats?.monitors_down || 0;
-    const suspectedDown = stats?.monitors_suspected_down || 0;
-    const pending = stats?.monitors_pending || 0;
-    const paused = stats?.monitors_paused || 0;
-    const unknown = stats?.monitors_unknown || 0;
-    const openIncidents = stats?.open_incidents ?? incidents.length;
+    const up = stats?.monitors_up ?? 0;
+    const down = stats?.monitors_down ?? 0;
+    const suspectedDown = stats?.monitors_suspected_down ?? 0;
+    const pending = stats?.monitors_pending ?? 0;
+    const paused = stats?.monitors_paused ?? 0;
+    const unknown = stats?.monitors_unknown ?? 0;
     const totalMonitors = up + down + suspectedDown + pending + paused + unknown;
+
+    // Use actual aggregate fields from API
+    // Fall back to incidents array only if stats fields are undefined
+    const openIncidents =
+      stats?.open_incidents ??
+      incidents.filter((i) => i.status === "open").length;
+    const unacknowledgedIncidents =
+      stats?.unacknowledged_incidents ??
+      incidents.filter((i) => i.status === "open" && !i.acknowledged_at).length;
+    const acknowledgedIncidents =
+      stats?.acknowledged_incidents ??
+      incidents.filter((i) => i.status === "open" && !!i.acknowledged_at).length;
+    const websiteOutageIncidents =
+      stats?.website_outage_incidents ??
+      incidents.filter((i) => i.status === "open" && i.target_type === "monitor").length;
+    const heartbeatMissedIncidents =
+      stats?.heartbeat_missed_incidents ??
+      incidents.filter((i) => i.status === "open" && i.target_type === "heartbeat").length;
 
     return {
       up,
@@ -294,10 +316,14 @@ export default function Home() {
       pending,
       paused,
       unknown,
-      openIncidents,
       totalMonitors,
+      openIncidents,
+      unacknowledgedIncidents,
+      acknowledgedIncidents,
+      websiteOutageIncidents,
+      heartbeatMissedIncidents,
     };
-  }, [stats, incidents.length]);
+  }, [stats, incidents]);
 
   // Derive Average Response Latency ms from valid scheduled check results
   const latencyData = useMemo(() => {
@@ -345,24 +371,44 @@ export default function Home() {
     };
   }, [stats, heartbeats]);
 
-  // Derive Overall System Health State
-  const overallState: HealthOverallState = useMemo(() => {
-    if (error && !stats) return "unavailable";
-    if (counts.totalMonitors === 0) return "empty";
-    // Confirmed outage takes highest precedence
-    if (counts.down > 0 || counts.openIncidents > 0) return "outage";
-    // Degraded / suspected down
-    if (counts.suspectedDown > 0) return "degraded";
-    // All operational
-    return "operational";
-  }, [counts, error, stats]);
-
   // Check if monitoring data is stale (over 10 minutes without refresh)
   const isStale = useMemo(() => {
     if (!lastUpdated || !currentTime) return false;
     const diffMs = currentTime - lastUpdated.getTime();
     return diffMs > 10 * 60 * 1000;
   }, [lastUpdated, currentTime]);
+
+  // Derive Overall System Health State according to Section 4 Precedence
+  const overallState: HealthOverallState = useMemo(() => {
+    // State 1 — Data Unavailable
+    if (error && !stats) return "unavailable";
+
+    // State 2 — Website/API Outage (confirmed website/API outage incident or confirmed down monitors)
+    if (counts.websiteOutageIncidents > 0 || counts.down > 0) return "outage";
+
+    // State 3 — Heartbeat Attention (no confirmed website/API outages, but heartbeat incidents open)
+    if (counts.heartbeatMissedIncidents > 0) return "heartbeat_attention";
+
+    // State 4 — Degraded Monitoring (suspected down monitors)
+    if (counts.suspectedDown > 0) return "degraded";
+
+    // State 5 — Incomplete Monitoring (pending or unknown monitors)
+    if (counts.pending > 0 || counts.unknown > 0) return "incomplete";
+
+    // State 6 — No Active Monitoring (monitors exist, but all are paused)
+    const activeMonitors =
+      counts.up + counts.down + counts.suspectedDown + counts.pending + counts.unknown;
+    if (counts.totalMonitors > 0 && activeMonitors === 0) return "no_active";
+
+    // State 7 — Empty Workspace (no monitors configured)
+    if (counts.totalMonitors === 0) return "empty";
+
+    // Staleness check before declaring operational
+    if (isStale) return "stale";
+
+    // State 8 — Operational (all eligible active monitors are up and verified)
+    return "operational";
+  }, [counts, error, stats, isStale]);
 
   return (
     <AppLayout>
@@ -447,7 +493,12 @@ export default function Home() {
                 monitorsUp={counts.up}
                 monitorsDown={counts.down}
                 monitorsSuspectedDown={counts.suspectedDown}
+                monitorsPending={counts.pending}
+                monitorsPaused={counts.paused}
+                monitorsUnknown={counts.unknown}
                 openIncidents={counts.openIncidents}
+                websiteOutageIncidents={counts.websiteOutageIncidents}
+                heartbeatMissedIncidents={counts.heartbeatMissedIncidents}
                 totalMonitors={counts.totalMonitors}
                 isStale={isStale}
                 onRefresh={() => loadDashboardData(true)}
@@ -460,6 +511,8 @@ export default function Home() {
                 confirmedDown={counts.down}
                 suspectedDown={counts.suspectedDown}
                 openIncidents={counts.openIncidents}
+                unacknowledgedIncidents={counts.unacknowledgedIncidents}
+                acknowledgedIncidents={counts.acknowledgedIncidents}
                 avgLatencyMs={latencyData.avgMs}
                 successfulMeasurementsCount={latencyData.count}
               />

@@ -279,9 +279,9 @@ export default function IncidentsPage() {
                               <span>{t.statusAcknowledged}</span>
                             </span>
                           )}
-                          {inc.status === "resolved" && inc.resolution_type && (
+                          {inc.status === "resolved" && (
                             <Badge
-                              variant={inc.resolution_type}
+                              variant={inc.resolution_type || "legacy_resolution"}
                               className="text-[10px]"
                             />
                           )}
@@ -353,8 +353,29 @@ export default function IncidentsPage() {
                           )
                         ) : (
                           <div className="flex flex-col gap-0.5 text-[11px]">
-                            <span className="text-slate-700 font-medium truncate max-w-[140px]">
-                              {inc.resolved_by_name ? `${t.resolvedBy} ${inc.resolved_by_name}` : (isRTL ? "رفع خودکار" : "Auto Recovery")}
+                            <span
+                              className="text-slate-700 font-medium truncate max-w-[180px]"
+                              title={
+                                inc.resolved_by_name
+                                  ? `${t.resolvedBy} ${inc.resolved_by_name}`
+                                  : inc.resolution_type === "automatic_recovery"
+                                  ? t.automaticRecovery
+                                  : inc.resolution_type === "source_monitor_deleted"
+                                  ? t.sourceMonitorDeleted
+                                  : inc.resolution_type === "manual"
+                                  ? t.manualResolution
+                                  : t.legacyResolutionReasonNotRecorded
+                              }
+                            >
+                              {inc.resolved_by_name
+                                ? `${t.resolvedBy} ${inc.resolved_by_name}`
+                                : inc.resolution_type === "automatic_recovery"
+                                ? t.automaticRecovery
+                                : inc.resolution_type === "source_monitor_deleted"
+                                ? t.sourceMonitorDeleted
+                                : inc.resolution_type === "manual"
+                                ? t.manualResolution
+                                : t.legacyResolutionReasonNotRecorded}
                             </span>
                             {inc.resolved_at && (
                               <span className="text-[10px] text-slate-400">
