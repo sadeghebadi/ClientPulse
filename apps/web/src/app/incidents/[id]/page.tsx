@@ -212,7 +212,7 @@ export default function IncidentDetailPage({
           title={isRTL ? `حادثه: ${incident?.target_name || id}` : `Incident: ${incident?.target_name || id}`}
           description={incident?.summary}
           breadcrumbs={[
-            { label: t.dashboard, href: "/" },
+            { label: t.dashboard, href: "/dashboard" },
             { label: t.incidents, href: "/incidents" },
             { label: incident?.target_name || id },
           ]}

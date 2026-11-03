@@ -269,7 +269,7 @@ export default function HeartbeatDetailPage({
           title={heartbeat?.name || t.heartbeat}
           description={heartbeat?.description}
           breadcrumbs={[
-            { label: t.dashboard, href: "/" },
+            { label: t.dashboard, href: "/dashboard" },
             { label: t.heartbeats, href: "/heartbeats" },
             { label: heartbeat?.name || id },
           ]}

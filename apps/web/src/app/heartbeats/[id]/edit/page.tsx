@@ -129,7 +129,7 @@ export default function EditHeartbeatPage({
         <PageHeader
           title={isRTL ? "ویرایش هارت‌بیت" : "Edit Heartbeat"}
           breadcrumbs={[
-            { label: t.dashboard, href: "/" },
+            { label: t.dashboard, href: "/dashboard" },
             { label: t.heartbeats, href: "/heartbeats" },
             { label: name || id, href: `/heartbeats/${id}` },
             { label: t.edit },

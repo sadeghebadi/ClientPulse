@@ -197,7 +197,7 @@ export default function IncidentsPage() {
           description={isRTL ? "مدیریت رخدادهای قطعی وب‌سایت‌ها و عدم دریافت هارت‌بیت‌ها با شفافیت کامل" : "Operational outages and missed heartbeats detected across client properties"}
           icon={<AlertTriangle className="w-5 h-5 text-rose-600" />}
           breadcrumbs={[
-            { label: t.dashboard, href: "/" },
+            { label: t.dashboard, href: "/dashboard" },
             { label: t.incidents },
           ]}
         />

@@ -34,7 +34,7 @@ export default function LoginPage() {
       });
 
       await refreshUser();
-      router.push("/");
+      router.push("/dashboard");
     } catch (err) {
       setError(err);
       setLoading(false);

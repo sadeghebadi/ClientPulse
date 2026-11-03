@@ -137,7 +137,7 @@ export default function MonitorsPage() {
         description={isRTL ? "پایش خودکار و بی‌درنگ سلامت، زمان پاسخ و گواهینامه‌های TLS وب‌سایت‌ها." : "Live automated uptime verification, latency tracking, and TLS security assertions."}
         icon={<Activity className="w-5 h-5" />}
         breadcrumbs={[
-          { label: t.dashboard, href: "/" },
+          { label: t.dashboard, href: "/dashboard" },
           { label: t.monitors },
         ]}
         actions={

@@ -87,7 +87,7 @@ function VerifyEmailContent() {
           <Button
             variant="primary"
             size="lg"
-            onClick={() => router.push("/")}
+            onClick={() => router.push("/dashboard")}
             className="w-full"
           >
             {t.verifyEmailBtn}
@@ -123,7 +123,7 @@ function VerifyEmailContent() {
           )}
 
           <div className="mt-4">
-            <Link href="/" className="text-xs font-semibold text-blue-600 hover:underline">
+            <Link href="/dashboard" className="text-xs font-semibold text-blue-600 hover:underline">
               {t.verifyEmailBtn}
             </Link>
           </div>

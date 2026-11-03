@@ -208,7 +208,7 @@ export default function NewHeartbeatPage() {
           title={t.createHeartbeatTitle}
           description={t.createHeartbeatDesc}
           breadcrumbs={[
-            { label: t.dashboard, href: "/" },
+            { label: t.dashboard, href: "/dashboard" },
             { label: t.heartbeats, href: "/heartbeats" },
             { label: t.createHeartbeat },
           ]}

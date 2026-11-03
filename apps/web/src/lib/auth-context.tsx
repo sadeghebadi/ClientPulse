@@ -138,9 +138,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       body: JSON.stringify({ organization_id: orgID }),
     });
     await refreshUser();
-    // If user is currently on an ID-specific detail route, redirect to root or list to avoid cross-tenant 404s
+    // If user is currently on an ID-specific detail route, redirect to dashboard or list to avoid cross-tenant 404s
     if (pathname && /\/(clients|assets|monitors)\/[a-zA-Z0-9_-]+/.test(pathname)) {
-      router.push("/");
+      router.push("/dashboard");
     }
   };
 

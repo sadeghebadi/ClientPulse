@@ -135,9 +135,9 @@ export function AppLayout({ children }: AppLayoutProps) {
       items: [
         {
           label: t.dashboard,
-          href: "/",
+          href: "/dashboard",
           icon: LayoutDashboard,
-          isActive: (p) => p === "/",
+          isActive: (p) => p === "/dashboard",
         },
       ],
     },
@@ -231,7 +231,7 @@ export function AppLayout({ children }: AppLayoutProps) {
 
   // Helper to determine active breadcrumb label for the top header
   const getPageContextLabel = (): string => {
-    if (pathname === "/") return t.dashboard;
+    if (pathname === "/dashboard" || pathname === "/") return t.dashboard;
     if (pathname.startsWith("/clients")) return t.clients;
     if (pathname.startsWith("/assets")) return t.assets;
     if (pathname.startsWith("/monitors")) return t.monitors;
@@ -322,7 +322,7 @@ export function AppLayout({ children }: AppLayoutProps) {
             {/* Sidebar Brand Header */}
             <div className="h-16 flex items-center justify-between px-4 border-b border-slate-800/80">
               <Link
-                href="/"
+                href="/dashboard"
                 className={`flex items-center gap-3 overflow-hidden ${
                   sidebarCollapsed ? "justify-center w-full" : ""
                 }`}
@@ -465,7 +465,7 @@ export function AppLayout({ children }: AppLayoutProps) {
               )}
 
               {/* Mobile Logo Fallback (below 1024px) */}
-              <Link href="/" className="lg:hidden flex items-center gap-2">
+              <Link href="/dashboard" className="lg:hidden flex items-center gap-2">
                 <div className="w-8 h-8 rounded-lg bg-blue-600 text-white flex items-center justify-center shadow-xs">
                   <Activity className="w-4 h-4" />
                 </div>

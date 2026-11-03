@@ -139,7 +139,7 @@ export default function HeartbeatsPage() {
           title={t.heartbeats}
           description={t.createHeartbeatDesc}
           breadcrumbs={[
-            { label: t.dashboard, href: "/" },
+            { label: t.dashboard, href: "/dashboard" },
             { label: t.heartbeats },
           ]}
           actions={

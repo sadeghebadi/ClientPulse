@@ -139,7 +139,7 @@ export default function ClientsPage() {
         description={isRTL ? `مدیریت اطلاعات مشتریان، وب‌سایت‌های تحت پوشش و مانیتورهای ${activeOrg?.name || "سازمان"}.` : `Manage client accounts, registered websites, and monitoring configurations for ${activeOrg?.name || "your workspace"}.`}
         icon={<Users className="w-5 h-5" />}
         breadcrumbs={[
-          { label: t.dashboard, href: "/" },
+          { label: t.dashboard, href: "/dashboard" },
           { label: t.clients },
         ]}
         actions={
