@@ -53,9 +53,11 @@ function AssetsContent() {
   const searchParams = useSearchParams();
   const initialClientID = searchParams.get("client_id") || "all";
 
-  const { user, activeOrg } = useAuth();
+  const { user, activeOrg, role } = useAuth();
   const { t, isRTL } = useI18n();
   const toast = useToast();
+
+  const canManage = role === "owner" || role === "admin" || role === "member";
 
   const [assets, setAssets] = useState<Asset[]>([]);
   const [clients, setClients] = useState<ClientOption[]>([]);
@@ -186,11 +188,13 @@ function AssetsContent() {
         description={t.assetsDirectoryDesc}
         icon={<Globe className="w-5 h-5" />}
         actions={
-          <Link href="/assets/new">
-            <Button size="sm" variant="primary" icon={<Plus className="w-4 h-4" />}>
-              {t.createAsset}
-            </Button>
-          </Link>
+          canManage ? (
+            <Link href="/assets/new">
+              <Button size="sm" variant="primary" icon={<Plus className="w-4 h-4" />}>
+                {t.createAsset}
+              </Button>
+            </Link>
+          ) : null
         }
       />
 
@@ -355,27 +359,29 @@ function AssetsContent() {
                       <Badge variant={asset.is_active ? "active" : "archived"} />
                     </td>
 
-                    <td className="px-6 py-4 text-right">
+                    <td className="px-6 py-4 text-end">
                       <div className="flex items-center justify-end gap-2">
-                        <button
-                          onClick={() => {
-                            setTargetAsset(asset);
-                            setModalOpen(true);
-                          }}
-                          className={`p-1.5 rounded-lg border text-xs transition-colors ${
-                            asset.is_active
-                              ? "border-slate-200 text-slate-500 hover:text-rose-600 hover:bg-rose-50 hover:border-rose-200"
-                              : "border-emerald-200 text-emerald-700 hover:bg-emerald-50"
-                          }`}
-                          title={asset.is_active ? t.archiveAsset : t.restoreAsset}
-                          aria-label={asset.is_active ? t.archiveAsset : t.restoreAsset}
-                        >
-                          {asset.is_active ? (
-                            <Archive className="w-3.5 h-3.5" />
-                          ) : (
-                            <RotateCcw className="w-3.5 h-3.5" />
-                          )}
-                        </button>
+                        {canManage && (
+                          <button
+                            onClick={() => {
+                              setTargetAsset(asset);
+                              setModalOpen(true);
+                            }}
+                            className={`p-1.5 rounded-lg border text-xs transition-colors ${
+                              asset.is_active
+                                ? "border-slate-200 text-slate-500 hover:text-rose-600 hover:bg-rose-50 hover:border-rose-200"
+                                : "border-emerald-200 text-emerald-700 hover:bg-emerald-50"
+                            }`}
+                            title={asset.is_active ? t.archiveAsset : t.restoreAsset}
+                            aria-label={asset.is_active ? t.archiveAsset : t.restoreAsset}
+                          >
+                            {asset.is_active ? (
+                              <Archive className="w-3.5 h-3.5" />
+                            ) : (
+                              <RotateCcw className="w-3.5 h-3.5" />
+                            )}
+                          </button>
+                        )}
                         <Link
                           href={`/assets/${asset.id}`}
                           className="inline-flex items-center gap-1 text-xs font-semibold text-blue-600 hover:text-blue-800 transition-colors ms-1"
@@ -430,17 +436,19 @@ function AssetsContent() {
                 </div>
 
                 <div className="flex items-center justify-between pt-2">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => {
-                      setTargetAsset(asset);
-                      setModalOpen(true);
-                    }}
-                    icon={asset.is_active ? <Archive className="w-3.5 h-3.5" /> : <RotateCcw className="w-3.5 h-3.5" />}
-                  >
-                    {asset.is_active ? t.archiveAsset : t.restoreAsset}
-                  </Button>
+                  {canManage ? (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        setTargetAsset(asset);
+                        setModalOpen(true);
+                      }}
+                      icon={asset.is_active ? <Archive className="w-3.5 h-3.5" /> : <RotateCcw className="w-3.5 h-3.5" />}
+                    >
+                      {asset.is_active ? t.archiveAsset : t.restoreAsset}
+                    </Button>
+                  ) : <div />}
                   <Link href={`/assets/${asset.id}`}>
                     <Button size="sm" variant="secondary">
                       {t.viewDetails}
@@ -465,7 +473,7 @@ function AssetsContent() {
         message={
           targetAsset?.is_active
             ? t.confirmArchiveAsset
-            : "Restore this asset to active status? Associated monitoring jobs can be resumed."
+            : (isRTL ? "آیا این دارایی به حالت فعال بازگردانده شود؟ پایش‌های مرتبط مجدداً فعال خواهند شد." : "Restore this asset to active status? Associated monitoring jobs can be resumed.")
         }
         confirmLabel={targetAsset?.is_active ? t.archiveAsset : t.restoreAsset}
         variant={targetAsset?.is_active ? "danger" : "primary"}

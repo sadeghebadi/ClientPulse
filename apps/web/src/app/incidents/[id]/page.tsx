@@ -149,6 +149,21 @@ export default function IncidentDetailPage({
     };
   }, [user, activeOrg, id]);
 
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && showResolveModal && !resolvingLoading) {
+        setShowResolveModal(false);
+        setResolutionNote("");
+      }
+    };
+    if (showResolveModal) {
+      window.addEventListener("keydown", handleKeyDown);
+    }
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [showResolveModal, resolvingLoading]);
+
   const handleAcknowledge = async () => {
     setAcking(true);
     try {
@@ -290,7 +305,7 @@ export default function IncidentDetailPage({
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-6 text-xs">
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 sm:gap-6 text-xs">
                 <div>
                   <span className="block text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-1">
                     {t.client}
@@ -581,7 +596,13 @@ export default function IncidentDetailPage({
         <div
           role="dialog"
           aria-modal="true"
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm animate-in fade-in duration-150"
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs animate-in fade-in duration-150"
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !resolvingLoading) {
+              setShowResolveModal(false);
+              setResolutionNote("");
+            }
+          }}
         >
           <div
             className="w-full max-w-md bg-white border border-slate-200 rounded-2xl shadow-xl overflow-hidden p-6 relative transition-all"
@@ -621,11 +642,11 @@ export default function IncidentDetailPage({
                 onChange={(e) => setResolutionNote(e.target.value)}
                 placeholder={t.resolutionNotePlaceholder}
                 rows={3}
-                className="w-full text-xs p-2.5 rounded-lg border border-slate-200 bg-slate-50/50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-slate-800 resize-none"
+                className="w-full text-xs p-2.5 rounded-xl border border-slate-200 bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-slate-800 resize-none"
               />
             </div>
 
-            <div className="flex items-center justify-end gap-2">
+            <div className="flex flex-col-reverse sm:flex-row items-stretch sm:items-center justify-end gap-2">
               <Button
                 variant="outline"
                 size="sm"
@@ -634,6 +655,7 @@ export default function IncidentDetailPage({
                   setResolutionNote("");
                 }}
                 disabled={resolvingLoading}
+                className="w-full sm:w-auto"
               >
                 {t.cancel}
               </Button>
@@ -642,6 +664,7 @@ export default function IncidentDetailPage({
                 size="sm"
                 loading={resolvingLoading}
                 onClick={handleResolve}
+                className="w-full sm:w-auto"
               >
                 {t.resolveIncident}
               </Button>

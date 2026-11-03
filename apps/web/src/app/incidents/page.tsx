@@ -17,6 +17,7 @@ import {
   Radio,
   UserCheck,
   X,
+  ExternalLink,
 } from "lucide-react";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Badge } from "@/components/ui/Badge";
@@ -125,6 +126,22 @@ export default function IncidentsPage() {
     };
   }, [user, activeOrg, statusFilter, targetTypeFilter, ackFilter]);
 
+  // Modal keyboard listener
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && resolvingIncident && !resolvingLoading) {
+        setResolvingIncident(null);
+        setResolutionNote("");
+      }
+    };
+    if (resolvingIncident) {
+      window.addEventListener("keydown", handleKeyDown);
+    }
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [resolvingIncident, resolvingLoading]);
+
   const handleAcknowledge = async (id: string) => {
     setAckingID(id);
     try {
@@ -164,12 +181,21 @@ export default function IncidentsPage() {
     return `${sec}s`;
   };
 
+  const getResolvedLabel = (inc: IncidentItem) => {
+    if (inc.resolved_by_name) return `${t.resolvedBy} ${inc.resolved_by_name}`;
+    if (inc.resolution_type === "automatic_recovery") return t.automaticRecovery;
+    if (inc.resolution_type === "source_monitor_deleted") return t.sourceMonitorDeleted;
+    if (inc.resolution_type === "manual") return t.manualResolution;
+    return t.legacyResolutionReasonNotRecorded;
+  };
+
   return (
     <AppLayout>
       <div className="space-y-6">
         <PageHeader
           title={t.incidents}
           description={isRTL ? "مدیریت رخدادهای قطعی وب‌سایت‌ها و عدم دریافت هارت‌بیت‌ها با شفافیت کامل" : "Operational outages and missed heartbeats detected across client properties"}
+          icon={<AlertTriangle className="w-5 h-5 text-rose-600" />}
           breadcrumbs={[
             { label: t.dashboard, href: "/" },
             { label: t.incidents },
@@ -177,33 +203,33 @@ export default function IncidentsPage() {
         />
 
         {/* Filters */}
-        <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex flex-col md:flex-row gap-3 justify-between items-stretch md:items-center">
+        <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm flex flex-col md:flex-row gap-3 justify-between items-stretch md:items-center">
           <div className="flex flex-wrap items-center gap-2">
-            {[
-              { id: "all", label: t.all },
-              { id: "open", label: t.statusOpen },
-              { id: "resolved", label: t.statusResolved },
-            ].map((f) => (
-              <button
-                key={f.id}
-                onClick={() => setStatusFilter(f.id)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                  statusFilter === f.id
-                    ? "bg-slate-900 text-white shadow-sm"
-                    : "bg-slate-50 text-slate-600 hover:bg-slate-100 border border-slate-200"
-                }`}
-              >
-                {f.label}
-              </button>
-            ))}
-
-            <span className="text-slate-300">|</span>
+            <div className="inline-flex rounded-xl bg-slate-100 p-1">
+              {[
+                { id: "all", label: t.all },
+                { id: "open", label: t.statusOpen },
+                { id: "resolved", label: t.statusResolved },
+              ].map((f) => (
+                <button
+                  key={f.id}
+                  onClick={() => setStatusFilter(f.id)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                    statusFilter === f.id
+                      ? "bg-white text-slate-900 shadow-xs"
+                      : "text-slate-600 hover:text-slate-900"
+                  }`}
+                >
+                  {f.label}
+                </button>
+              ))}
+            </div>
 
             {/* Target Filter */}
             <select
               value={targetTypeFilter}
               onChange={(e) => setTargetTypeFilter(e.target.value)}
-              className="text-xs px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white focus:outline-none"
+              className="text-xs px-3 py-2 rounded-xl border border-slate-200 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
               <option value="all">{t.allTargets}</option>
               <option value="monitor">{t.websiteMonitor}</option>
@@ -214,9 +240,9 @@ export default function IncidentsPage() {
             <select
               value={ackFilter}
               onChange={(e) => setAckFilter(e.target.value)}
-              className="text-xs px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white focus:outline-none"
+              className="text-xs px-3 py-2 rounded-xl border border-slate-200 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
-              <option value="all">{isRTL ? "همه وضعیت‌های تأیید" : "All Ack States"}</option>
+              <option value="all">{t.allAckStates}</option>
               <option value="unack">{t.unacknowledged}</option>
               <option value="ack">{t.statusAcknowledged}</option>
             </select>
@@ -227,6 +253,7 @@ export default function IncidentsPage() {
             size="sm"
             icon={<RotateCw className="w-3.5 h-3.5" />}
             onClick={fetchIncidents}
+            className="w-full md:w-auto justify-center"
           >
             {t.refresh}
           </Button>
@@ -234,7 +261,7 @@ export default function IncidentsPage() {
 
         {/* Incidents Table or States */}
         {loading ? (
-          <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm">
+          <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
             <TableSkeleton rows={5} cols={6} />
           </div>
         ) : error ? (
@@ -249,19 +276,158 @@ export default function IncidentsPage() {
             description={t.noIncidentsFound}
           />
         ) : (
-          <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-left rtl:text-right border-collapse text-xs">
+          <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
+            {/* Mobile Cards View (< 768px) */}
+            <div className="md:hidden divide-y divide-slate-100">
+              {incidents.map((inc) => (
+                <div key={inc.id} className="p-4 space-y-3 hover:bg-slate-50/60 transition-colors">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-center gap-2 flex-wrap min-w-0">
+                      <div className="flex items-center gap-1.5 font-semibold text-sm text-slate-900">
+                        {inc.target_type === "monitor" ? (
+                          <Globe className="w-4 h-4 text-blue-500 shrink-0" />
+                        ) : (
+                          <Radio className="w-4 h-4 text-purple-500 shrink-0" />
+                        )}
+                        <Link href={`/incidents/${inc.id}`} className="hover:text-blue-600 truncate">
+                          {inc.target_name}
+                        </Link>
+                      </div>
+                      {(inc.heartbeat_archived_at || inc.resolution_type === "source_monitor_deleted") && (
+                        <Badge variant="monitor_deleted" className="text-[10px] py-0 px-1.5" />
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-1 shrink-0">
+                      <Badge variant={inc.status} />
+                    </div>
+                  </div>
+
+                  {inc.summary && (
+                    <p className="text-xs text-slate-500 line-clamp-2 leading-relaxed bg-slate-50 p-2 rounded-lg">
+                      {inc.summary}
+                    </p>
+                  )}
+
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <div>
+                      <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider block">
+                        {t.client}
+                      </span>
+                      <Link
+                        href={`/clients/${inc.client_id}`}
+                        className="text-slate-700 font-medium hover:text-blue-600 inline-flex items-center gap-1 truncate"
+                      >
+                        <span className="truncate">{inc.client_name}</span>
+                        <ExternalLink className="w-3 h-3 text-slate-400 shrink-0" />
+                      </Link>
+                    </div>
+
+                    <div>
+                      <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider block">
+                        {t.failureCategory}
+                      </span>
+                      <span className="font-mono text-slate-800 bg-slate-100 px-1.5 py-0.5 rounded text-[11px] truncate block w-fit">
+                        {inc.failure_category}
+                      </span>
+                    </div>
+
+                    <div>
+                      <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider block">
+                        {t.firstFailure}
+                      </span>
+                      <span className="text-slate-600 text-[11px]" dir="ltr">
+                        {new Date(inc.first_failure_at).toLocaleString([], {
+                          month: "short",
+                          day: "numeric",
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
+                      </span>
+                    </div>
+
+                    <div>
+                      <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider block">
+                        {t.duration}
+                      </span>
+                      <span className="font-mono text-slate-700 font-medium" dir="ltr">
+                        {formatDuration(inc.duration_seconds)}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Ack/Resolve Status Info */}
+                  <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-2 flex-wrap text-xs">
+                    <div>
+                      {inc.status === "open" ? (
+                        inc.acknowledged_at ? (
+                          <div className="inline-flex items-center gap-1.5 text-blue-700 bg-blue-50 border border-blue-200/80 px-2 py-0.5 rounded-lg text-[11px]">
+                            <UserCheck className="w-3 h-3 text-blue-600" />
+                            <span>{inc.acknowledged_by_name || t.statusAcknowledged}</span>
+                          </div>
+                        ) : (
+                          <span className="text-[11px] text-rose-500 font-semibold">
+                            {t.unacknowledged}
+                          </span>
+                        )
+                      ) : (
+                        <div className="inline-flex items-center gap-1 text-[11px] text-emerald-700 bg-emerald-50 border border-emerald-200/80 px-2 py-0.5 rounded-lg">
+                          <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                          <span className="truncate max-w-[150px]">{getResolvedLabel(inc)}</span>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      {inc.status === "open" && !inc.acknowledged_at && canAck && (
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          loading={ackingID === inc.id}
+                          onClick={() => handleAcknowledge(inc.id)}
+                        >
+                          {t.acknowledge}
+                        </Button>
+                      )}
+                      {inc.status === "open" && canAck && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => {
+                            setResolvingIncident(inc);
+                            setResolutionNote("");
+                          }}
+                        >
+                          {t.resolveIncident}
+                        </Button>
+                      )}
+                      <Link href={`/incidents/${inc.id}`}>
+                        <button
+                          className="p-1.5 rounded-lg bg-slate-50 text-slate-600 border border-slate-200 hover:bg-slate-100 transition-colors"
+                          aria-label={t.viewDetails}
+                        >
+                          {isRTL ? <ArrowLeft className="w-3.5 h-3.5" /> : <ArrowRight className="w-3.5 h-3.5" />}
+                        </button>
+                      </Link>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Desktop Table View (>= 768px) */}
+            <div className="hidden md:block overflow-x-auto">
+              <table className="w-full text-start border-collapse text-xs">
                 <thead>
                   <tr className="bg-slate-50/75 border-b border-slate-200 text-slate-500 font-semibold uppercase tracking-wider text-[11px]">
-                    <th className="py-3 px-4">{t.status}</th>
-                    <th className="py-3 px-4">{t.targetType}</th>
-                    <th className="py-3 px-4">{t.client}</th>
-                    <th className="py-3 px-4">{t.failureCategory}</th>
-                    <th className="py-3 px-4">{t.firstFailure}</th>
-                    <th className="py-3 px-4">{t.duration}</th>
-                    <th className="py-3 px-4">{t.acknowledgedBy}</th>
-                    <th className="py-3 px-4 text-right rtl:text-left">{t.actions}</th>
+                    <th className="py-3 px-4 text-start">{t.status}</th>
+                    <th className="py-3 px-4 text-start">{t.targetType}</th>
+                    <th className="py-3 px-4 text-start">{t.client}</th>
+                    <th className="py-3 px-4 text-start">{t.failureCategory}</th>
+                    <th className="py-3 px-4 text-start">{t.firstFailure}</th>
+                    <th className="py-3 px-4 text-start">{t.duration}</th>
+                    <th className="py-3 px-4 text-start">{t.acknowledgedBy}</th>
+                    <th className="py-3 px-4 text-end">{t.actions}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -270,7 +436,7 @@ export default function IncidentsPage() {
                       key={inc.id}
                       className="hover:bg-slate-50/60 transition-colors group"
                     >
-                      <td className="py-3.5 px-4">
+                      <td className="py-3.5 px-4 text-start">
                         <div className="flex flex-col gap-1 items-start">
                           <Badge variant={inc.status} />
                           {inc.status === "open" && inc.acknowledged_at && (
@@ -287,7 +453,7 @@ export default function IncidentsPage() {
                           )}
                         </div>
                       </td>
-                      <td className="py-3.5 px-4 font-medium text-slate-900">
+                      <td className="py-3.5 px-4 font-medium text-slate-900 text-start">
                         <div className="flex items-center gap-1.5 flex-wrap">
                           <Link
                             href={`/incidents/${inc.id}`}
@@ -310,7 +476,7 @@ export default function IncidentsPage() {
                           </p>
                         )}
                       </td>
-                      <td className="py-3.5 px-4">
+                      <td className="py-3.5 px-4 text-start">
                         <Link
                           href={`/clients/${inc.client_id}`}
                           className="text-slate-600 hover:text-slate-900 font-medium hover:underline"
@@ -318,10 +484,12 @@ export default function IncidentsPage() {
                           {inc.client_name}
                         </Link>
                       </td>
-                      <td className="py-3.5 px-4 font-mono text-slate-700 font-medium">
-                        {inc.failure_category}
+                      <td className="py-3.5 px-4 font-mono text-slate-700 font-medium text-start">
+                        <span className="bg-slate-100 px-2 py-0.5 rounded text-[11px]">
+                          {inc.failure_category}
+                        </span>
                       </td>
-                      <td className="py-3.5 px-4 text-slate-500">
+                      <td className="py-3.5 px-4 text-slate-500 text-start" dir="ltr">
                         <span title={new Date(inc.first_failure_at).toLocaleString()}>
                           {new Date(inc.first_failure_at).toLocaleTimeString([], {
                             hour: "2-digit",
@@ -331,62 +499,44 @@ export default function IncidentsPage() {
                           })}
                         </span>
                       </td>
-                      <td className="py-3.5 px-4 text-slate-600 font-mono">
+                      <td className="py-3.5 px-4 text-slate-600 font-mono text-start" dir="ltr">
                         {formatDuration(inc.duration_seconds)}
                       </td>
-                      <td className="py-3.5 px-4">
+                      <td className="py-3.5 px-4 text-start">
                         {inc.status === "open" ? (
                           inc.acknowledged_at ? (
                             <div className="flex flex-col gap-0.5">
-                              <div className="flex items-center gap-1 text-[11px] text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded w-fit">
-                                <UserCheck className="w-3 h-3 text-emerald-600 shrink-0" />
-                                <span className="truncate max-w-[120px]">{inc.acknowledged_by_name || (isRTL ? "تأییدشده" : "Acked")}</span>
+                              <div className="flex items-center gap-1 text-[11px] text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded w-fit">
+                                <UserCheck className="w-3 h-3 text-blue-600 shrink-0" />
+                                <span className="truncate max-w-[120px]">{inc.acknowledged_by_name || t.statusAcknowledged}</span>
                               </div>
-                              <span className="text-[10px] text-slate-400">
+                              <span className="text-[10px] text-slate-400" dir="ltr">
                                 {new Date(inc.acknowledged_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                               </span>
                             </div>
                           ) : (
-                            <span className="text-[11px] text-rose-500 font-medium">
-                              {isRTL ? "در انتظار بررسی" : "Unacknowledged"}
+                            <span className="text-[11px] text-rose-500 font-semibold">
+                              {t.unacknowledged}
                             </span>
                           )
                         ) : (
                           <div className="flex flex-col gap-0.5 text-[11px]">
                             <span
                               className="text-slate-700 font-medium truncate max-w-[180px]"
-                              title={
-                                inc.resolved_by_name
-                                  ? `${t.resolvedBy} ${inc.resolved_by_name}`
-                                  : inc.resolution_type === "automatic_recovery"
-                                  ? t.automaticRecovery
-                                  : inc.resolution_type === "source_monitor_deleted"
-                                  ? t.sourceMonitorDeleted
-                                  : inc.resolution_type === "manual"
-                                  ? t.manualResolution
-                                  : t.legacyResolutionReasonNotRecorded
-                              }
+                              title={getResolvedLabel(inc)}
                             >
-                              {inc.resolved_by_name
-                                ? `${t.resolvedBy} ${inc.resolved_by_name}`
-                                : inc.resolution_type === "automatic_recovery"
-                                ? t.automaticRecovery
-                                : inc.resolution_type === "source_monitor_deleted"
-                                ? t.sourceMonitorDeleted
-                                : inc.resolution_type === "manual"
-                                ? t.manualResolution
-                                : t.legacyResolutionReasonNotRecorded}
+                              {getResolvedLabel(inc)}
                             </span>
                             {inc.resolved_at && (
-                              <span className="text-[10px] text-slate-400">
+                              <span className="text-[10px] text-slate-400" dir="ltr">
                                 {new Date(inc.resolved_at).toLocaleDateString([], { month: "short", day: "numeric" })}
                               </span>
                             )}
                           </div>
                         )}
                       </td>
-                      <td className="py-3.5 px-4 text-right rtl:text-left">
-                        <div className="flex items-center justify-end rtl:justify-start gap-1">
+                      <td className="py-3.5 px-4 text-end">
+                        <div className="flex items-center justify-end gap-1.5">
                           {inc.status === "open" && !inc.acknowledged_at && canAck && (
                             <Button
                               size="sm"
@@ -410,7 +560,10 @@ export default function IncidentsPage() {
                             </Button>
                           )}
                           <Link href={`/incidents/${inc.id}`}>
-                            <button className="p-1.5 rounded-lg bg-slate-50 text-slate-600 border border-slate-200 hover:bg-slate-100 transition-colors">
+                            <button
+                              className="p-1.5 rounded-lg bg-slate-50 text-slate-600 border border-slate-200 hover:bg-slate-100 transition-colors"
+                              title={t.viewDetails}
+                            >
                               {isRTL ? <ArrowLeft className="w-3.5 h-3.5" /> : <ArrowRight className="w-3.5 h-3.5" />}
                             </button>
                           </Link>
@@ -421,8 +574,9 @@ export default function IncidentsPage() {
                 </tbody>
               </table>
             </div>
+
             <div className="p-3 bg-slate-50 border-t border-slate-200 flex justify-between items-center text-xs text-slate-500">
-              <span>{isRTL ? `نمایش ${incidents.length} از ${total}` : `Showing ${incidents.length} of ${total}`}</span>
+              <span>{t.showingCount.replace("{count}", String(incidents.length)).replace("{total}", String(total))}</span>
             </div>
           </div>
         )}
@@ -433,7 +587,13 @@ export default function IncidentsPage() {
         <div
           role="dialog"
           aria-modal="true"
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm animate-in fade-in duration-150"
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs animate-in fade-in duration-150"
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !resolvingLoading) {
+              setResolvingIncident(null);
+              setResolutionNote("");
+            }
+          }}
         >
           <div
             className="w-full max-w-md bg-white border border-slate-200 rounded-2xl shadow-xl overflow-hidden p-6 relative transition-all"
@@ -473,11 +633,11 @@ export default function IncidentsPage() {
                 onChange={(e) => setResolutionNote(e.target.value)}
                 placeholder={t.resolutionNotePlaceholder}
                 rows={3}
-                className="w-full text-xs p-2.5 rounded-lg border border-slate-200 bg-slate-50/50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-slate-800 resize-none"
+                className="w-full text-xs p-2.5 rounded-xl border border-slate-200 bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-slate-800 resize-none"
               />
             </div>
 
-            <div className="flex items-center justify-end gap-2">
+            <div className="flex flex-col-reverse sm:flex-row items-stretch sm:items-center justify-end gap-2">
               <Button
                 variant="outline"
                 size="sm"
@@ -486,6 +646,7 @@ export default function IncidentsPage() {
                   setResolutionNote("");
                 }}
                 disabled={resolvingLoading}
+                className="w-full sm:w-auto"
               >
                 {t.cancel}
               </Button>
@@ -494,6 +655,7 @@ export default function IncidentsPage() {
                 size="sm"
                 loading={resolvingLoading}
                 onClick={handleResolve}
+                className="w-full sm:w-auto"
               >
                 {t.resolveIncident}
               </Button>

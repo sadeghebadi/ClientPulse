@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, use } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { AppLayout } from "@/components/AppLayout";
 import { useAuth } from "@/lib/auth-context";
 import { useI18n } from "@/lib/i18n";
@@ -9,7 +10,7 @@ import { apiFetch, humanizeApiError } from "@/lib/api";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Button } from "@/components/ui/Button";
 import { useToast } from "@/components/ui/Toast";
-import { Radio, AlertTriangle } from "lucide-react";
+import { Radio, AlertTriangle, ShieldAlert } from "lucide-react";
 
 interface AssetOption {
   id: string;
@@ -26,7 +27,7 @@ export default function EditHeartbeatPage({
   const id = resolvedParams.id;
 
   const router = useRouter();
-  const { user, activeOrg } = useAuth();
+  const { user, activeOrg, role } = useAuth();
   const { t, isRTL } = useI18n();
   const toast = useToast();
 
@@ -40,6 +41,8 @@ export default function EditHeartbeatPage({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const canManage = role === "owner" || role === "admin" || role === "member";
+
   useEffect(() => {
     if (!user || !activeOrg) return;
 
@@ -52,7 +55,6 @@ export default function EditHeartbeatPage({
         setGrace(hb.grace_period_seconds.toString());
         setSelectedAsset(hb.asset_id || "");
 
-        // Fetch client's assets
         if (hb.client_id) {
           apiFetch<{ assets: AssetOption[] }>(`/api/v1/assets?client_id=${hb.client_id}`)
             .then((aData) => setAssets(aData.assets || []))
@@ -69,6 +71,10 @@ export default function EditHeartbeatPage({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!canManage) {
+      setError(isRTL ? "شما اجازه ویرایش هارت‌بیت را ندارید." : "You do not have permission to edit heartbeats.");
+      return;
+    }
     if (!name.trim()) {
       setError(isRTL ? "نام هارت‌بیت الزامی است" : "Name is required");
       return;
@@ -98,6 +104,25 @@ export default function EditHeartbeatPage({
     }
   };
 
+  if (!canManage && !loading) {
+    return (
+      <AppLayout>
+        <div className="max-w-md mx-auto p-8 text-center bg-white rounded-2xl border border-slate-200 mt-12">
+          <ShieldAlert className="w-12 h-12 text-rose-500 mx-auto mb-3" />
+          <h2 className="text-base font-bold text-slate-900">{isRTL ? "دسترسی محدود است" : "Access Restricted"}</h2>
+          <p className="text-xs text-slate-500 mt-1 mb-4">
+            {isRTL
+              ? "حساب‌های فقط-خواندنی (Viewer) اجازه ویرایش هارت‌بیت را ندارند."
+              : "Viewer accounts do not have permission to edit heartbeats."}
+          </p>
+          <Link href={`/heartbeats/${id}`}>
+            <Button size="sm" variant="outline">{t.viewDetails}</Button>
+          </Link>
+        </div>
+      </AppLayout>
+    );
+  }
+
   return (
     <AppLayout>
       <div className="max-w-3xl mx-auto space-y-6">
@@ -119,16 +144,18 @@ export default function EditHeartbeatPage({
         )}
 
         {loading ? (
-          <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm">
+          <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
             <div className="animate-pulse space-y-4">
               <div className="h-4 bg-slate-100 rounded w-1/4"></div>
-              <div className="h-8 bg-slate-100 rounded w-full"></div>
+              <div className="h-10 bg-slate-100 rounded w-full"></div>
+              <div className="h-4 bg-slate-100 rounded w-1/4"></div>
+              <div className="h-10 bg-slate-100 rounded w-full"></div>
             </div>
           </div>
         ) : (
-          <form onSubmit={handleSubmit} className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm space-y-5">
+          <form onSubmit={handleSubmit} className="bg-white border border-slate-200 rounded-2xl p-5 sm:p-7 shadow-sm space-y-5">
             <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+              <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
                 {t.heartbeatName} <span className="text-rose-500">*</span>
               </label>
               <input
@@ -136,18 +163,18 @@ export default function EditHeartbeatPage({
                 required
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                className="w-full text-xs px-3 py-2 rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                className="w-full text-xs sm:text-sm px-3.5 py-2.5 rounded-xl border border-slate-200 bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
               />
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+              <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
                 {t.asset} ({isRTL ? "اختیاری" : "Optional"})
               </label>
               <select
                 value={selectedAsset}
                 onChange={(e) => setSelectedAsset(e.target.value)}
-                className="w-full text-xs px-3 py-2 rounded-lg border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                className="w-full text-xs sm:text-sm px-3.5 py-2.5 rounded-xl border border-slate-200 bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
               >
                 <option value="">{isRTL ? "بدون انتساب به وب‌سایت خاص" : "Not tied to a specific website"}</option>
                 {assets.map((a) => (
@@ -159,21 +186,21 @@ export default function EditHeartbeatPage({
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+              <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
                 {t.heartbeatDesc}
               </label>
               <textarea
                 rows={2}
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
-                className="w-full text-xs px-3 py-2 rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                className="w-full text-xs sm:text-sm px-3.5 py-2.5 rounded-xl border border-slate-200 bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
               />
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6 pt-2">
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                  {t.expectedInterval} ({isRTL ? "ثانیه" : "seconds"})
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
+                  {t.expectedInterval} ({t.secondsUnit})
                 </label>
                 <input
                   type="number"
@@ -182,13 +209,14 @@ export default function EditHeartbeatPage({
                   required
                   value={interval}
                   onChange={(e) => setInterval(e.target.value)}
-                  className="w-full text-xs px-3 py-2 rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                  className="w-full text-xs sm:text-sm px-3.5 py-2.5 rounded-xl border border-slate-200 bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all text-start"
+                  dir="ltr"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                  {t.gracePeriod} ({isRTL ? "ثانیه" : "seconds"})
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
+                  {t.gracePeriod} ({t.secondsUnit})
                 </label>
                 <input
                   type="number"
@@ -197,12 +225,13 @@ export default function EditHeartbeatPage({
                   required
                   value={grace}
                   onChange={(e) => setGrace(e.target.value)}
-                  className="w-full text-xs px-3 py-2 rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                  className="w-full text-xs sm:text-sm px-3.5 py-2.5 rounded-xl border border-slate-200 bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all text-start"
+                  dir="ltr"
                 />
               </div>
             </div>
 
-            <div className="pt-4 border-t border-slate-200 flex justify-end gap-2">
+            <div className="pt-4 border-t border-slate-100 flex items-center justify-end gap-3">
               <Button
                 type="button"
                 variant="secondary"
@@ -224,4 +253,3 @@ export default function EditHeartbeatPage({
     </AppLayout>
   );
 }
-

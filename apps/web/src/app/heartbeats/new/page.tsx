@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { AppLayout } from "@/components/AppLayout";
 import { useAuth } from "@/lib/auth-context";
 import { useI18n } from "@/lib/i18n";
@@ -16,7 +17,9 @@ import {
   AlertTriangle,
   Terminal,
   ShieldCheck,
+  ShieldAlert,
   Info,
+  X,
 } from "lucide-react";
 
 interface ClientOption {
@@ -32,7 +35,7 @@ interface AssetOption {
 
 export default function NewHeartbeatPage() {
   const router = useRouter();
-  const { user, activeOrg } = useAuth();
+  const { user, activeOrg, role } = useAuth();
   const { t, isRTL } = useI18n();
   const toast = useToast();
 
@@ -61,6 +64,8 @@ export default function NewHeartbeatPage() {
   const [copiedBash, setCopiedBash] = useState(false);
   const [copiedPS, setCopiedPS] = useState(false);
 
+  const canManage = role === "owner" || role === "admin" || role === "member";
+
   useEffect(() => {
     if (!user || !activeOrg) return;
     apiFetch<{ clients: ClientOption[] }>("/api/v1/clients")
@@ -83,6 +88,25 @@ export default function NewHeartbeatPage() {
     };
   }, [selectedClient]);
 
+  // Modal Escape key listener
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && createdData) {
+        router.push(`/heartbeats/${createdData.id}`);
+      }
+    };
+    if (createdData) {
+      document.body.style.overflow = "hidden";
+      window.addEventListener("keydown", handleKeyDown);
+    } else {
+      document.body.style.overflow = "unset";
+    }
+    return () => {
+      document.body.style.overflow = "unset";
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [createdData, router]);
+
   const effectiveInterval =
     intervalPreset === "custom"
       ? parseInt(customInterval, 10) || 3600
@@ -93,6 +117,10 @@ export default function NewHeartbeatPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!canManage) {
+      setError(isRTL ? "شما اجازه ساخت هارت‌بیت را ندارید." : "You do not have permission to create heartbeats.");
+      return;
+    }
     if (!selectedClient) {
       setError(isRTL ? "انتخاب مشتری الزامی است" : "Client is required");
       return;
@@ -154,6 +182,25 @@ export default function NewHeartbeatPage() {
     toast.success(t.copiedToClipboard);
   };
 
+  if (!canManage) {
+    return (
+      <AppLayout>
+        <div className="max-w-md mx-auto p-8 text-center bg-white rounded-2xl border border-slate-200 mt-12">
+          <ShieldAlert className="w-12 h-12 text-rose-500 mx-auto mb-3" />
+          <h2 className="text-base font-bold text-slate-900">{isRTL ? "دسترسی محدود است" : "Access Restricted"}</h2>
+          <p className="text-xs text-slate-500 mt-1 mb-4">
+            {isRTL
+              ? "حساب‌های فقط-خواندنی (Viewer) اجازه ایجاد هارت‌بیت را ندارند."
+              : "Viewer accounts do not have permission to create heartbeat monitors."}
+          </p>
+          <Link href="/heartbeats">
+            <Button size="sm" variant="outline">{t.heartbeats}</Button>
+          </Link>
+        </div>
+      </AppLayout>
+    );
+  }
+
   return (
     <AppLayout>
       <div className="max-w-3xl mx-auto space-y-6">
@@ -174,10 +221,10 @@ export default function NewHeartbeatPage() {
           </div>
         )}
 
-        <form onSubmit={handleSubmit} className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm space-y-5">
+        <form onSubmit={handleSubmit} className="bg-white border border-slate-200 rounded-2xl p-5 sm:p-7 shadow-sm space-y-5">
           {/* Client Selection */}
           <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+            <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
               {t.client} <span className="text-rose-500">*</span>
             </label>
             <select
@@ -189,7 +236,7 @@ export default function NewHeartbeatPage() {
                 if (!e.target.value) setAssets([]);
               }}
               required
-              className="w-full text-xs px-3 py-2 rounded-lg border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+              className="w-full text-xs sm:text-sm px-3.5 py-2.5 rounded-xl border border-slate-200 bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
             >
               <option value="">{isRTL ? "انتخاب مشتری..." : "Select Client..."}</option>
               {clients.map((c) => (
@@ -202,16 +249,16 @@ export default function NewHeartbeatPage() {
 
           {/* Asset Selection (Optional) */}
           <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+            <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
               {t.asset} ({isRTL ? "اختیاری" : "Optional"})
             </label>
             <select
               value={selectedAsset}
               onChange={(e) => setSelectedAsset(e.target.value)}
               disabled={!selectedClient}
-              className="w-full text-xs px-3 py-2 rounded-lg border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-slate-900/10 disabled:bg-slate-50 disabled:text-slate-400"
+              className="w-full text-xs sm:text-sm px-3.5 py-2.5 rounded-xl border border-slate-200 bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 transition-all"
             >
-              <option value="">{isRTL ? "بدون انتساب به وب‌سایت خاص" : "Not tied to a specific website"}</option>
+              <option value="">{isRTL ? "بدون انتساب به وب‌سایت خاص (جاب سراسری مشتری)" : "Not tied to a specific website"}</option>
               {assets.map((a) => (
                 <option key={a.id} value={a.id}>
                   {a.name} ({a.url})
@@ -222,7 +269,7 @@ export default function NewHeartbeatPage() {
 
           {/* Name */}
           <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+            <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
               {t.heartbeatName} <span className="text-rose-500">*</span>
             </label>
             <input
@@ -232,13 +279,13 @@ export default function NewHeartbeatPage() {
               placeholder={isRTL ? "مثلاً: اسکریپت پشتیبان‌گیری شبانه دیتابیس" : "e.g. Nightly Database Dump"}
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="w-full text-xs px-3 py-2 rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+              className="w-full text-xs sm:text-sm px-3.5 py-2.5 rounded-xl border border-slate-200 bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
             />
           </div>
 
           {/* Description */}
           <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+            <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
               {t.heartbeatDesc} ({isRTL ? "اختیاری" : "Optional"})
             </label>
             <textarea
@@ -247,29 +294,29 @@ export default function NewHeartbeatPage() {
               placeholder={isRTL ? "توضیحات کوتاه در مورد کرون‌جاب یا سرور اجراکننده..." : "Optional notes on the job runner or server..."}
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              className="w-full text-xs px-3 py-2 rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+              className="w-full text-xs sm:text-sm px-3.5 py-2.5 rounded-xl border border-slate-200 bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
             />
           </div>
 
-          {/* Expected Interval */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {/* Expected Interval & Grace */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6 pt-2">
             <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+              <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
                 {t.expectedInterval}
               </label>
               <select
                 value={intervalPreset}
                 onChange={(e) => setIntervalPreset(e.target.value)}
-                className="w-full text-xs px-3 py-2 rounded-lg border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                className="w-full text-xs sm:text-sm px-3.5 py-2.5 rounded-xl border border-slate-200 bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
               >
-                <option value="300">5 {isRTL ? "دقیقه" : "minutes"}</option>
-                <option value="900">15 {isRTL ? "دقیقه" : "minutes"}</option>
-                <option value="1800">30 {isRTL ? "دقیقه" : "minutes"}</option>
-                <option value="3600">1 {isRTL ? "ساعت" : "hour"}</option>
-                <option value="21600">6 {isRTL ? "ساعت" : "hours"}</option>
-                <option value="43200">12 {isRTL ? "ساعت" : "hours"}</option>
-                <option value="86400">24 {isRTL ? "ساعت (روزانه)" : "hours (daily)"}</option>
-                <option value="604800">7 {isRTL ? "روز (هفتگی)" : "days (weekly)"}</option>
+                <option value="300">5 {t.minutesUnit}</option>
+                <option value="900">15 {t.minutesUnit}</option>
+                <option value="1800">30 {t.minutesUnit}</option>
+                <option value="3600">1 {t.hoursUnit}</option>
+                <option value="21600">6 {t.hoursUnit}</option>
+                <option value="43200">12 {t.hoursUnit}</option>
+                <option value="86400">24 {t.hoursUnit} ({isRTL ? "روزانه" : "Daily"})</option>
+                <option value="604800">7 {t.daysUnit} ({isRTL ? "هفتگی" : "Weekly"})</option>
                 <option value="custom">{isRTL ? "تنظیم دستی (ثانیه)" : "Custom (seconds)"}</option>
               </select>
               {intervalPreset === "custom" && (
@@ -280,14 +327,15 @@ export default function NewHeartbeatPage() {
                   placeholder="3600"
                   value={customInterval}
                   onChange={(e) => setCustomInterval(e.target.value)}
-                  className="mt-2 w-full text-xs px-3 py-2 rounded-lg border border-slate-200"
+                  className="mt-2 w-full text-xs sm:text-sm px-3.5 py-2 rounded-xl border border-slate-200 text-start"
+                  dir="ltr"
                 />
               )}
             </div>
 
             {/* Grace Period */}
             <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+              <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
                 {t.gracePeriod}
               </label>
               <input
@@ -297,9 +345,10 @@ export default function NewHeartbeatPage() {
                 placeholder={defaultGrace.toString()}
                 value={customGrace}
                 onChange={(e) => setCustomGrace(e.target.value)}
-                className="w-full text-xs px-3 py-2 rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                className="w-full text-xs sm:text-sm px-3.5 py-2.5 rounded-xl border border-slate-200 bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all text-start"
+                dir="ltr"
               />
-              <p className="text-[11px] text-slate-400 mt-1">
+              <p className="text-[11px] text-slate-400 mt-1.5">
                 {isRTL
                   ? `پیش‌فرض: ۲۰٪ دوره تناوب (حداقل ۶۰ ثانیه) = ${defaultGrace} ثانیه`
                   : `Default: 20% of interval (min 60s) = ${defaultGrace}s`}
@@ -307,7 +356,7 @@ export default function NewHeartbeatPage() {
             </div>
           </div>
 
-          <div className="pt-4 border-t border-slate-200 flex justify-end gap-2">
+          <div className="pt-4 border-t border-slate-100 flex items-center justify-end gap-3">
             <Button
               type="button"
               variant="secondary"
@@ -325,19 +374,27 @@ export default function NewHeartbeatPage() {
           </div>
         </form>
 
-        {/* Reveal Secret Token Modal */}
+        {/* Accessible Reveal Secret Token Modal */}
         {createdData && (
-          <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4">
-            <div className="bg-white rounded-2xl max-w-xl w-full p-6 shadow-2xl border border-slate-200 space-y-5 animate-in fade-in duration-200">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="created-token-modal-title"
+            className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-150"
+          >
+            <div
+              className="bg-white rounded-2xl max-w-xl w-full p-5 sm:p-7 shadow-2xl border border-slate-200 space-y-5 relative max-h-[90vh] overflow-y-auto"
+              dir={isRTL ? "rtl" : "ltr"}
+            >
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-xl bg-emerald-100 flex items-center justify-center text-emerald-600 shrink-0">
                   <ShieldCheck className="w-6 h-6" />
                 </div>
                 <div>
-                  <h3 className="text-sm font-bold text-slate-900">
-                    {isRTL ? "توکن محرمانه هارت‌بیت تولید شد" : "Secret Heartbeat Token Generated"}
+                  <h3 id="created-token-modal-title" className="text-base font-bold text-slate-900">
+                    {t.newTokenGenerated}
                   </h3>
-                  <p className="text-xs text-slate-500">
+                  <p className="text-xs text-slate-500 mt-0.5">
                     {t.tokenWarning}
                   </p>
                 </div>
@@ -345,24 +402,25 @@ export default function NewHeartbeatPage() {
 
               <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900 flex items-start gap-2">
                 <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-                <span>
+                <span className="leading-relaxed">
                   {isRTL
                     ? "این توکن فقط همین یک‌بار نمایش داده می‌شود و هرگز در پایگاه‌داده به صورت متن خام ذخیره نمی‌گردد."
-                    : "This secret token is displayed only once. It will never be shown again and is hashed in PostgreSQL."}
+                    : "This secret token is displayed only once. It will never be shown again and is securely hashed in PostgreSQL."}
                 </span>
               </div>
 
               {/* Token Copy Box */}
               <div>
                 <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1">
-                  {isRTL ? "توکن امنیتی" : "Secret Token"}
+                  {isRTL ? "توکن امنیتی پینگ" : "Secret Ping Token"}
                 </label>
                 <div className="flex items-center gap-2">
                   <input
                     type="text"
                     readOnly
                     value={createdData.token}
-                    className="w-full text-xs font-mono bg-slate-50 border border-slate-200 px-3 py-2 rounded-lg text-slate-900 select-all"
+                    className="w-full text-xs font-mono bg-slate-50 border border-slate-200 px-3 py-2 rounded-xl text-slate-900 select-all text-start"
+                    dir="ltr"
                   />
                   <Button
                     size="sm"
@@ -370,7 +428,7 @@ export default function NewHeartbeatPage() {
                     icon={copiedToken ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
                     onClick={() => copyToClipboard(createdData.token, "token")}
                   >
-                    {copiedToken ? (isRTL ? "کپی شد" : "Copied") : (isRTL ? "کپی" : "Copy")}
+                    {copiedToken ? t.tokenCopied : t.copyToken}
                   </Button>
                 </div>
               </div>
@@ -379,7 +437,7 @@ export default function NewHeartbeatPage() {
               <div className="space-y-3 pt-2 border-t border-slate-100">
                 <h4 className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
                   <Terminal className="w-3.5 h-3.5 text-slate-600" />
-                  {t.commandSnippets}
+                  <span>{t.commandSnippets}</span>
                 </h4>
 
                 {/* Bash Snippet */}
@@ -388,13 +446,13 @@ export default function NewHeartbeatPage() {
                     <span>{t.bashCronSnippet}</span>
                     <button
                       onClick={() => copyToClipboard(createdData.bashSnippet, "bash")}
-                      className="text-blue-600 hover:text-blue-700 flex items-center gap-1"
+                      className="text-blue-600 hover:text-blue-700 flex items-center gap-1 text-xs"
                     >
                       {copiedBash ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />}
-                      <span>{copiedBash ? (isRTL ? "کپی شد" : "Copied") : (isRTL ? "کپی" : "Copy")}</span>
+                      <span>{copiedBash ? t.tokenCopied : t.copyCommand}</span>
                     </button>
                   </div>
-                  <pre className="text-[11px] font-mono bg-slate-900 text-slate-100 p-3 rounded-lg overflow-x-auto text-left" dir="ltr">
+                  <pre className="text-[11px] font-mono bg-slate-900 text-slate-100 p-3 rounded-xl overflow-x-auto text-start" dir="ltr">
                     <code>{createdData.bashSnippet}</code>
                   </pre>
                 </div>
@@ -405,13 +463,13 @@ export default function NewHeartbeatPage() {
                     <span>{t.powerShellSnippet}</span>
                     <button
                       onClick={() => copyToClipboard(createdData.powerShellSnippet, "ps")}
-                      className="text-blue-600 hover:text-blue-700 flex items-center gap-1"
+                      className="text-blue-600 hover:text-blue-700 flex items-center gap-1 text-xs"
                     >
                       {copiedPS ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />}
-                      <span>{copiedPS ? (isRTL ? "کپی شد" : "Copied") : (isRTL ? "کپی" : "Copy")}</span>
+                      <span>{copiedPS ? t.tokenCopied : t.copyCommand}</span>
                     </button>
                   </div>
-                  <pre className="text-[11px] font-mono bg-slate-900 text-slate-100 p-3 rounded-lg overflow-x-auto text-left" dir="ltr">
+                  <pre className="text-[11px] font-mono bg-slate-900 text-slate-100 p-3 rounded-xl overflow-x-auto text-start" dir="ltr">
                     <code>{createdData.powerShellSnippet}</code>
                   </pre>
                 </div>

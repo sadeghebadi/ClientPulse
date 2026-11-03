@@ -75,32 +75,32 @@ async function runTask008B31Suite() {
 
     // Create website monitors (1 up, 1 down, 1 suspected_down, 1 paused, 1 pending)
     const monUp = runSql(`
-      INSERT INTO monitors (id, organization_id, asset_id, interval_seconds, timeout_seconds, status, is_active, created_at, updated_at)
-      VALUES (gen_random_uuid(), '${orgId}', '${assetWebId}', 60, 10, 'up', true, NOW(), NOW())
+      INSERT INTO monitors (id, organization_id, asset_id, interval_seconds, timeout_seconds, status, is_active, next_check_at, created_at, updated_at)
+      VALUES (gen_random_uuid(), '${orgId}', '${assetWebId}', 60, 10, 'up', true, NOW() + INTERVAL '1 day', NOW(), NOW())
       RETURNING id;
     `);
 
     const monDown = runSql(`
-      INSERT INTO monitors (id, organization_id, asset_id, interval_seconds, timeout_seconds, status, is_active, consecutive_failures, created_at, updated_at)
-      VALUES (gen_random_uuid(), '${orgId}', '${assetApiId}', 60, 5, 'down', true, 3, NOW(), NOW())
+      INSERT INTO monitors (id, organization_id, asset_id, interval_seconds, timeout_seconds, status, is_active, consecutive_failures, next_check_at, created_at, updated_at)
+      VALUES (gen_random_uuid(), '${orgId}', '${assetApiId}', 60, 5, 'down', true, 3, NOW() + INTERVAL '1 day', NOW(), NOW())
       RETURNING id;
     `);
 
     const monSuspected = runSql(`
-      INSERT INTO monitors (id, organization_id, asset_id, interval_seconds, timeout_seconds, status, is_active, consecutive_failures, created_at, updated_at)
-      VALUES (gen_random_uuid(), '${orgId}', '${assetApiId}', 60, 5, 'suspected_down', true, 1, NOW(), NOW())
+      INSERT INTO monitors (id, organization_id, asset_id, interval_seconds, timeout_seconds, status, is_active, consecutive_failures, next_check_at, created_at, updated_at)
+      VALUES (gen_random_uuid(), '${orgId}', '${assetApiId}', 60, 5, 'suspected_down', true, 1, NOW() + INTERVAL '1 day', NOW(), NOW())
       RETURNING id;
     `);
 
     const monPaused = runSql(`
-      INSERT INTO monitors (id, organization_id, asset_id, interval_seconds, timeout_seconds, status, is_active, created_at, updated_at)
-      VALUES (gen_random_uuid(), '${orgId}', '${assetWebId}', 300, 10, 'paused', true, NOW(), NOW())
+      INSERT INTO monitors (id, organization_id, asset_id, interval_seconds, timeout_seconds, status, is_active, next_check_at, created_at, updated_at)
+      VALUES (gen_random_uuid(), '${orgId}', '${assetWebId}', 300, 10, 'paused', true, NOW() + INTERVAL '1 day', NOW(), NOW())
       RETURNING id;
     `);
 
     const monPending = runSql(`
-      INSERT INTO monitors (id, organization_id, asset_id, interval_seconds, timeout_seconds, status, is_active, created_at, updated_at)
-      VALUES (gen_random_uuid(), '${orgId}', '${assetWebId}', 300, 10, 'pending', true, NOW(), NOW())
+      INSERT INTO monitors (id, organization_id, asset_id, interval_seconds, timeout_seconds, status, is_active, next_check_at, created_at, updated_at)
+      VALUES (gen_random_uuid(), '${orgId}', '${assetWebId}', 300, 10, 'pending', true, NOW() + INTERVAL '1 day', NOW(), NOW())
       RETURNING id;
     `);
 
@@ -124,7 +124,7 @@ async function runTask008B31Suite() {
     // SCENARIO 1: Zero website outages and zero heartbeat incidents (State 8: Operational)
     // -------------------------------------------------------------------------
     console.log("\n>>> [SCENARIO 1] Zero website outages and zero heartbeat incidents");
-    runSql(`UPDATE monitors SET status = 'up', consecutive_failures = 0 WHERE id IN ('${monUp}', '${monDown}', '${monSuspected}', '${monPending}');`);
+    runSql(`UPDATE monitors SET status = 'up', consecutive_failures = 0, next_check_at = NOW() + INTERVAL '1 day' WHERE id IN ('${monUp}', '${monDown}', '${monSuspected}', '${monPending}');`);
     runSql(`UPDATE heartbeat_monitors SET status = 'healthy' WHERE id = '${hbId}';`);
     runSql(`DELETE FROM incidents WHERE organization_id = '${orgId}';`);
 
@@ -272,8 +272,8 @@ async function runTask008B31Suite() {
     console.log("\n>>> [SCENARIO 7] Suspected Down without confirmed incident (State 4)");
     runSql(`DELETE FROM incidents WHERE organization_id = '${orgId}';`);
     runSql(`UPDATE heartbeat_monitors SET status = 'healthy' WHERE id = '${hbId}';`);
-    runSql(`UPDATE monitors SET status = 'up', consecutive_failures = 0 WHERE id IN ('${monUp}', '${monDown}', '${monPending}');`);
-    runSql(`UPDATE monitors SET status = 'suspected_down', consecutive_failures = 1 WHERE id = '${monSuspected}';`);
+    runSql(`UPDATE monitors SET status = 'up', consecutive_failures = 0, next_check_at = NOW() + INTERVAL '1 day' WHERE id IN ('${monUp}', '${monDown}', '${monPending}');`);
+    runSql(`UPDATE monitors SET status = 'suspected_down', consecutive_failures = 1, next_check_at = NOW() + INTERVAL '1 day' WHERE id = '${monSuspected}';`);
 
     await page.reload({ waitUntil: "networkidle" });
     await page.waitForTimeout(1500);
@@ -289,8 +289,8 @@ async function runTask008B31Suite() {
     // SCENARIO 8: Pending and Unknown monitors (State 5: Incomplete Monitoring)
     // -------------------------------------------------------------------------
     console.log("\n>>> [SCENARIO 8] Pending and Unknown monitors (State 5)");
-    runSql(`UPDATE monitors SET status = 'up', consecutive_failures = 0 WHERE id = '${monSuspected}';`);
-    runSql(`UPDATE monitors SET status = 'pending' WHERE id = '${monPending}';`);
+    runSql(`UPDATE monitors SET status = 'up', consecutive_failures = 0, next_check_at = NOW() + INTERVAL '1 day' WHERE id = '${monSuspected}';`);
+    runSql(`UPDATE monitors SET status = 'pending', next_check_at = NOW() + INTERVAL '1 day' WHERE id = '${monPending}';`);
 
     await page.reload({ waitUntil: "networkidle" });
     await page.waitForTimeout(1500);

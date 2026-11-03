@@ -40,7 +40,7 @@ interface Client {
 }
 
 export default function ClientsPage() {
-  const { user, activeOrg } = useAuth();
+  const { user, activeOrg, role } = useAuth();
   const { t, isRTL } = useI18n();
   const toast = useToast();
 
@@ -55,6 +55,8 @@ export default function ClientsPage() {
   const [targetClient, setTargetClient] = useState<Client | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
+
+  const canManage = role === "owner" || role === "admin" || role === "member";
 
   const reloadClients = useCallback(() => {
     if (!user || !activeOrg) return;
@@ -116,7 +118,9 @@ export default function ClientsPage() {
 
       await apiFetch(endpoint, { method: "POST" });
       toast.success(
-        isArchived ? "Client restored to active status" : "Client archived successfully"
+        isArchived
+          ? (isRTL ? "مشتری به حالت فعال بازگردانده شد." : "Client restored to active status")
+          : (isRTL ? "مشتری با موفقیت آرشیو شد." : "Client archived successfully")
       );
       setModalOpen(false);
       setTargetClient(null);
@@ -132,20 +136,26 @@ export default function ClientsPage() {
     <AppLayout>
       <PageHeader
         title={t.clients}
-        description={`Manage client accounts, registered websites, and monitoring configurations for ${activeOrg?.name || "your workspace"}.`}
+        description={isRTL ? `مدیریت اطلاعات مشتریان، وب‌سایت‌های تحت پوشش و مانیتورهای ${activeOrg?.name || "سازمان"}.` : `Manage client accounts, registered websites, and monitoring configurations for ${activeOrg?.name || "your workspace"}.`}
         icon={<Users className="w-5 h-5" />}
+        breadcrumbs={[
+          { label: t.dashboard, href: "/" },
+          { label: t.clients },
+        ]}
         actions={
-          <Link href="/clients/new">
-            <Button size="sm" variant="primary" icon={<Plus className="w-4 h-4" />}>
-              {t.createClient}
-            </Button>
-          </Link>
+          canManage ? (
+            <Link href="/clients/new">
+              <Button size="sm" variant="primary" icon={<Plus className="w-4 h-4" />}>
+                {t.createClient}
+              </Button>
+            </Link>
+          ) : null
         }
       />
 
       {/* Filter & Search Bar */}
-      <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm mb-6 flex flex-col md:flex-row gap-3 items-center justify-between">
-        <div className="relative flex-1 w-full">
+      <div className="bg-white p-3.5 sm:p-4 rounded-2xl border border-slate-200 shadow-sm mb-6 flex flex-col md:flex-row gap-3 items-stretch md:items-center justify-between">
+        <div className="relative flex-1">
           <Search
             className={`w-4 h-4 text-slate-400 absolute top-1/2 -translate-y-1/2 ${
               isRTL ? "right-3" : "left-3"
@@ -162,11 +172,11 @@ export default function ClientsPage() {
           />
         </div>
 
-        <div className="flex items-center gap-2 w-full md:w-auto">
+        <div className="flex items-center gap-2">
           <select
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value)}
-            className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 flex-1 md:flex-none"
           >
             <option value="active">{t.active}</option>
             <option value="archived">{t.archived}</option>
@@ -188,14 +198,14 @@ export default function ClientsPage() {
           icon={<Users className="w-6 h-6 text-slate-400" />}
           title={t.noClientsFound}
           description={t.noClientsDesc}
-          actionHref="/clients/new"
-          actionLabel={t.createClient}
+          actionHref={canManage ? "/clients/new" : undefined}
+          actionLabel={canManage ? t.createClient : undefined}
         />
       ) : (
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-          {/* Desktop Table View */}
+          {/* Desktop Table View (>= 768px) */}
           <div className="hidden md:block overflow-x-auto">
-            <table className="w-full text-left text-sm" dir={isRTL ? "rtl" : "ltr"}>
+            <table className="w-full text-start text-sm" dir={isRTL ? "rtl" : "ltr"}>
               <thead className="bg-slate-50 text-slate-600 text-xs uppercase font-semibold border-b border-slate-200">
                 <tr>
                   <th className="px-6 py-4">{t.clientName}</th>
@@ -203,7 +213,7 @@ export default function ClientsPage() {
                   <th className="px-6 py-4">{t.website}</th>
                   <th className="px-6 py-4">{t.assets}</th>
                   <th className="px-6 py-4">{t.status}</th>
-                  <th className="px-6 py-4 text-right">{t.actions}</th>
+                  <th className="px-6 py-4 text-end">{t.actions}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -219,9 +229,11 @@ export default function ClientsPage() {
                     </td>
 
                     <td className="px-6 py-4 text-slate-600">
-                      <div>{client.contact_name || "—"}</div>
+                      <div className="font-medium text-slate-800">{client.contact_name || "—"}</div>
                       {client.contact_email && (
-                        <div className="text-xs text-slate-400">{client.contact_email}</div>
+                        <div className="text-xs text-slate-400 font-mono text-start" dir="ltr">
+                          {client.contact_email}
+                        </div>
                       )}
                     </td>
 
@@ -231,10 +243,11 @@ export default function ClientsPage() {
                           href={client.website}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1 text-blue-600 hover:underline text-xs"
+                          className="inline-flex items-center gap-1 text-blue-600 hover:underline text-xs font-mono text-start"
+                          dir="ltr"
                         >
-                          <span>{client.website.replace(/^https?:\/\//, "")}</span>
-                          <ExternalLink className="w-3 h-3" />
+                          <span className="truncate max-w-[160px]">{client.website.replace(/^https?:\/\//, "")}</span>
+                          <ExternalLink className="w-3 h-3 shrink-0" />
                         </a>
                       ) : (
                         "—"
@@ -245,16 +258,20 @@ export default function ClientsPage() {
                       <div className="flex items-center gap-3 text-xs text-slate-600">
                         <Link
                           href={`/assets?client_id=${client.id}`}
-                          className="flex items-center gap-1 hover:text-blue-600"
+                          className="flex items-center gap-1 hover:text-blue-600 font-medium"
                           title="View Assets"
                         >
                           <Globe className="w-3.5 h-3.5 text-slate-400" />
                           <span>{client.asset_count}</span>
                         </Link>
-                        <span className="flex items-center gap-1" title="Monitors">
+                        <Link
+                          href={`/monitors?client_id=${client.id}`}
+                          className="flex items-center gap-1 hover:text-blue-600 font-medium"
+                          title="Monitors"
+                        >
                           <Activity className="w-3.5 h-3.5 text-slate-400" />
                           <span>{client.monitor_count}</span>
-                        </span>
+                        </Link>
                       </div>
                     </td>
 
@@ -262,27 +279,29 @@ export default function ClientsPage() {
                       <Badge variant={client.status} />
                     </td>
 
-                    <td className="px-6 py-4 text-right">
+                    <td className="px-6 py-4 text-end">
                       <div className="flex items-center justify-end gap-2">
-                        <button
-                          onClick={() => {
-                            setTargetClient(client);
-                            setModalOpen(true);
-                          }}
-                          className={`p-1.5 rounded-lg border text-xs transition-colors ${
-                            client.status === "active"
-                              ? "border-slate-200 text-slate-500 hover:text-rose-600 hover:bg-rose-50 hover:border-rose-200"
-                              : "border-emerald-200 text-emerald-700 hover:bg-emerald-50"
-                          }`}
-                          title={client.status === "active" ? t.archiveClient : t.restoreClient}
-                          aria-label={client.status === "active" ? t.archiveClient : t.restoreClient}
-                        >
-                          {client.status === "active" ? (
-                            <Archive className="w-3.5 h-3.5" />
-                          ) : (
-                            <RotateCcw className="w-3.5 h-3.5" />
-                          )}
-                        </button>
+                        {canManage && (
+                          <button
+                            onClick={() => {
+                              setTargetClient(client);
+                              setModalOpen(true);
+                            }}
+                            className={`p-1.5 rounded-lg border text-xs transition-colors ${
+                              client.status === "active"
+                                ? "border-slate-200 text-slate-500 hover:text-rose-600 hover:bg-rose-50 hover:border-rose-200"
+                                : "border-emerald-200 text-emerald-700 hover:bg-emerald-50"
+                            }`}
+                            title={client.status === "active" ? t.archiveClient : t.restoreClient}
+                            aria-label={client.status === "active" ? t.archiveClient : t.restoreClient}
+                          >
+                            {client.status === "active" ? (
+                              <Archive className="w-3.5 h-3.5" />
+                            ) : (
+                              <RotateCcw className="w-3.5 h-3.5" />
+                            )}
+                          </button>
+                        )}
                         <Link
                           href={`/clients/${client.id}`}
                           className="inline-flex items-center gap-1 text-xs font-semibold text-blue-600 hover:text-blue-800 transition-colors ms-1"
@@ -298,48 +317,62 @@ export default function ClientsPage() {
             </table>
           </div>
 
-          {/* Mobile Card View (< 768px) */}
+          {/* Mobile Card View (< 768px, 390px, 360px) */}
           <div className="md:hidden divide-y divide-slate-100">
             {clients.map((client) => (
               <div key={client.id} className="p-4 space-y-3">
                 <div className="flex items-start justify-between gap-2">
-                  <div>
+                  <div className="min-w-0 flex-1">
                     <Link
                       href={`/clients/${client.id}`}
-                      className="font-bold text-slate-900 text-sm hover:text-blue-600"
+                      className="font-bold text-slate-900 text-sm hover:text-blue-600 truncate block"
                     >
                       {client.name}
                     </Link>
                     {client.contact_name && (
-                      <div className="text-xs text-slate-500 mt-0.5">{client.contact_name}</div>
+                      <div className="text-xs text-slate-500 mt-0.5 truncate">{client.contact_name}</div>
                     )}
                   </div>
                   <Badge variant={client.status} />
                 </div>
 
-                <div className="flex items-center gap-4 text-xs text-slate-600 pt-1">
-                  <span className="flex items-center gap-1">
-                    <Globe className="w-3.5 h-3.5 text-slate-400" />
-                    <span>{client.asset_count} Websites</span>
-                  </span>
-                  <span className="flex items-center gap-1">
-                    <Activity className="w-3.5 h-3.5 text-slate-400" />
-                    <span>{client.monitor_count} Monitors</span>
-                  </span>
+                {client.contact_email && (
+                  <div className="text-xs text-slate-400 font-mono text-start truncate" dir="ltr">
+                    {client.contact_email}
+                  </div>
+                )}
+
+                <div className="flex flex-wrap items-center gap-4 text-xs text-slate-600 pt-1">
+                  <Link
+                    href={`/assets?client_id=${client.id}`}
+                    className="flex items-center gap-1 hover:text-blue-600 font-medium"
+                  >
+                    <Globe className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                    <span>{t.clientWebsitesCount.replace("{count}", String(client.asset_count))}</span>
+                  </Link>
+                  <Link
+                    href={`/monitors?client_id=${client.id}`}
+                    className="flex items-center gap-1 hover:text-blue-600 font-medium"
+                  >
+                    <Activity className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                    <span>{t.clientMonitorsCount.replace("{count}", String(client.monitor_count))}</span>
+                  </Link>
                 </div>
 
-                <div className="flex items-center justify-between pt-2 border-t border-slate-50">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => {
-                      setTargetClient(client);
-                      setModalOpen(true);
-                    }}
-                    icon={client.status === "active" ? <Archive className="w-3.5 h-3.5" /> : <RotateCcw className="w-3.5 h-3.5" />}
-                  >
-                    {client.status === "active" ? t.archiveClient : t.restoreClient}
-                  </Button>
+                <div className="flex items-center justify-between pt-2.5 border-t border-slate-50 gap-2">
+                  {canManage ? (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        setTargetClient(client);
+                        setModalOpen(true);
+                      }}
+                      icon={client.status === "active" ? <Archive className="w-3.5 h-3.5" /> : <RotateCcw className="w-3.5 h-3.5" />}
+                    >
+                      {client.status === "active" ? t.archiveClient : t.restoreClient}
+                    </Button>
+                  ) : <div />}
                   <Link href={`/clients/${client.id}`}>
                     <Button size="sm" variant="secondary">
                       {t.viewDetails}

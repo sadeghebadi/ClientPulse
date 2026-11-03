@@ -44,9 +44,11 @@ interface AssetDetail {
 export default function AssetDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const resolvedParams = use(params);
   const router = useRouter();
-  const { user, activeOrg } = useAuth();
+  const { user, activeOrg, role } = useAuth();
   const { t, isRTL } = useI18n();
   const toast = useToast();
+
+  const canManage = role === "owner" || role === "admin" || role === "member";
 
   const [asset, setAsset] = useState<AssetDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -137,8 +139,8 @@ export default function AssetDetailPage({ params }: { params: Promise<{ id: stri
           )
         }
         actions={
-          asset && (
-            <>
+          asset && canManage ? (
+            <div className="flex flex-wrap items-center gap-2">
               <Link href={`/assets/${asset.id}/edit`}>
                 <Button size="sm" variant="outline" icon={<Edit className="w-4 h-4" />}>
                   {t.editAsset}
@@ -165,8 +167,8 @@ export default function AssetDetailPage({ params }: { params: Promise<{ id: stri
                   </Button>
                 </Link>
               )}
-            </>
-          )
+            </div>
+          ) : null
         }
       />
 
@@ -210,7 +212,7 @@ export default function AssetDetailPage({ params }: { params: Promise<{ id: stri
 
             <div className="pt-6">
               <div className="text-[10px] uppercase font-bold text-slate-400 mb-2">{t.url}</div>
-              <div className="flex items-center gap-2 p-3 bg-slate-50 border border-slate-200 rounded-xl font-mono text-sm text-slate-900">
+              <div className="flex items-center gap-2 p-3 bg-slate-50 border border-slate-200 rounded-xl font-mono text-xs sm:text-sm text-slate-900" dir="ltr">
                 <Globe className="w-4 h-4 text-blue-600 shrink-0" />
                 <span className="truncate">{asset.url}</span>
                 <a
@@ -307,7 +309,7 @@ export default function AssetDetailPage({ params }: { params: Promise<{ id: stri
         message={
           asset?.is_active
             ? t.confirmArchiveAsset
-            : "Restore this asset to active status? Associated monitoring jobs can be resumed."
+            : (isRTL ? "آیا این دارایی به حالت فعال بازگردانده شود؟ پایش‌های مرتبط مجدداً فعال خواهند شد." : "Restore this asset to active status? Associated monitoring jobs can be resumed.")
         }
         confirmLabel={asset?.is_active ? t.archiveAsset : t.restoreAsset}
         variant={asset?.is_active ? "danger" : "primary"}

@@ -75,7 +75,7 @@ interface CheckResultItem {
 export default function MonitorDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const resolvedParams = use(params);
   const router = useRouter();
-  const { user, activeOrg } = useAuth();
+  const { user, activeOrg, role } = useAuth();
   const { t, isRTL } = useI18n();
   const toast = useToast();
 
@@ -87,6 +87,9 @@ export default function MonitorDetailPage({ params }: { params: Promise<{ id: st
   const [testing, setTesting] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+
+  const canManage = role === "owner" || role === "admin" || role === "member";
+  const canDelete = role === "owner" || role === "admin";
 
   const reloadMonitorData = useCallback(() => {
     if (!user || !activeOrg) return;
@@ -149,17 +152,16 @@ export default function MonitorDetailPage({ params }: { params: Promise<{ id: st
 
       if (res.result.result === "success") {
         toast.success(
-          `Test check passed! Status ${res.result.http_status_code || 200} in ${res.result.latency_ms}ms`,
+          `${t.testSuccess} (${res.result.http_status_code || 200} · ${res.result.latency_ms}ms)`,
           t.testSuccess
         );
       } else {
         toast.error(
-          res.result.error_message || `Check returned result: ${res.result.result}`,
+          res.result.error_message || `${t.testFailed}: ${res.result.result}`,
           t.testFailed
         );
       }
 
-      // Refresh monitor and history
       reloadMonitorData();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Test check execution failed");
@@ -180,8 +182,8 @@ export default function MonitorDetailPage({ params }: { params: Promise<{ id: st
       await apiFetch(endpoint, { method: "POST" });
       toast.success(
         monitor.status === "paused"
-          ? "Monitor resumed. Scheduled verification is active."
-          : "Monitor paused. Scheduled verification stopped."
+          ? t.heartbeatResumed
+          : t.heartbeatPaused
       );
       reloadMonitorData();
     } catch (err) {
@@ -196,7 +198,7 @@ export default function MonitorDetailPage({ params }: { params: Promise<{ id: st
     try {
       setActionLoading(true);
       await apiFetch(`/api/v1/monitors/${monitor.id}`, { method: "DELETE" });
-      toast.success("Monitor deleted successfully");
+      toast.success(isRTL ? "مانیتور با موفقیت حذف شد." : "Monitor deleted successfully");
       router.push("/monitors");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to delete monitor");
@@ -210,7 +212,7 @@ export default function MonitorDetailPage({ params }: { params: Promise<{ id: st
     <AppLayout>
       <PageHeader
         title={monitor?.asset_name || t.monitorDetails}
-        description="Target health parameters, SSL/TLS handshake certificate, and chronological execution history."
+        description={isRTL ? "پارامترهای سلامت، گواهینامه امنیتی SSL/TLS و سابقه بررسی‌های دوره‌ای." : "Target health parameters, SSL/TLS handshake certificate, and chronological execution history."}
         icon={<Activity className="w-5 h-5" />}
         breadcrumbs={[
           { label: t.monitors, href: "/monitors" },
@@ -218,8 +220,8 @@ export default function MonitorDetailPage({ params }: { params: Promise<{ id: st
         ]}
         badge={monitor && <Badge variant={monitor.status} />}
         actions={
-          monitor && (
-            <>
+          monitor && canManage ? (
+            <div className="flex flex-wrap items-center gap-2">
               <Button
                 size="sm"
                 variant="primary"
@@ -252,16 +254,18 @@ export default function MonitorDetailPage({ params }: { params: Promise<{ id: st
                 </Button>
               </Link>
 
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => setDeleteModalOpen(true)}
-                icon={<Trash2 className="w-4 h-4 text-rose-500" />}
-              >
-                Delete
-              </Button>
-            </>
-          )
+              {canDelete && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setDeleteModalOpen(true)}
+                  icon={<Trash2 className="w-4 h-4 text-rose-500" />}
+                >
+                  {t.delete}
+                </Button>
+              )}
+            </div>
+          ) : null
         }
       />
 
@@ -270,12 +274,12 @@ export default function MonitorDetailPage({ params }: { params: Promise<{ id: st
       {loading ? (
         <TableSkeleton rows={6} cols={5} />
       ) : monitor ? (
-        <div className="space-y-8">
+        <div className="space-y-6 sm:space-y-8">
           {/* Monitor Configuration Summary Card */}
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 sm:p-8">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 sm:p-7">
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 pb-6 border-b border-slate-100">
-              <div>
-                <div className="flex items-center gap-3">
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-3 flex-wrap">
                   <h2 className="text-xl font-bold text-slate-900 tracking-tight">
                     {monitor.asset_name}
                   </h2>
@@ -284,8 +288,8 @@ export default function MonitorDetailPage({ params }: { params: Promise<{ id: st
 
                 <div className="flex flex-wrap items-center gap-4 mt-2.5 text-xs text-slate-600">
                   <span className="flex items-center gap-1.5">
-                    <Building className="w-3.5 h-3.5 text-slate-400" />
-                    <span>Client: </span>
+                    <Building className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                    <span>{t.client}: </span>
                     <Link
                       href={`/clients/${monitor.client_id}`}
                       className="font-semibold text-blue-600 hover:underline"
@@ -298,32 +302,33 @@ export default function MonitorDetailPage({ params }: { params: Promise<{ id: st
                     href={monitor.effective_url}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 text-blue-600 hover:underline font-mono"
+                    className="inline-flex items-center gap-1 text-blue-600 hover:underline font-mono text-start"
+                    dir="ltr"
                   >
-                    <Globe className="w-3.5 h-3.5 text-slate-400" />
-                    <span>{monitor.effective_url}</span>
-                    <ExternalLink className="w-3 h-3" />
+                    <Globe className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                    <span className="truncate max-w-xs">{monitor.effective_url}</span>
+                    <ExternalLink className="w-3 h-3 shrink-0" />
                   </a>
                 </div>
               </div>
 
               {/* Interval & Timeout Metrics */}
-              <div className="grid grid-cols-3 gap-3 text-center shrink-0">
-                <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 min-w-[80px]">
-                  <div className="text-[10px] uppercase font-bold text-slate-400">Interval</div>
-                  <div className="text-sm font-bold text-slate-900 mt-0.5">
-                    {monitor.interval_seconds}s
+              <div className="grid grid-cols-3 gap-2.5 sm:gap-3 text-center shrink-0">
+                <div className="bg-slate-50 p-2.5 sm:p-3 rounded-xl border border-slate-100 min-w-[76px]">
+                  <div className="text-[10px] uppercase font-bold text-slate-400">{t.interval}</div>
+                  <div className="text-sm font-bold text-slate-900 mt-0.5" dir="ltr">
+                    {monitor.interval_seconds}{t.secondsUnit}
                   </div>
                 </div>
-                <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 min-w-[80px]">
-                  <div className="text-[10px] uppercase font-bold text-slate-400">Timeout</div>
-                  <div className="text-sm font-bold text-slate-900 mt-0.5">
-                    {monitor.timeout_seconds}s
+                <div className="bg-slate-50 p-2.5 sm:p-3 rounded-xl border border-slate-100 min-w-[76px]">
+                  <div className="text-[10px] uppercase font-bold text-slate-400">{t.timeout}</div>
+                  <div className="text-sm font-bold text-slate-900 mt-0.5" dir="ltr">
+                    {monitor.timeout_seconds}{t.secondsUnit}
                   </div>
                 </div>
-                <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 min-w-[80px]">
-                  <div className="text-[10px] uppercase font-bold text-slate-400">Method</div>
-                  <div className="text-sm font-bold text-slate-900 mt-0.5 uppercase">
+                <div className="bg-slate-50 p-2.5 sm:p-3 rounded-xl border border-slate-100 min-w-[76px]">
+                  <div className="text-[10px] uppercase font-bold text-slate-400">{t.method}</div>
+                  <div className="text-sm font-bold text-slate-900 mt-0.5 uppercase font-mono" dir="ltr">
                     {monitor.method}
                   </div>
                 </div>
@@ -331,43 +336,48 @@ export default function MonitorDetailPage({ params }: { params: Promise<{ id: st
             </div>
 
             {/* Check Configuration Details */}
-            <div className="pt-6 grid grid-cols-1 sm:grid-cols-3 gap-6 text-xs text-slate-600">
+            <div className="pt-6 grid grid-cols-1 sm:grid-cols-3 gap-4 sm:gap-6 text-xs text-slate-600">
               <div>
-                <span className="font-semibold text-slate-800">Expected Status: </span>
-                <span className="font-mono font-bold text-slate-900">
+                <span className="font-semibold text-slate-800">{t.expectedStatusRange}: </span>
+                <span className="font-mono font-bold text-slate-900 ms-1" dir="ltr">
                   {monitor.expected_status_min}–{monitor.expected_status_max}
                 </span>
               </div>
               <div>
-                <span className="font-semibold text-slate-800">Follow Redirects: </span>
-                <span>
-                  {monitor.follow_redirects ? `Yes (max ${monitor.max_redirects})` : "No"}
+                <span className="font-semibold text-slate-800">{t.followRedirectsLabel}: </span>
+                <span className="ms-1">
+                  {monitor.follow_redirects
+                    ? (isRTL ? `بله (حداکثر ${monitor.max_redirects})` : `Yes (max ${monitor.max_redirects})`)
+                    : (isRTL ? "خیر" : "No")}
                 </span>
               </div>
               <div>
-                <span className="font-semibold text-slate-800">Next Scheduled Check: </span>
-                <span>
+                <span className="font-semibold text-slate-800">{t.nextScheduledCheck}: </span>
+                <span className="ms-1">
                   {monitor.status === "paused"
-                    ? "Paused"
+                    ? t.statusPaused
                     : new Date(monitor.next_check_at).toLocaleTimeString(undefined, {
                         timeZone: activeOrg?.timezone || "UTC",
+                        hour: "2-digit",
+                        minute: "2-digit",
+                        second: "2-digit",
                       })}
                 </span>
               </div>
 
               {monitor.expected_text && (
-                <div>
-                  <span className="font-semibold text-slate-800">Expected Text: </span>
-                  <span className="font-mono bg-slate-100 px-1.5 py-0.5 rounded text-slate-800">
+                <div className="sm:col-span-2">
+                  <span className="font-semibold text-slate-800">{t.expectedTextLabel}: </span>
+                  <span className="font-mono bg-slate-100 px-1.5 py-0.5 rounded text-slate-800 ms-1 text-[11px]" dir="ltr">
                     {monitor.expected_text}
                   </span>
                 </div>
               )}
 
               {monitor.json_pointer && (
-                <div>
-                  <span className="font-semibold text-slate-800">JSON Assertion: </span>
-                  <span className="font-mono bg-slate-100 px-1.5 py-0.5 rounded text-slate-800">
+                <div className="sm:col-span-2">
+                  <span className="font-semibold text-slate-800">{t.jsonAssertionLabel}: </span>
+                  <span className="font-mono bg-slate-100 px-1.5 py-0.5 rounded text-slate-800 ms-1 text-[11px]" dir="ltr">
                     {monitor.json_pointer} = {monitor.json_expected_value}
                   </span>
                 </div>
@@ -377,57 +387,63 @@ export default function MonitorDetailPage({ params }: { params: Promise<{ id: st
 
           {/* SSL / TLS Certificate Card */}
           {latestSSL && (
-            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 sm:p-8">
-              <div className="flex items-center justify-between pb-6 border-b border-slate-100">
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 sm:p-7">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-6 border-b border-slate-100 gap-3">
                 <div className="flex items-center gap-2.5">
-                  <ShieldCheck className="w-5 h-5 text-emerald-600" />
+                  <ShieldCheck className="w-5 h-5 text-emerald-600 shrink-0" />
                   <div>
                     <h3 className="text-base font-bold text-slate-900 tracking-tight">
                       {t.sslDetails}
                     </h3>
                     <p className="text-xs text-slate-500 mt-0.5">
-                      Verified TLS security handshake and certificate expiration.
+                      {isRTL
+                        ? "راستی‌آزمایی پروتکل امنیتی TLS و تاریخ انقضای گواهینامه دامنه."
+                        : "Verified TLS security handshake and certificate expiration."}
                     </p>
                   </div>
                 </div>
 
                 {latestSSL.tls_days_remaining !== undefined && latestSSL.tls_days_remaining < 30 ? (
-                  <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-amber-50 border border-amber-200 text-amber-800 rounded-full text-xs font-semibold">
-                    <ShieldAlert className="w-3.5 h-3.5 text-amber-600" />
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-amber-50 border border-amber-200 text-amber-800 rounded-full text-xs font-semibold w-fit">
+                    <ShieldAlert className="w-3.5 h-3.5 text-amber-600 shrink-0" />
                     <span>{t.sslExpiryWarning}</span>
                   </span>
                 ) : (
-                  <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-full text-xs font-semibold">
-                    <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-full text-xs font-semibold w-fit">
+                    <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
                     <span>{t.sslValid}</span>
                   </span>
                 )}
               </div>
 
-              <div className="pt-6 grid grid-cols-1 sm:grid-cols-4 gap-6 text-xs">
+              <div className="pt-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5 text-xs">
                 <div>
-                  <div className="text-slate-400 font-semibold uppercase">{t.sslSubject}</div>
-                  <div className="text-slate-800 font-bold mt-1 font-mono">
+                  <div className="text-slate-400 font-semibold uppercase text-[10px]">{t.sslSubject}</div>
+                  <div className="text-slate-800 font-bold mt-1 font-mono text-start break-all" dir="ltr">
                     {latestSSL.tls_cert_subject || "—"}
                   </div>
                 </div>
                 <div>
-                  <div className="text-slate-400 font-semibold uppercase">{t.sslIssuer}</div>
-                  <div className="text-slate-800 font-bold mt-1">
+                  <div className="text-slate-400 font-semibold uppercase text-[10px]">{t.sslIssuer}</div>
+                  <div className="text-slate-800 font-bold mt-1 break-words">
                     {latestSSL.tls_cert_issuer || "—"}
                   </div>
                 </div>
                 <div>
-                  <div className="text-slate-400 font-semibold uppercase">{t.sslDaysRemaining}</div>
-                  <div className="text-slate-800 font-bold mt-1 text-sm">
+                  <div className="text-slate-400 font-semibold uppercase text-[10px]">{t.sslDaysRemaining}</div>
+                  <div className="text-slate-800 font-bold mt-1 text-sm font-mono" dir="ltr">
                     {latestSSL.tls_days_remaining !== undefined
-                      ? `${latestSSL.tls_days_remaining} days`
+                      ? `${latestSSL.tls_days_remaining} ${t.daysUnit}`
                       : "—"}
                   </div>
                 </div>
                 <div>
-                  <div className="text-slate-400 font-semibold uppercase">Protocol & Cipher</div>
-                  <div className="text-slate-800 font-bold mt-1 truncate font-mono text-[11px]" title={latestSSL.tls_cipher}>
+                  <div className="text-slate-400 font-semibold uppercase text-[10px]">{t.protocolAndCipher}</div>
+                  <div
+                    className="text-slate-800 font-bold mt-1 truncate font-mono text-[11px] text-start"
+                    dir="ltr"
+                    title={latestSSL.tls_cipher}
+                  >
                     {latestSSL.tls_version} • {latestSSL.tls_cipher}
                   </div>
                 </div>
@@ -435,16 +451,18 @@ export default function MonitorDetailPage({ params }: { params: Promise<{ id: st
             </div>
           )}
 
-          {/* Check Execution History Table */}
+          {/* Check Execution History */}
           <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-            <div className="p-6 border-b border-slate-100 flex items-center justify-between">
+            <div className="p-4 sm:p-6 border-b border-slate-100 flex items-center justify-between">
               <div>
                 <h3 className="text-base font-bold text-slate-900 tracking-tight flex items-center gap-2">
-                  <Activity className="w-5 h-5 text-blue-600" />
+                  <Activity className="w-5 h-5 text-blue-600 shrink-0" />
                   <span>{t.checkHistory}</span>
                 </h3>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  Chronological log of checks with execution latencies, status codes and error traces.
+                  {isRTL
+                    ? "سوابق زمانی بررسی‌ها به همراه مدت زمان پاسخ، کدهای وضعیت و جزئیات خطاها."
+                    : "Chronological log of checks with execution latencies, status codes and error traces."}
                 </p>
               </div>
 
@@ -461,38 +479,97 @@ export default function MonitorDetailPage({ params }: { params: Promise<{ id: st
             {history.length === 0 ? (
               <div className="p-12 text-center text-slate-500 text-xs">{t.noHistory}</div>
             ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-sm" dir={isRTL ? "rtl" : "ltr"}>
-                  <thead className="bg-slate-50 text-slate-600 text-xs uppercase font-semibold border-b border-slate-200">
-                    <tr>
-                      <th className="px-6 py-4">{t.status}</th>
-                      <th className="px-6 py-4">{t.latestCheck}</th>
-                      <th className="px-6 py-4">{t.latency}</th>
-                      <th className="px-6 py-4">{t.statusCode}</th>
-                      <th className="px-6 py-4">{t.executionType}</th>
-                      <th className="px-6 py-4">Result / Error Details</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100 text-xs">
-                    {history.map((chk) => (
-                      <tr key={chk.id} className="hover:bg-slate-50/70 transition-colors">
-                        <td className="px-6 py-4">
-                          <Badge variant={chk.result} />
-                        </td>
-                        <td className="px-6 py-4 text-slate-600">
+              <>
+                {/* Desktop Table View (>= 768px) */}
+                <div className="hidden md:block overflow-x-auto">
+                  <table className="w-full text-start text-sm" dir={isRTL ? "rtl" : "ltr"}>
+                    <thead className="bg-slate-50 text-slate-600 text-xs uppercase font-semibold border-b border-slate-200">
+                      <tr>
+                        <th className="px-6 py-4">{t.status}</th>
+                        <th className="px-6 py-4">{t.latestCheck}</th>
+                        <th className="px-6 py-4">{t.latency}</th>
+                        <th className="px-6 py-4">{t.statusCode}</th>
+                        <th className="px-6 py-4">{t.executionType}</th>
+                        <th className="px-6 py-4">{isRTL ? "جزئیات نتیجه / خطا" : "Result / Error Details"}</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 text-xs">
+                      {history.map((chk) => (
+                        <tr key={chk.id} className="hover:bg-slate-50/70 transition-colors">
+                          <td className="px-6 py-4">
+                            <Badge variant={chk.result} />
+                          </td>
+                          <td className="px-6 py-4 text-slate-600">
+                            {new Date(chk.completed_at).toLocaleTimeString(undefined, {
+                              timeZone: activeOrg?.timezone || "UTC",
+                              hour: "2-digit",
+                              minute: "2-digit",
+                              second: "2-digit",
+                            })}
+                          </td>
+                          <td className="px-6 py-4 font-mono font-medium text-slate-800" dir="ltr">
+                            {chk.latency_ms} ms
+                          </td>
+                          <td className="px-6 py-4 font-mono font-bold text-slate-800" dir="ltr">
+                            {chk.http_status_code || "—"}
+                          </td>
+                          <td className="px-6 py-4">
+                            <span
+                              className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded ${
+                                chk.execution_type === "manual"
+                                  ? "bg-purple-100 text-purple-800"
+                                  : "bg-slate-100 text-slate-700"
+                              }`}
+                            >
+                              {chk.execution_type === "manual" ? t.manual : t.scheduled}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 text-slate-600">
+                            {chk.error_message ? (
+                              <span className="text-rose-600 font-mono text-[11px] font-medium" dir="ltr">
+                                {chk.error_message}
+                              </span>
+                            ) : (
+                              <span className="text-emerald-700 font-medium">{t.resultHttpSuccess}</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Mobile Card View (< 768px, 390px, 360px) */}
+                <div className="md:hidden divide-y divide-slate-100">
+                  {history.map((chk) => (
+                    <div key={chk.id} className="p-3.5 space-y-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <Badge variant={chk.result} />
+                        <span className="text-[11px] text-slate-500">
                           {new Date(chk.completed_at).toLocaleTimeString(undefined, {
                             timeZone: activeOrg?.timezone || "UTC",
+                            hour: "2-digit",
+                            minute: "2-digit",
+                            second: "2-digit",
                           })}
-                        </td>
-                        <td className="px-6 py-4 font-mono font-medium text-slate-800">
-                          {chk.latency_ms} ms
-                        </td>
-                        <td className="px-6 py-4 font-mono font-bold text-slate-800">
-                          {chk.http_status_code || "—"}
-                        </td>
-                        <td className="px-6 py-4">
+                        </span>
+                      </div>
+
+                      <div className="flex items-center justify-between text-xs pt-1">
+                        <div className="flex items-center gap-2">
+                          <span className="text-slate-500">{t.latency}:</span>
+                          <span className="font-mono font-bold text-slate-800" dir="ltr">
+                            {chk.latency_ms} ms
+                          </span>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <span className="text-slate-500">{t.statusCode}:</span>
+                          <span className="font-mono font-bold text-slate-800" dir="ltr">
+                            {chk.http_status_code || "—"}
+                          </span>
                           <span
-                            className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded ${
+                            className={`text-[9px] uppercase font-bold px-1.5 py-0.5 rounded ${
                               chk.execution_type === "manual"
                                 ? "bg-purple-100 text-purple-800"
                                 : "bg-slate-100 text-slate-700"
@@ -500,34 +577,36 @@ export default function MonitorDetailPage({ params }: { params: Promise<{ id: st
                           >
                             {chk.execution_type === "manual" ? t.manual : t.scheduled}
                           </span>
-                        </td>
-                        <td className="px-6 py-4 text-slate-600">
-                          {chk.error_message ? (
-                            <span className="text-rose-600 font-mono text-[11px] font-medium">
-                              {chk.error_message}
-                            </span>
-                          ) : (
-                            <span className="text-emerald-700 font-medium">HTTP check completed</span>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                        </div>
+                      </div>
+
+                      {chk.error_message ? (
+                        <div className="text-[11px] font-mono text-rose-600 bg-rose-50/70 p-2 rounded-lg border border-rose-100 break-all text-start" dir="ltr">
+                          {chk.error_message}
+                        </div>
+                      ) : (
+                        <div className="text-[11px] text-emerald-700 font-medium">
+                          {t.resultHttpSuccess}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </>
             )}
           </div>
         </div>
       ) : null}
 
-      {/* Delete Confirmation Modal */}
+      {/* Standardized Delete Confirmation Modal */}
       <ConfirmModal
         isOpen={deleteModalOpen}
         onClose={() => setDeleteModalOpen(false)}
         onConfirm={handleDelete}
-        title="Delete Monitor"
-        message="Are you sure you want to delete this monitor? All check history and performance aggregates will be removed."
-        confirmLabel="Delete Monitor"
+        title={t.deleteMonitorTitle}
+        message={t.deleteMonitorConfirm}
+        confirmLabel={t.delete}
+        cancelLabel={t.cancel}
         variant="danger"
         loading={actionLoading}
       />

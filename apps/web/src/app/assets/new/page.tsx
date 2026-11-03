@@ -23,9 +23,11 @@ function NewAssetContent() {
   const searchParams = useSearchParams();
   const initialClientID = searchParams.get("client_id") || "";
 
-  const { user, activeOrg } = useAuth();
+  const { user, activeOrg, role } = useAuth();
   const { t, isRTL } = useI18n();
   const toast = useToast();
+
+  const canManage = role === "owner" || role === "admin" || role === "member";
 
   const [clients, setClients] = useState<ClientOption[]>([]);
   const [clientID, setClientID] = useState(initialClientID);
@@ -113,6 +115,25 @@ function NewAssetContent() {
     }
   };
 
+  if (!canManage && !loading) {
+    return (
+      <AppLayout>
+        <div className="max-w-md mx-auto p-8 text-center bg-white rounded-2xl border border-slate-200 mt-12">
+          <AlertTriangle className="w-12 h-12 text-rose-500 mx-auto mb-3" />
+          <h2 className="text-base font-bold text-slate-900">{isRTL ? "دسترسی محدود است" : "Access Restricted"}</h2>
+          <p className="text-xs text-slate-500 mt-1 mb-4">
+            {isRTL
+              ? "حساب‌های فقط-خواندنی (Viewer) اجازه ایجاد دارایی را ندارند."
+              : "Viewer accounts do not have permission to add websites or API assets."}
+          </p>
+          <Link href="/assets">
+            <Button size="sm" variant="outline">{t.assets}</Button>
+          </Link>
+        </div>
+      </AppLayout>
+    );
+  }
+
   return (
     <AppLayout>
       <div className="max-w-3xl mx-auto">
@@ -189,7 +210,8 @@ function NewAssetContent() {
                 value={url}
                 onChange={(e) => setURL(e.target.value)}
                 placeholder="https://acme-store.com"
-                className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all font-mono disabled:opacity-50"
+                className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all font-mono disabled:opacity-50 text-start"
+                dir="ltr"
               />
               <p className="text-[11px] text-slate-500 mt-1.5">
                 Must be an accessible HTTP or HTTPS URL (ports 80 or 443). Private IP addresses, localhost, and internal services are restricted for security.
