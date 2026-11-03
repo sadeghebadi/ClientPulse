@@ -336,6 +336,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 		mux.Handle("PATCH /api/v1/platform-admin/plans/{id}", platformAdminMutation(s.deps.PlatformAdminHdr.UpdatePlan))
 		mux.Handle("POST /api/v1/platform-admin/plans/{id}/publish", platformAdminMutation(s.deps.PlatformAdminHdr.PublishPlan))
 		mux.Handle("POST /api/v1/platform-admin/plans/{id}/archive", platformAdminMutation(s.deps.PlatformAdminHdr.ArchivePlan))
+		mux.Handle("DELETE /api/v1/platform-admin/plans/{id}", platformAdminMutation(s.deps.PlatformAdminHdr.DeleteDraftPlan))
 		mux.Handle("GET /api/v1/platform-admin/plans/{id}/assignments", platformAdminScoped(s.deps.PlatformAdminHdr.GetPlanAssignments))
 
 		// Subscription Assignments & Lifecycle

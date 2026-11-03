@@ -53,9 +53,9 @@ type SubscriptionPlanVersion struct {
 	PlanID                  string                 `json:"plan_id"`
 	Version                 int                    `json:"version"`
 	Status                  string                 `json:"status"` // 'draft', 'published', 'archived'
-	PriceAmount             int64                  `json:"price_amount"` // minor currency units
-	Currency                string                 `json:"currency"`     // ISO 4217 uppercase 3-letter code
-	BillingInterval         string                 `json:"billing_interval"`
+	PriceAmount             *int64                 `json:"price_amount"` // minor currency units (nil if unconfigured)
+	Currency                *string                `json:"currency"`     // ISO 4217 uppercase 3-letter code (nil if unconfigured)
+	BillingInterval         *string                `json:"billing_interval"`
 	MaxClients              int                    `json:"max_clients"`
 	MaxAssets               int                    `json:"max_assets"`
 	MaxMonitors             int                    `json:"max_monitors"`
@@ -89,9 +89,9 @@ type OrganizationSubscription struct {
 	AdministrativeNote string     `json:"administrative_note"`
 	CreatedAt          time.Time  `json:"created_at"`
 	UpdatedAt          time.Time  `json:"updated_at"`
-	PriceAmount        int64      `json:"price_amount,omitempty"`
-	Currency           string     `json:"currency,omitempty"`
-	BillingInterval    string     `json:"billing_interval,omitempty"`
+	PriceAmount        *int64     `json:"price_amount,omitempty"`
+	Currency           *string    `json:"currency,omitempty"`
+	BillingInterval    *string    `json:"billing_interval,omitempty"`
 	Limits             PlanLimits `json:"limits"`
 }
 

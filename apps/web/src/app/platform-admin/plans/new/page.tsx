@@ -24,9 +24,10 @@ export default function PlatformAdminNewPlanPage() {
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
   const [description, setDescription] = useState("");
-  const [priceAmount, setPriceAmount] = useState<number>(2900); // 29.00 USD
-  const [currency, setCurrency] = useState("USD");
-  const [billingInterval, setBillingInterval] = useState("monthly");
+  const [priceType, setPriceType] = useState<"unconfigured" | "free" | "paid">("unconfigured");
+  const [priceAmount, setPriceAmount] = useState<string>("");
+  const [currency, setCurrency] = useState<string>("");
+  const [billingInterval, setBillingInterval] = useState<string>("");
 
   // Limits
   const [maxClients, setMaxClients] = useState<number>(5);
@@ -65,15 +66,45 @@ export default function PlatformAdminNewPlanPage() {
     try {
       setLoading(true);
       setError(null);
+
+      let finalPrice: number | null = null;
+      let finalCurrency: string | null = null;
+      let finalInterval: string | null = null;
+
+      if (priceType === "free") {
+        finalPrice = 0;
+        finalCurrency = currency.trim().toUpperCase() || "USD";
+        finalInterval = billingInterval || "monthly";
+      } else if (priceType === "paid") {
+        if (!priceAmount || Number(priceAmount) <= 0) {
+          setError("A paid plan requires a positive price amount.");
+          setLoading(false);
+          return;
+        }
+        if (!currency.trim()) {
+          setError("A paid plan requires a valid 3-letter currency code.");
+          setLoading(false);
+          return;
+        }
+        if (!billingInterval) {
+          setError("A paid plan requires a billing interval.");
+          setLoading(false);
+          return;
+        }
+        finalPrice = Number(priceAmount);
+        finalCurrency = currency.trim().toUpperCase();
+        finalInterval = billingInterval;
+      }
+
       await apiFetch("/api/v1/platform-admin/plans", {
         method: "POST",
         body: JSON.stringify({
           name: name.trim(),
           slug: slug.trim(),
           description: description.trim(),
-          price_amount: Number(priceAmount),
-          currency: currency.trim().toUpperCase(),
-          billing_interval: billingInterval,
+          price_amount: finalPrice,
+          currency: finalCurrency,
+          billing_interval: finalInterval,
           max_clients: Number(maxClients),
           max_assets: Number(maxAssets),
           max_monitors: Number(maxMonitors),
@@ -181,51 +212,107 @@ export default function PlatformAdminNewPlanPage() {
               Pricing Configuration
             </h2>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  Price Amount (Cents / Smallest Unit)
-                </label>
+            <div className="flex gap-4 mb-2">
+              <label className="flex items-center gap-2 text-xs font-medium cursor-pointer">
                 <input
-                  type="number"
-                  min="0"
-                  value={priceAmount}
-                  onChange={(e) => setPriceAmount(Number(e.target.value))}
-                  className="w-full text-xs p-3 rounded-xl border border-slate-200 font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  type="radio"
+                  name="priceType"
+                  value="unconfigured"
+                  checked={priceType === "unconfigured"}
+                  onChange={() => setPriceType("unconfigured")}
+                  className="rounded-full border-slate-300 text-blue-600 focus:ring-blue-500"
                 />
-                <span className="text-[10px] text-slate-400 font-mono mt-1 block">
-                  Displayed as {(priceAmount / 100).toFixed(2)} {currency}
-                </span>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  Currency (ISO 4217)
-                </label>
+                Unconfigured (Draft only)
+              </label>
+              <label className="flex items-center gap-2 text-xs font-medium cursor-pointer">
                 <input
-                  type="text"
-                  maxLength={3}
-                  value={currency}
-                  onChange={(e) => setCurrency(e.target.value.toUpperCase())}
-                  className="w-full text-xs p-3 rounded-xl border border-slate-200 font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  type="radio"
+                  name="priceType"
+                  value="free"
+                  checked={priceType === "free"}
+                  onChange={() => setPriceType("free")}
+                  className="rounded-full border-slate-300 text-blue-600 focus:ring-blue-500"
                 />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  {t.billingPeriod}
-                </label>
-                <select
-                  value={billingInterval}
-                  onChange={(e) => setBillingInterval(e.target.value)}
-                  className="w-full text-xs p-3 rounded-xl border border-slate-200 bg-slate-50 font-medium focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="monthly">Monthly</option>
-                  <option value="annual">Annual</option>
-                  <option value="quarterly">Quarterly</option>
-                </select>
-              </div>
+                Free Tier ($0.00)
+              </label>
+              <label className="flex items-center gap-2 text-xs font-medium cursor-pointer">
+                <input
+                  type="radio"
+                  name="priceType"
+                  value="paid"
+                  checked={priceType === "paid"}
+                  onChange={() => setPriceType("paid")}
+                  className="rounded-full border-slate-300 text-blue-600 focus:ring-blue-500"
+                />
+                Paid Commercial Plan
+              </label>
             </div>
+
+            {priceType === "paid" && (
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Price Amount (Cents / Smallest Unit)
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    placeholder="e.g. 2900"
+                    value={priceAmount}
+                    onChange={(e) => setPriceAmount(e.target.value)}
+                    className="w-full text-xs p-3 rounded-xl border border-slate-200 font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                  {priceAmount && (
+                    <span className="text-[10px] text-slate-400 font-mono mt-1 block">
+                      Displayed as {(Number(priceAmount) / 100).toFixed(2)} {currency || "USD"}
+                    </span>
+                  )}
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Currency (ISO 4217)
+                  </label>
+                  <input
+                    type="text"
+                    maxLength={3}
+                    placeholder="USD"
+                    value={currency}
+                    onChange={(e) => setCurrency(e.target.value.toUpperCase())}
+                    className="w-full text-xs p-3 rounded-xl border border-slate-200 font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    {t.billingPeriod}
+                  </label>
+                  <select
+                    value={billingInterval}
+                    onChange={(e) => setBillingInterval(e.target.value)}
+                    className="w-full text-xs p-3 rounded-xl border border-slate-200 bg-slate-50 font-medium focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="">Select billing interval...</option>
+                    <option value="monthly">Monthly</option>
+                    <option value="yearly">Yearly</option>
+                    <option value="quarterly">Quarterly</option>
+                    <option value="one_time">One-time</option>
+                  </select>
+                </div>
+              </div>
+            )}
+
+            {priceType === "unconfigured" && (
+              <p className="text-xs text-slate-500 italic bg-slate-50 p-3 rounded-xl border border-slate-100">
+                Plan will be created with no finalized price or currency. It cannot be published until explicit pricing is configured.
+              </p>
+            )}
+
+            {priceType === "free" && (
+              <p className="text-xs text-emerald-700 bg-emerald-50 p-3 rounded-xl border border-emerald-100 font-medium">
+                Explicit Free plan with 0.00 price amount.
+              </p>
+            )}
           </div>
 
           {/* Structured Quotas & Limits */}

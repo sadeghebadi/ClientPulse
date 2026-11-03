@@ -310,10 +310,10 @@ type PlanInputRequest struct {
 	Name                    string                 `json:"name"`
 	Slug                    string                 `json:"slug"`
 	Description             string                 `json:"description"`
-	PriceAmount             int64                  `json:"price_amount"`
-	Currency                string                 `json:"currency"`
-	BillingInterval         string                 `json:"billing_interval"`
-	BillingPeriod           string                 `json:"billing_period,omitempty"`
+	PriceAmount             *int64                 `json:"price_amount"`
+	Currency                *string                `json:"currency"`
+	BillingInterval         *string                `json:"billing_interval"`
+	BillingPeriod           *string                `json:"billing_period,omitempty"`
 	MaxClients              int                    `json:"max_clients"`
 	MaxAssets               int                    `json:"max_assets"`
 	MaxMonitors             int                    `json:"max_monitors"`
@@ -329,11 +329,8 @@ type PlanInputRequest struct {
 
 func (req *PlanInputRequest) ToVersionParams() repository.CreatePlanVersionParams {
 	billingInterval := req.BillingInterval
-	if billingInterval == "" && req.BillingPeriod != "" {
+	if (billingInterval == nil || *billingInterval == "") && req.BillingPeriod != nil && *req.BillingPeriod != "" {
 		billingInterval = req.BillingPeriod
-	}
-	if billingInterval == "" {
-		billingInterval = "monthly"
 	}
 
 	params := repository.CreatePlanVersionParams{
@@ -524,6 +521,25 @@ func (h *PlatformAdminHandler) ArchivePlan(w http.ResponseWriter, r *http.Reques
 
 	_ = h.adminRepo.RecordAuditLog(r.Context(), actor.UserID, "plan.archived", "plan", planID, "Archived subscription plan", nil, r.RemoteAddr, r.UserAgent())
 	sendJSONResponse(w, http.StatusOK, map[string]interface{}{"status": "archived", "plan_id": planID})
+}
+
+// DeleteDraftPlan handles DELETE /api/v1/platform-admin/plans/{id}.
+func (h *PlatformAdminHandler) DeleteDraftPlan(w http.ResponseWriter, r *http.Request) {
+	planID := r.PathValue("id")
+	actor := tenant.GetUserContext(r.Context())
+
+	if err := h.planRepo.DeleteDraftPlan(r.Context(), planID); err != nil {
+		if errors.Is(err, repository.ErrPlanNotFound) {
+			sendJSONError(w, http.StatusNotFound, "NOT_FOUND", "Plan not found")
+			return
+		}
+		h.logger.Error("failed to delete draft plan", "plan_id", planID, "error", err)
+		sendJSONError(w, http.StatusBadRequest, "DELETE_FAILED", err.Error())
+		return
+	}
+
+	_ = h.adminRepo.RecordAuditLog(r.Context(), actor.UserID, "plan.deleted", "plan", planID, "Deleted draft subscription plan", nil, r.RemoteAddr, r.UserAgent())
+	sendJSONResponse(w, http.StatusOK, map[string]interface{}{"status": "deleted", "plan_id": planID})
 }
 
 // GetPlanAssignments handles GET /api/v1/platform-admin/plans/{id}/assignments.

@@ -46,10 +46,44 @@ func (r *PlatformAdminRepository) IsUserPlatformAdmin(ctx context.Context, userI
 	return exists, nil
 }
 
+const PlatformAdminLockID = 982347103
+
 // GrantAdmin grants global platform admin privileges to a user.
+// Enforces role validation ('platform_admin'), acquires an advisory lock to prevent races,
+// and ensures duplicate active grants are not created.
 func (r *PlatformAdminRepository) GrantAdmin(ctx context.Context, userID string, grantedBy *string, reason string) (string, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return "", fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx) // nolint:errcheck
+
+	// Acquire advisory lock to serialize grant modifications
+	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", PlatformAdminLockID); err != nil {
+		return "", fmt.Errorf("acquire admin lock: %w", err)
+	}
+
+	// Verify user exists
+	var email string
+	err = tx.QueryRow(ctx, "SELECT email FROM users WHERE id = $1", userID).Scan(&email)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", fmt.Errorf("user %s does not exist", userID)
+		}
+		return "", fmt.Errorf("query user: %w", err)
+	}
+
+	// Check if already actively granted
+	var activeID string
+	err = tx.QueryRow(ctx, "SELECT id FROM platform_admin_grants WHERE user_id = $1 AND role = 'platform_admin' AND revoked_at IS NULL", userID).Scan(&activeID)
+	if err == nil {
+		return activeID, nil // idempotent existing active grant
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return "", fmt.Errorf("check active grant: %w", err)
+	}
+
 	var grantID string
-	err := r.pool.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		INSERT INTO platform_admin_grants (user_id, role, granted_at, granted_by, reason)
 		VALUES ($1, 'platform_admin', NOW(), $2, $3)
 		RETURNING id
@@ -57,20 +91,59 @@ func (r *PlatformAdminRepository) GrantAdmin(ctx context.Context, userID string,
 	if err != nil {
 		return "", fmt.Errorf("grant platform admin: %w", err)
 	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return "", fmt.Errorf("commit grant: %w", err)
+	}
+
 	return grantID, nil
 }
 
 // RevokeAdmin revokes active platform admin privileges for a user.
+// Uses pg_advisory_xact_lock to strictly protect against concurrent last-admin revocations.
 func (r *PlatformAdminRepository) RevokeAdmin(ctx context.Context, userID string, revokedBy *string, reason string) error {
-	_, err := r.pool.Exec(ctx, `
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx) // nolint:errcheck
+
+	// Serialize with transaction advisory lock
+	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", PlatformAdminLockID); err != nil {
+		return fmt.Errorf("acquire admin lock: %w", err)
+	}
+
+	// Count remaining active platform admins
+	var activeCount int
+	err = tx.QueryRow(ctx, "SELECT COUNT(*) FROM platform_admin_grants WHERE role = 'platform_admin' AND revoked_at IS NULL").Scan(&activeCount)
+	if err != nil {
+		return fmt.Errorf("count active admins: %w", err)
+	}
+
+	// Check if target user has active grant
+	var grantID string
+	err = tx.QueryRow(ctx, "SELECT id FROM platform_admin_grants WHERE user_id = $1 AND role = 'platform_admin' AND revoked_at IS NULL", userID).Scan(&grantID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return fmt.Errorf("user %s does not have an active platform_admin grant", userID)
+		}
+		return fmt.Errorf("query active grant: %w", err)
+	}
+
+	if activeCount <= 1 {
+		return fmt.Errorf("CANNOT REVOKE: last-administrator protection active (only %d platform administrator remains)", activeCount)
+	}
+
+	_, err = tx.Exec(ctx, `
 		UPDATE platform_admin_grants
-		SET revoked_at = NOW(), revoked_by = $2, reason = COALESCE(reason || ' | Revocation: ' || $3, $3)
-		WHERE user_id = $1 AND role = 'platform_admin' AND revoked_at IS NULL
-	`, userID, revokedBy, reason)
+		SET revoked_at = NOW(), revoked_by = $2, reason = COALESCE(reason || ' | Revocation: ' || $3, $3), updated_at = NOW()
+		WHERE id = $1
+	`, grantID, revokedBy, reason)
 	if err != nil {
 		return fmt.Errorf("revoke platform admin: %w", err)
 	}
-	return nil
+
+	return tx.Commit(ctx)
 }
 
 // GetOverviewStats retrieves platform-wide aggregates via the hardened definer function.
@@ -386,8 +459,8 @@ func (r *PlatformAdminRepository) GetOrganizationDetail(ctx context.Context, org
 	var sub OrganizationSubscription
 	var subPlanID, subPlanName, subPlanSlug string
 	var subPlanVersion int
-	var subPriceAmount int64
-	var subCurrency, subBillingInterval string
+	var subPriceAmount *int64
+	var subCurrency, subBillingInterval *string
 	var limits PlanLimits
 	var featuresJSON []byte
 

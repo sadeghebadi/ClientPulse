@@ -160,12 +160,19 @@ func main() {
 	}
 }
 
+const PlatformAdminLockID = 982347103
+
 func executeGrant(ctx context.Context, pool *pgxpool.Pool, targetUserID string, reason string, grantedBy *string) error {
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}
 	defer tx.Rollback(ctx) // nolint:errcheck
+
+	// Acquire advisory lock to serialize grant operations
+	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", PlatformAdminLockID); err != nil {
+		return fmt.Errorf("acquire admin lock: %w", err)
+	}
 
 	// 1. Verify user exists
 	var email, displayName string
@@ -224,6 +231,11 @@ func executeRevoke(ctx context.Context, pool *pgxpool.Pool, targetUserID string,
 		return fmt.Errorf("begin transaction: %w", err)
 	}
 	defer tx.Rollback(ctx) // nolint:errcheck
+
+	// Acquire advisory lock to serialize revocation operations and prevent concurrent last-admin races
+	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", PlatformAdminLockID); err != nil {
+		return fmt.Errorf("acquire admin lock: %w", err)
+	}
 
 	// 1. Last-Administrator Protection
 	var activeCount int

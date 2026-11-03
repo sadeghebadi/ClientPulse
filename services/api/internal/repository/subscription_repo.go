@@ -35,9 +35,9 @@ func (r *SubscriptionRepository) AssignPlan(ctx context.Context, orgID, planVers
 	}
 	defer tx.Rollback(ctx) // nolint:errcheck
 
-	// 1. Verify organization exists
+	// 1. Lock the organization state to prevent concurrent plan assignments on the same tenant
 	var orgName string
-	err = tx.QueryRow(ctx, "SELECT name FROM organizations WHERE id = $1 AND deleted_at IS NULL", orgID).Scan(&orgName)
+	err = tx.QueryRow(ctx, "SELECT name FROM organizations WHERE id = $1 AND deleted_at IS NULL FOR UPDATE", orgID).Scan(&orgName)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil, ErrOrgNotFound
@@ -48,8 +48,8 @@ func (r *SubscriptionRepository) AssignPlan(ctx context.Context, orgID, planVers
 	// 2. Verify plan version is published and plan is active
 	var planID, planName, planSlug, versionStatus, planStatus string
 	var versionNum int
-	var priceAmount int64
-	var currency, billingInterval string
+	var priceAmount *int64
+	var currency, billingInterval *string
 	var limits PlanLimits
 
 	err = tx.QueryRow(ctx, `
@@ -77,8 +77,8 @@ func (r *SubscriptionRepository) AssignPlan(ctx context.Context, orgID, planVers
 	if versionStatus != "published" {
 		return nil, nil, ErrCannotAssignDraft
 	}
-	if planStatus == "archived" {
-		return nil, nil, ErrCannotAssignArchived
+	if planStatus != "active" {
+		return nil, nil, fmt.Errorf("cannot assign plan with status %s: plan must be active", planStatus)
 	}
 
 	// 3. Mark any existing active subscription as canceled/replaced
@@ -213,8 +213,8 @@ func (r *SubscriptionRepository) GetActiveSubscriptionForOrg(ctx context.Context
 	var sub OrganizationSubscription
 	var subPlanID, subPlanName, subPlanSlug string
 	var subPlanVersion int
-	var subPriceAmount int64
-	var subCurrency, subBillingInterval string
+	var subPriceAmount *int64
+	var subCurrency, subBillingInterval *string
 	var limits PlanLimits
 
 	err := r.pool.QueryRow(ctx, `
@@ -242,6 +242,55 @@ func (r *SubscriptionRepository) GetActiveSubscriptionForOrg(ctx context.Context
 			return nil, nil
 		}
 		return nil, fmt.Errorf("query active subscription: %w", err)
+	}
+
+	sub.PlanID = subPlanID
+	sub.PlanName = subPlanName
+	sub.PlanSlug = subPlanSlug
+	sub.PlanVersion = subPlanVersion
+	sub.PriceAmount = subPriceAmount
+	sub.Currency = subCurrency
+	sub.BillingInterval = subBillingInterval
+	sub.Limits = limits
+
+	return &sub, nil
+}
+
+// GetLatestSubscriptionForOrg retrieves the most recent subscription assigned to the organization, regardless of status.
+// Returns (nil, nil) if the organization has never had a subscription assigned (legacy unassigned organization).
+func (r *SubscriptionRepository) GetLatestSubscriptionForOrg(ctx context.Context, orgID string) (*OrganizationSubscription, error) {
+	var sub OrganizationSubscription
+	var subPlanID, subPlanName, subPlanSlug string
+	var subPlanVersion int
+	var subPriceAmount *int64
+	var subCurrency, subBillingInterval *string
+	var limits PlanLimits
+
+	err := r.pool.QueryRow(ctx, `
+		SELECT 
+			s.id, s.organization_id, s.plan_version_id, s.status, s.started_at, s.ends_at,
+			s.assigned_by, s.administrative_note, s.created_at, s.updated_at,
+			p.id, p.name, p.slug, pv.version, pv.price_amount, pv.currency, pv.billing_interval,
+			pv.max_clients, pv.max_assets, pv.max_monitors, pv.max_heartbeats, pv.max_members,
+			pv.min_check_interval_seconds, pv.retention_days, pv.custom_branding_enabled, pv.public_reports_enabled
+		FROM organization_subscriptions s
+		JOIN subscription_plan_versions pv ON pv.id = s.plan_version_id
+		JOIN subscription_plans p ON p.id = pv.plan_id
+		WHERE s.organization_id = $1
+		ORDER BY s.started_at DESC, s.created_at DESC
+		LIMIT 1
+	`, orgID).Scan(
+		&sub.ID, &sub.OrganizationID, &sub.PlanVersionID, &sub.Status, &sub.StartedAt, &sub.EndsAt,
+		&sub.AssignedBy, &sub.AdministrativeNote, &sub.CreatedAt, &sub.UpdatedAt,
+		&subPlanID, &subPlanName, &subPlanSlug, &subPlanVersion, &subPriceAmount, &subCurrency, &subBillingInterval,
+		&limits.MaxClients, &limits.MaxAssets, &limits.MaxMonitors, &limits.MaxHeartbeats, &limits.MaxMembers,
+		&limits.MinCheckIntervalSeconds, &limits.RetentionDays, &limits.CustomBrandingEnabled, &limits.PublicReportsEnabled,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("query latest subscription: %w", err)
 	}
 
 	sub.PlanID = subPlanID

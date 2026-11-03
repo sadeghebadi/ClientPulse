@@ -28,9 +28,9 @@ var currencyRegex = regexp.MustCompile(`^[A-Z]{3}$`)
 
 // CreatePlanVersionParams holds limit and pricing inputs for creating or updating plan versions.
 type CreatePlanVersionParams struct {
-	PriceAmount             int64                  `json:"price_amount"`
-	Currency                string                 `json:"currency"`
-	BillingInterval         string                 `json:"billing_interval"`
+	PriceAmount             *int64                 `json:"price_amount"` // nil if unconfigured
+	Currency                *string                `json:"currency"`     // nil if unconfigured
+	BillingInterval         *string                `json:"billing_interval"`
 	MaxClients              int                    `json:"max_clients"`
 	MaxAssets               int                    `json:"max_assets"`
 	MaxMonitors             int                    `json:"max_monitors"`
@@ -54,21 +54,30 @@ func NewPlanRepository(pool *pgxpool.Pool) *PlanRepository {
 }
 
 // ValidateParams validates pricing, currency, intervals, and structured limits.
+// Does NOT force defaults on PriceAmount, Currency, or BillingInterval.
 func ValidateParams(p *CreatePlanVersionParams) error {
-	p.Currency = strings.ToUpper(strings.TrimSpace(p.Currency))
-	if p.Currency == "" {
-		p.Currency = "USD"
-	}
-	if !currencyRegex.MatchString(p.Currency) {
-		return ErrInvalidCurrency
+	if p.Currency != nil {
+		c := strings.ToUpper(strings.TrimSpace(*p.Currency))
+		if c == "" {
+			p.Currency = nil
+		} else {
+			if !currencyRegex.MatchString(c) {
+				return ErrInvalidCurrency
+			}
+			p.Currency = &c
+		}
 	}
 
-	p.BillingInterval = strings.ToLower(strings.TrimSpace(p.BillingInterval))
-	if p.BillingInterval == "" {
-		p.BillingInterval = "monthly"
-	}
-	if p.BillingInterval != "monthly" && p.BillingInterval != "yearly" && p.BillingInterval != "quarterly" && p.BillingInterval != "one_time" {
-		return fmt.Errorf("invalid billing_interval: must be monthly, yearly, quarterly, or one_time")
+	if p.BillingInterval != nil {
+		bi := strings.ToLower(strings.TrimSpace(*p.BillingInterval))
+		if bi == "" {
+			p.BillingInterval = nil
+		} else {
+			if bi != "monthly" && bi != "yearly" && bi != "quarterly" && bi != "one_time" {
+				return fmt.Errorf("invalid billing_interval: must be monthly, yearly, quarterly, or one_time")
+			}
+			p.BillingInterval = &bi
+		}
 	}
 
 	if p.MinCheckIntervalSeconds < 60 {
@@ -77,7 +86,7 @@ func ValidateParams(p *CreatePlanVersionParams) error {
 	if p.RetentionDays <= 0 {
 		p.RetentionDays = 30
 	}
-	if p.PriceAmount < 0 {
+	if p.PriceAmount != nil && *p.PriceAmount < 0 {
 		return fmt.Errorf("price_amount cannot be negative")
 	}
 	if p.Features == nil {
@@ -427,21 +436,33 @@ func (r *PlanRepository) PublishPlan(ctx context.Context, planID, publishedBy st
 	}
 	defer tx.Rollback(ctx) // nolint:errcheck
 
-	// Find the latest draft version
+	// Find the latest draft version and validate completeness
 	var draftVerID string
 	var draftVerNum int
+	var priceAmount *int64
+	var currency, billingInterval *string
 	err = tx.QueryRow(ctx, `
-		SELECT id, version
+		SELECT id, version, price_amount, currency, billing_interval
 		FROM subscription_plan_versions
 		WHERE plan_id = $1 AND status = 'draft'
 		ORDER BY version DESC
 		LIMIT 1
-	`, planID).Scan(&draftVerID, &draftVerNum)
+	`, planID).Scan(&draftVerID, &draftVerNum, &priceAmount, &currency, &billingInterval)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil, fmt.Errorf("no draft version found to publish for plan %s", planID)
 		}
 		return nil, nil, fmt.Errorf("query draft version: %w", err)
+	}
+
+	if priceAmount == nil {
+		return nil, nil, fmt.Errorf("cannot publish plan version: price_amount is required")
+	}
+	if currency == nil || *currency == "" {
+		return nil, nil, fmt.Errorf("cannot publish plan version: currency is required")
+	}
+	if billingInterval == nil || *billingInterval == "" {
+		return nil, nil, fmt.Errorf("cannot publish plan version: billing_interval is required")
 	}
 
 	// Update draft version to published
@@ -507,6 +528,67 @@ func (r *PlanRepository) ArchivePlan(ctx context.Context, planID, updatedBy stri
 		return ErrPlanNotFound
 	}
 	return nil
+}
+
+// DeleteDraftPlan deletes a draft plan and its unreferenced draft version.
+// If the plan has any published versions or any subscriptions, deletion is rejected.
+func (r *PlanRepository) DeleteDraftPlan(ctx context.Context, planID string) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx) // nolint:errcheck
+
+	// Check if plan exists and is in draft status
+	var status string
+	err = tx.QueryRow(ctx, "SELECT status FROM subscription_plans WHERE id = $1", planID).Scan(&status)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrPlanNotFound
+		}
+		return fmt.Errorf("query plan: %w", err)
+	}
+	if status != "draft" {
+		return fmt.Errorf("only draft plans can be deleted; current status is %s", status)
+	}
+
+	// Check if any versions are published
+	var publishedCount int
+	err = tx.QueryRow(ctx, "SELECT COUNT(*) FROM subscription_plan_versions WHERE plan_id = $1 AND (status = 'published' OR published_at IS NOT NULL)", planID).Scan(&publishedCount)
+	if err != nil {
+		return fmt.Errorf("check published versions: %w", err)
+	}
+	if publishedCount > 0 {
+		return fmt.Errorf("cannot delete plan with published versions")
+	}
+
+	// Check if any subscriptions reference versions of this plan
+	var subCount int
+	err = tx.QueryRow(ctx, `
+		SELECT COUNT(*) FROM organization_subscriptions os
+		JOIN subscription_plan_versions spv ON spv.id = os.plan_version_id
+		WHERE spv.plan_id = $1
+	`, planID).Scan(&subCount)
+	if err != nil {
+		return fmt.Errorf("check subscriptions: %w", err)
+	}
+	if subCount > 0 {
+		return fmt.Errorf("cannot delete plan referenced by organization subscriptions")
+	}
+
+	// Delete draft versions explicitly to trigger any checks
+	_, err = tx.Exec(ctx, "DELETE FROM subscription_plan_versions WHERE plan_id = $1", planID)
+	if err != nil {
+		return fmt.Errorf("delete plan versions: %w", err)
+	}
+
+	// Delete plan
+	_, err = tx.Exec(ctx, "DELETE FROM subscription_plans WHERE id = $1", planID)
+	if err != nil {
+		return fmt.Errorf("delete plan: %w", err)
+	}
+
+	return tx.Commit(ctx)
 }
 
 // GetPlanAssignments lists all organization subscriptions assigned to any version of this plan.
