@@ -499,8 +499,8 @@ export default function HeartbeatDetailPage({
           isOpen={showDeleteModal}
           onClose={() => setShowDeleteModal(false)}
           onConfirm={handleDelete}
-          title={t.delete}
-          message={t.areYouSure}
+          title={t.deleteHeartbeatTitle}
+          message={t.deleteHeartbeatConfirm}
           confirmLabel={t.delete}
           variant="danger"
           loading={actionLoading}

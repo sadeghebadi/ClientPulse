@@ -9,6 +9,7 @@ import {
   PauseCircle,
   HelpCircle,
   ShieldAlert,
+  UserCheck,
 } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
 
@@ -25,6 +26,10 @@ export type BadgeVariant =
   | "revoked"
   | "open"
   | "resolved"
+  | "source_monitor_deleted"
+  | "monitor_deleted"
+  | "manual"
+  | "automatic_recovery"
   | "acknowledged"
   | "active"
   | "archived"
@@ -99,6 +104,46 @@ const BADGE_CONFIG_MAP: Record<string, BadgeConfig> = {
     icon: CheckCircle2,
     iconClass: "text-emerald-600",
     defaultLabelKey: "statusResolved",
+    isPill: true,
+  },
+  source_monitor_deleted: {
+    bg: "bg-slate-100",
+    text: "text-slate-700",
+    border: "border-slate-300",
+    icon: XCircle,
+    iconClass: "text-slate-500",
+    defaultLabelKey: "sourceMonitorDeleted",
+    defaultLabelFallback: "Closed (Source Deleted)",
+    isPill: true,
+  },
+  monitor_deleted: {
+    bg: "bg-slate-100",
+    text: "text-slate-700",
+    border: "border-slate-300",
+    icon: XCircle,
+    iconClass: "text-slate-500",
+    defaultLabelKey: "monitorDeletedBadge",
+    defaultLabelFallback: "Monitor Deleted",
+    isPill: true,
+  },
+  manual: {
+    bg: "bg-blue-50",
+    text: "text-blue-700",
+    border: "border-blue-200",
+    icon: UserCheck,
+    iconClass: "text-blue-600",
+    defaultLabelKey: "manualResolution",
+    defaultLabelFallback: "Manual Resolution",
+    isPill: true,
+  },
+  automatic_recovery: {
+    bg: "bg-emerald-50",
+    text: "text-emerald-700",
+    border: "border-emerald-200",
+    icon: CheckCircle2,
+    iconClass: "text-emerald-600",
+    defaultLabelKey: "automaticRecovery",
+    defaultLabelFallback: "Automatic Recovery",
     isPill: true,
   },
   active: {

@@ -20,6 +20,7 @@ import {
   ShieldAlert,
   Server,
   ExternalLink,
+  X,
 } from "lucide-react";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Badge } from "@/components/ui/Badge";
@@ -60,6 +61,12 @@ interface IncidentDetail {
   acknowledged_by?: string;
   acknowledged_by_name?: string;
   acknowledged_by_email?: string;
+  resolved_by?: string;
+  resolved_by_name?: string;
+  resolved_by_email?: string;
+  resolution_type?: "automatic_recovery" | "manual" | "source_monitor_deleted" | string;
+  resolution_note?: string;
+  heartbeat_archived_at?: string;
   duration_seconds?: number;
   summary?: string;
   created_at: string;
@@ -93,6 +100,11 @@ export default function IncidentDetailPage({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<any>(null);
   const [acking, setAcking] = useState(false);
+
+  // Manual resolution modal state
+  const [showResolveModal, setShowResolveModal] = useState(false);
+  const [resolutionNote, setResolutionNote] = useState("");
+  const [resolvingLoading, setResolvingLoading] = useState(false);
 
   const canAck = role === "owner" || role === "admin" || role === "member";
 
@@ -150,12 +162,33 @@ export default function IncidentDetailPage({
     }
   };
 
+  const handleResolve = async () => {
+    setResolvingLoading(true);
+    try {
+      await apiFetch(`/api/v1/incidents/${id}/resolve`, {
+        method: "POST",
+        body: JSON.stringify({ note: resolutionNote.trim() || undefined }),
+      });
+      toast.success(isRTL ? "حادثه با موفقیت رفع شد" : "Incident manually resolved");
+      setShowResolveModal(false);
+      setResolutionNote("");
+      fetchIncident();
+    } catch (err: any) {
+      toast.error(err.message || "Failed to resolve incident");
+    } finally {
+      setResolvingLoading(false);
+    }
+  };
+
   const formatDuration = (sec?: number) => {
     if (sec === undefined || sec === null) return "—";
     if (sec >= 3600) return `${Math.floor(sec / 3600)}h ${Math.floor((sec % 3600) / 60)}m`;
     if (sec >= 60) return `${Math.floor(sec / 60)}m ${sec % 60}s`;
     return `${sec}s`;
   };
+
+  const isSourceDeleted =
+    incident?.resolution_type === "source_monitor_deleted" || !!incident?.heartbeat_archived_at;
 
   return (
     <AppLayout>
@@ -169,14 +202,28 @@ export default function IncidentDetailPage({
             { label: incident?.target_name || id },
           ]}
           actions={
-            incident && incident.status === "open" && !incident.acknowledged_at && canAck ? (
-              <Button
-                icon={<UserCheck className="w-4 h-4" />}
-                loading={acking}
-                onClick={handleAcknowledge}
-              >
-                {t.acknowledge}
-              </Button>
+            incident && incident.status === "open" && canAck ? (
+              <div className="flex items-center gap-2">
+                {!incident.acknowledged_at && (
+                  <Button
+                    icon={<UserCheck className="w-4 h-4" />}
+                    loading={acking}
+                    onClick={handleAcknowledge}
+                  >
+                    {t.acknowledge}
+                  </Button>
+                )}
+                <Button
+                  variant="outline"
+                  icon={<CheckCircle2 className="w-4 h-4 text-emerald-600" />}
+                  onClick={() => {
+                    setShowResolveModal(true);
+                    setResolutionNote("");
+                  }}
+                >
+                  {t.resolveIncident}
+                </Button>
+              </div>
             ) : null
           }
         />
@@ -192,9 +239,25 @@ export default function IncidentDetailPage({
           />
         ) : (
           <div className="space-y-6">
+            {/* Deleted Monitor Informative Banner */}
+            {isSourceDeleted && (
+              <div className="bg-amber-50/90 border border-amber-200/90 rounded-xl p-4 flex items-start gap-3 text-xs">
+                <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-bold text-amber-900">{t.sourceDeletedNotice}</span>
+                    <Badge variant="monitor_deleted" className="text-[10px] py-0 px-1.5" />
+                  </div>
+                  <p className="text-amber-700 leading-relaxed">
+                    {t.deletedMonitorNotice}
+                  </p>
+                </div>
+              </div>
+            )}
+
             {/* Status and Summary Banner */}
             <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm">
-              <div className="flex items-center justify-between pb-4 border-b border-slate-100 mb-6">
+              <div className="flex items-center justify-between pb-4 border-b border-slate-100 mb-6 flex-wrap gap-3">
                 <div className="flex items-center gap-3">
                   <div
                     className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
@@ -216,10 +279,13 @@ export default function IncidentDetailPage({
                     </p>
                   </div>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   <Badge variant={incident.status} />
-                  {incident.acknowledged_at && (
+                  {incident.status === "open" && incident.acknowledged_at && (
                     <Badge variant="acknowledged" label={t.statusAcknowledged} />
+                  )}
+                  {incident.status === "resolved" && incident.resolution_type && (
+                    <Badge variant={incident.resolution_type} />
                   )}
                 </div>
               </div>
@@ -242,7 +308,7 @@ export default function IncidentDetailPage({
                   <span className="block text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-1">
                     {t.targetType}
                   </span>
-                  <div className="flex items-center gap-1 font-medium text-slate-700">
+                  <div className="flex items-center gap-1 font-medium text-slate-700 flex-wrap">
                     {incident.target_type === "monitor" ? (
                       <>
                         <Globe className="w-3.5 h-3.5 text-blue-500" />
@@ -251,7 +317,19 @@ export default function IncidentDetailPage({
                     ) : (
                       <>
                         <Radio className="w-3.5 h-3.5 text-purple-500" />
-                        <span>{t.cronHeartbeat}</span>
+                        {isSourceDeleted ? (
+                          <span className="text-slate-600">{t.cronHeartbeat}</span>
+                        ) : (
+                          <Link
+                            href={`/heartbeats/${incident.heartbeat_monitor_id}`}
+                            className="hover:text-purple-600 hover:underline"
+                          >
+                            {t.cronHeartbeat}
+                          </Link>
+                        )}
+                        {isSourceDeleted && (
+                          <Badge variant="monitor_deleted" className="text-[10px] py-0 px-1.5" />
+                        )}
                       </>
                     )}
                   </div>
@@ -295,15 +373,6 @@ export default function IncidentDetailPage({
 
                 <div>
                   <span className="block text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-1">
-                    {t.resolvedAt}
-                  </span>
-                  <span className="text-slate-700 font-medium">
-                    {incident.resolved_at ? new Date(incident.resolved_at).toLocaleString() : "—"}
-                  </span>
-                </div>
-
-                <div>
-                  <span className="block text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-1">
                     {t.acknowledgedBy}
                   </span>
                   {incident.acknowledged_at ? (
@@ -314,9 +383,41 @@ export default function IncidentDetailPage({
                       </div>
                     </div>
                   ) : (
-                    <span className="text-slate-400 italic">{isRTL ? "هنوز تأیید نشده است" : "Unacknowledged"}</span>
+                    <span className="text-rose-500 font-medium">{isRTL ? "هنوز تأیید نشده است" : "Unacknowledged"}</span>
                   )}
                 </div>
+
+                <div>
+                  <span className="block text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-1">
+                    {t.resolvedAt}
+                  </span>
+                  {incident.resolved_at ? (
+                    <div className="text-slate-700 font-medium">
+                      <span>
+                        {incident.resolved_by_name || incident.resolved_by_email
+                          ? `${t.resolvedBy} ${incident.resolved_by_name || incident.resolved_by_email}`
+                          : (isRTL ? "رفع خودکار" : "Automatic")}
+                      </span>
+                      <div className="text-[10px] text-slate-400">
+                        {new Date(incident.resolved_at).toLocaleString()}
+                      </div>
+                    </div>
+                  ) : (
+                    <span className="text-slate-400 italic">—</span>
+                  )}
+                </div>
+
+                {/* Optional Resolution Note Display */}
+                {incident.resolution_note && (
+                  <div className="col-span-2 md:col-span-4 p-3.5 bg-slate-50 border border-slate-200/80 rounded-xl space-y-1">
+                    <span className="block text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
+                      {t.resolutionNote}
+                    </span>
+                    <p className="text-slate-800 text-xs leading-relaxed whitespace-pre-wrap">
+                      {incident.resolution_note}
+                    </p>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -397,6 +498,10 @@ export default function IncidentDetailPage({
                   <p className="text-xs text-slate-400 italic">
                     {incident.status === "open"
                       ? (isRTL ? "حادثه هنوز باز است و ریکاور نشده است" : "Incident is currently open; awaiting recovery check")
+                      : incident.resolution_type === "source_monitor_deleted"
+                      ? (isRTL ? "بسته شده به دلیل حذف مانیتور منبع (بدون تست ریکاور)" : "Resolved via source monitor deletion (no recovery check required)")
+                      : incident.resolution_type === "manual"
+                      ? (isRTL ? "بسته شده با رفع دستی اپراتور (بدون تست ریکاور)" : "Resolved manually by operator (no recovery check required)")
                       : (isRTL ? "اطلاعات ریکاور مستقلی ضمیمه نشده است" : "Recovery diagnostics not recorded")}
                   </p>
                 )}
@@ -448,6 +553,80 @@ export default function IncidentDetailPage({
           </div>
         )}
       </div>
+
+      {/* Manual Resolution Modal */}
+      {showResolveModal && incident && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm animate-in fade-in duration-150"
+        >
+          <div
+            className="w-full max-w-md bg-white border border-slate-200 rounded-2xl shadow-xl overflow-hidden p-6 relative transition-all"
+            dir={isRTL ? "rtl" : "ltr"}
+          >
+            <button
+              onClick={() => {
+                setShowResolveModal(false);
+                setResolutionNote("");
+              }}
+              disabled={resolvingLoading}
+              className="absolute top-4 end-4 p-1.5 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 transition-colors"
+            >
+              <X className="w-4 h-4" />
+            </button>
+
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 rounded-xl bg-blue-50 border border-blue-200 flex items-center justify-center text-blue-600 shrink-0">
+                <CheckCircle2 className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-slate-900">{t.confirmResolveTitle}</h3>
+                <p className="text-xs text-slate-500 font-mono mt-0.5">{incident.target_name}</p>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-600 mb-4 leading-relaxed">
+              {t.confirmResolveDesc}
+            </p>
+
+            <div className="space-y-1.5 mb-5">
+              <label className="block text-xs font-semibold text-slate-700">
+                {t.resolutionNote} <span className="text-slate-400 font-normal">({isRTL ? "اختیاری" : "Optional"})</span>
+              </label>
+              <textarea
+                value={resolutionNote}
+                onChange={(e) => setResolutionNote(e.target.value)}
+                placeholder={t.resolutionNotePlaceholder}
+                rows={3}
+                className="w-full text-xs p-2.5 rounded-lg border border-slate-200 bg-slate-50/50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-slate-800 resize-none"
+              />
+            </div>
+
+            <div className="flex items-center justify-end gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setShowResolveModal(false);
+                  setResolutionNote("");
+                }}
+                disabled={resolvingLoading}
+              >
+                {t.cancel}
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                loading={resolvingLoading}
+                onClick={handleResolve}
+              >
+                {t.resolveIncident}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </AppLayout>
   );
 }

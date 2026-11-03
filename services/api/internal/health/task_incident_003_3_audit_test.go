@@ -736,13 +736,13 @@ func TestMigrationCompatibility_15_and_16(t *testing.T) {
 			t.Fatalf("expected v15 signature '%s', got '%s'", expectedV15Sig, sig15)
 		}
 
-		// Now apply engine.Up to apply version 16
+		// Now apply engine.Up to apply version 16 and forward
 		applied, err := engine.Up(ctx)
 		if err != nil {
-			t.Fatalf("engine.Up failed upgrading from 15 to 16: %v", err)
+			t.Fatalf("engine.Up failed upgrading from 15: %v", err)
 		}
-		if applied != 1 {
-			t.Fatalf("expected 1 migration applied, got %d", applied)
+		if applied < 1 {
+			t.Fatalf("expected at least 1 migration applied, got %d", applied)
 		}
 
 		// Verify version 16 replaced it cleanly without leaving 3-arg overload behind
@@ -763,6 +763,16 @@ func TestMigrationCompatibility_15_and_16(t *testing.T) {
 		expectedV16Sig := "p_interval_multiplier integer, p_min_tolerance_seconds integer, p_lease_timeout_seconds integer, p_limit integer"
 		if sig16 != expectedV16Sig {
 			t.Fatalf("expected v16 signature '%s', got '%s'", expectedV16Sig, sig16)
+		}
+
+		// If migrations beyond 16 were applied (e.g. 17), roll them back first so we test 16 rollback
+		if applied > 1 {
+			for i := 1; i < applied; i++ {
+				_, err = engine.Down(ctx)
+				if err != nil {
+					t.Fatalf("engine.Down failed rolling back forward migration: %v", err)
+				}
+			}
 		}
 
 		// Down migration: Rollback 16 -> should restore version 15 definition
@@ -798,8 +808,8 @@ func TestMigrationCompatibility_15_and_16(t *testing.T) {
 		if err != nil {
 			t.Fatalf("engine.Up failed re-applying 16: %v", err)
 		}
-		if reApplied != 1 {
-			t.Fatalf("expected 1 migration re-applied, got %d", reApplied)
+		if reApplied < 1 {
+			t.Fatalf("expected at least 1 migration re-applied, got %d", reApplied)
 		}
 
 		var countAfterReapply int
