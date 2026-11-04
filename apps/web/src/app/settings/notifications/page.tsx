@@ -8,6 +8,8 @@ import { apiFetch, humanizeApiError } from "@/lib/api";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Badge } from "@/components/ui/Badge";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import {
   Bell,
   Send,
@@ -103,6 +105,8 @@ export default function NotificationSettingsPage() {
 
   // Test notification progress
   const [testingDestId, setTestingDestId] = useState<string | null>(null);
+  const [disconnectTargetId, setDisconnectTargetId] = useState<string | null>(null);
+  const [disconnecting, setDisconnecting] = useState<boolean>(false);
 
   const canManage = role === "owner" || role === "admin";
 
@@ -359,16 +363,20 @@ export default function NotificationSettingsPage() {
   };
 
   // Disconnect Destination
-  const handleDisconnect = async (destId: string) => {
-    if (!confirm(t.disconnectConfirm)) return;
+  const handleDisconnect = async () => {
+    if (!disconnectTargetId) return;
     try {
-      await apiFetch(`/api/v1/notifications/destinations/${destId}`, {
+      setDisconnecting(true);
+      await apiFetch(`/api/v1/notifications/destinations/${disconnectTargetId}`, {
         method: "DELETE",
       });
       setMessage({ type: "success", text: "Destination disconnected successfully" });
       fetchDestinations();
+      setDisconnectTargetId(null);
     } catch (err: any) {
       setMessage({ type: "error", text: humanizeApiError(err) });
+    } finally {
+      setDisconnecting(false);
     }
   };
 
@@ -448,35 +456,53 @@ export default function NotificationSettingsPage() {
   return (
     <AppLayout>
       <div className="max-w-6xl mx-auto space-y-6">
-        {/* Header */}
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-slate-200 pb-5">
-          <div>
-            <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
-              <Bell className="w-6 h-6 text-blue-600" />
-              {t.notificationSettings}
-            </h1>
-            <p className="text-slate-500 text-sm mt-1">{t.notificationSettingsDesc}</p>
-          </div>
+        {/* Page Header */}
+        <PageHeader
+          title={t.notificationSettings}
+          description={t.notificationSettingsDesc}
+          icon={<Bell className="w-6 h-6 text-blue-600" />}
+          actions={
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setActiveTab("destinations")}
+                className={`px-3.5 py-1.5 text-xs sm:text-sm font-semibold rounded-xl transition-all ${
+                  activeTab === "destinations"
+                    ? "bg-blue-600 text-white shadow-xs"
+                    : "bg-white text-slate-700 hover:bg-slate-100 border border-slate-200"
+                }`}
+              >
+                {t.telegramDestinations} & {t.emailDestinations}
+              </button>
+              <button
+                onClick={() => setActiveTab("history")}
+                className={`px-3.5 py-1.5 text-xs sm:text-sm font-semibold rounded-xl transition-all ${
+                  activeTab === "history"
+                    ? "bg-blue-600 text-white shadow-xs"
+                    : "bg-white text-slate-700 hover:bg-slate-100 border border-slate-200"
+                }`}
+              >
+                {t.deliveryHistory}
+              </button>
+            </div>
+          }
+        />
 
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => setActiveTab("destinations")}
-              className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${activeTab === "destinations"
-                  ? "bg-blue-600 text-white"
-                  : "bg-white text-slate-700 hover:bg-slate-100 border border-slate-200"
-                }`}
-            >
-              {t.telegramDestinations} & {t.emailDestinations}
-            </button>
-            <button
-              onClick={() => setActiveTab("history")}
-              className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${activeTab === "history"
-                  ? "bg-blue-600 text-white"
-                  : "bg-white text-slate-700 hover:bg-slate-100 border border-slate-200"
-                }`}
-            >
-              {t.deliveryHistory}
-            </button>
+        {/* Deferred Integration Status Banner (TASK-012 Notice) */}
+        <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-700 flex items-start gap-3">
+          <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+          <div className="space-y-1">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="font-bold text-slate-900">{t.productionDeferredNotice || "Notice: Production delivery via SMTP and Telegram is deferred for TASK-012."}</span>
+              <Badge variant="outline" className="text-[10px] font-mono">
+                TASK-012
+              </Badge>
+            </div>
+            <p className="text-slate-600 text-[11px] sm:text-xs leading-relaxed">
+              {isRTL
+                ? "پیکربندی کانال‌ها، آزمون اتصال و مدیریت اشتراک رویدادها در این بخش به طور کامل فعال است. ارسال واقعی پیام‌ها به شبکه‌های خارجی به صورت عمدی تا فاز بعدی غیرفعال نگه داشته شده است."
+                : "Destination management, token verification, and event subscription toggles are fully operational. External live message forwarding is intentionally deferred until production transports are activated."
+              }
+            </p>
           </div>
         </div>
 
@@ -667,7 +693,7 @@ export default function NotificationSettingsPage() {
 
                         {canManage && (
                           <button
-                            onClick={() => handleDisconnect(d.id)}
+                            onClick={() => setDisconnectTargetId(d.id)}
                             className="p-1.5 text-rose-600 hover:bg-rose-50 rounded transition-colors"
                             title={t.disconnect}
                           >
@@ -819,7 +845,7 @@ export default function NotificationSettingsPage() {
 
                         {canManage && (
                           <button
-                            onClick={() => handleDisconnect(d.id)}
+                            onClick={() => setDisconnectTargetId(d.id)}
                             className="p-1.5 text-rose-600 hover:bg-rose-50 rounded transition-colors"
                             title={t.disconnect}
                           >
@@ -1251,6 +1277,18 @@ export default function NotificationSettingsPage() {
             </div>
           </div>
         )}
+
+        {/* Confirm Disconnect Modal */}
+        <ConfirmModal
+          isOpen={!!disconnectTargetId}
+          onClose={() => setDisconnectTargetId(null)}
+          onConfirm={handleDisconnect}
+          title={t.disconnectConfirmTitle || "Disconnect Channel"}
+          message={t.disconnectConfirmMessage || t.disconnectConfirm}
+          confirmLabel={t.disconnect}
+          variant="danger"
+          loading={disconnecting}
+        />
       </div>
     </AppLayout>
   );
