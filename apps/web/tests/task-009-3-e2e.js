@@ -50,8 +50,10 @@ async function runTask009_3_E2E() {
     await page.goto(`${BASE_URL}/login`, { waitUntil: "networkidle" });
     await page.fill('input[type="email"]', ownerEmail);
     await page.fill('input[type="password"]', ownerPassword);
-    await page.click('button[type="submit"]');
-    await page.waitForTimeout(1500);
+    await Promise.all([
+      page.waitForURL("**/dashboard", { timeout: 10000 }),
+      page.click('button[type="submit"]'),
+    ]);
 
     // Attempt to access /platform-admin
     await page.goto(`${BASE_URL}/platform-admin`, { waitUntil: "networkidle" });
@@ -69,8 +71,10 @@ async function runTask009_3_E2E() {
     await page.goto(`${BASE_URL}/login`, { waitUntil: "networkidle" });
     await page.fill('input[type="email"]', adminEmail);
     await page.fill('input[type="password"]', adminPassword);
-    await page.click('button[type="submit"]');
-    await page.waitForTimeout(1500);
+    await Promise.all([
+      page.waitForURL("**/dashboard", { timeout: 10000 }),
+      page.click('button[type="submit"]'),
+    ]);
 
     await page.goto(`${BASE_URL}/platform-admin`, { waitUntil: "networkidle" });
     await page.waitForTimeout(1500);
@@ -178,8 +182,10 @@ async function runTask009_3_E2E() {
     await mobilePage.goto(`${BASE_URL}/login`, { waitUntil: "networkidle" });
     await mobilePage.fill('input[type="email"]', adminEmail);
     await mobilePage.fill('input[type="password"]', adminPassword);
-    await mobilePage.click('button[type="submit"]');
-    await mobilePage.waitForTimeout(1500);
+    await Promise.all([
+      mobilePage.waitForURL("**/dashboard", { timeout: 10000 }),
+      mobilePage.click('button[type="submit"]'),
+    ]);
 
     // Mobile Admin Overview & Navigation
     await mobilePage.goto(`${BASE_URL}/platform-admin`, { waitUntil: "networkidle" });
