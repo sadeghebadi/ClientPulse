@@ -213,12 +213,168 @@ if [[ "${AVAIL_DISK}" -lt 5 ]]; then
     exit 1
 fi
 
-echo "3. Checking Port Availability (3100, 8090)..."
-if sudo ss -tlnp | grep -E ':(3100|8090) '; then
-    echo "❌ FATAL: Port 3100 or 8090 is already bound on host!"
-    exit 1
-fi
-echo "   Ports 3100 and 8090 are available."
+echo "3. Checking Port Availability & Ownership (3100, 8090)..."
+
+# BEGIN: PORT_VALIDATION_FUNCTIONS
+validate_port_ownership() {
+    local port="$1"
+    local expected_container="$2"
+    local expected_project="$3"
+    local expected_service="$4"
+    local expected_host_ip="$5"
+    local expected_container_port="$6"
+
+    local expected_binding="${expected_container_port}->${expected_host_ip}:${port}"
+    local docker_cmd="${DOCKER_CMD:-}"
+    local ss_cmd="${SS_CMD:-}"
+
+    if [[ -z "${docker_cmd}" ]]; then
+        if command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+            docker_cmd="sudo docker"
+        else
+            docker_cmd="docker"
+        fi
+    fi
+
+    if [[ -z "${ss_cmd}" ]]; then
+        if command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+            ss_cmd="sudo ss"
+        else
+            ss_cmd="ss"
+        fi
+    fi
+
+    # Check if any listening TCP sockets exist on this port
+    local host_sockets=""
+    if ! host_sockets=$(${ss_cmd} -tlnpH "sport = :${port}" 2>/dev/null); then
+        host_sockets=$(${ss_cmd} -tlnp 2>/dev/null | grep -E "[:.]${port}[[:space:]]" || true)
+    fi
+
+    # Case A: Port is free
+    if [[ -z "${host_sockets}" ]]; then
+        echo "   [PORT ${port} OK] Port is free (available for installation)."
+        return 0
+    fi
+
+    # Port is occupied. Inspect host socket listeners
+    local invalid_host_socket=false
+    while IFS= read -r line; do
+        [[ -z "${line}" ]] && continue
+        local local_addr
+        local_addr=$(echo "${line}" | awk '{print $4}')
+        local_addr="${local_addr#\[}"
+        local_addr="${local_addr%\]}"
+        if [[ "${local_addr}" != "${expected_host_ip}:${port}" ]]; then
+            echo "❌ FATAL: Conflicting listener address on host for port ${port}: found '${local_addr}', expected loopback only '${expected_host_ip}:${port}'! Full socket: ${line}"
+            invalid_host_socket=true
+        fi
+
+        if [[ "${line}" =~ users:\(\(\"([^\"]+)\" ]]; then
+            local proc_name="${BASH_REMATCH[1]}"
+            if [[ "${proc_name}" != "docker-proxy" ]]; then
+                echo "❌ FATAL: Port ${port} is occupied by host process '${proc_name}' (not Docker)! Full socket: ${line}"
+                return 1
+            fi
+        fi
+    done <<< "${host_sockets}"
+
+    if [[ "${invalid_host_socket}" == "true" ]]; then
+        return 1
+    fi
+
+    # Port is occupied. Verify ownership against Docker metadata
+    local inspect_out=""
+    local inspect_exit=0
+    inspect_out=$(${docker_cmd} inspect --format '{{.State.Running}}|{{if .Config.Labels}}{{index .Config.Labels "com.docker.compose.project"}}{{end}}|{{if .Config.Labels}}{{index .Config.Labels "com.docker.compose.service"}}{{end}}|{{if .NetworkSettings.Ports}}{{range $p, $bindings := .NetworkSettings.Ports}}{{range $bindings}}{{$p}}->{{.HostIp}}:{{.HostPort}} {{end}}{{end}}{{end}}' "${expected_container}" 2>&1) || inspect_exit=$?
+
+    if [[ ${inspect_exit} -ne 0 ]]; then
+        if [[ "${inspect_out}" =~ [Nn]o\ such\ (container|object) ]]; then
+            local conflict_container=""
+            conflict_container=$(${docker_cmd} ps --filter "publish=${port}" --format "{{.Names}}" 2>/dev/null || true)
+            if [[ -n "${conflict_container}" ]]; then
+                echo "❌ FATAL: Port ${port} is occupied by unrelated container '${conflict_container}', but expected container '${expected_container}' does not exist!"
+            else
+                local proc_info
+                proc_info=$(echo "${host_sockets}" | awk 'NR==1')
+                echo "❌ FATAL: Port ${port} is occupied on host, but expected container '${expected_container}' does not exist! Active listener: ${proc_info}"
+            fi
+            return 1
+        else
+            echo "❌ FATAL: Failed to inspect container '${expected_container}' with Docker (exit code ${inspect_exit}): ${inspect_out}"
+            echo "   Cannot safely verify port ${port} ownership."
+            return 1
+        fi
+    fi
+
+    if [[ -z "${inspect_out}" ]]; then
+        echo "❌ FATAL: Docker inspect returned empty output for container '${expected_container}'!"
+        return 1
+    fi
+
+    local is_running=""
+    local compose_project=""
+    local compose_service=""
+    local port_bindings=""
+    IFS='|' read -r is_running compose_project compose_service port_bindings <<< "${inspect_out}"
+
+    if [[ "${is_running}" != "true" ]]; then
+        local conflict_container=""
+        conflict_container=$(${docker_cmd} ps --filter "publish=${port}" --format "{{.Names}}" 2>/dev/null || true)
+        if [[ -n "${conflict_container}" ]]; then
+            echo "❌ FATAL: Port ${port} is occupied by conflicting container '${conflict_container}' (expected '${expected_container}' is not running)!"
+        else
+            local proc_info
+            proc_info=$(echo "${host_sockets}" | awk 'NR==1')
+            echo "❌ FATAL: Port ${port} is bound on host, but expected container '${expected_container}' is not running! Active listener: ${proc_info}"
+        fi
+        return 1
+    fi
+
+    if [[ "${compose_project}" != "${expected_project}" ]] || [[ "${compose_service}" != "${expected_service}" ]]; then
+        echo "❌ FATAL: Container '${expected_container}' bound to port ${port} has invalid Docker Compose labels!"
+        echo "   Expected project='${expected_project}', service='${expected_service}'"
+        echo "   Found    project='${compose_project}', service='${compose_service}'"
+        return 1
+    fi
+
+    local binding_match=false
+    for b in ${port_bindings}; do
+        if [[ "${b}" == "${expected_binding}" ]]; then
+            binding_match=true
+            break
+        fi
+    done
+
+    if [[ "${binding_match}" != "true" ]]; then
+        echo "❌ FATAL: Container '${expected_container}' does not have the expected port binding for port ${port}!"
+        echo "   Expected binding: '${expected_binding}'"
+        echo "   Actual bindings:  '${port_bindings:-none}'"
+        return 1
+    fi
+
+    echo "   [PORT ${port} OK] Verified existing ClientPulse service '${expected_service}' (${expected_container} on ${expected_binding})."
+    return 0
+}
+
+check_clientpulse_ports() {
+    local all_ok=true
+    if ! validate_port_ownership "3100" "clientpulse-web-1" "clientpulse" "web" "127.0.0.1" "3000/tcp"; then
+        all_ok=false
+    fi
+    if ! validate_port_ownership "8090" "clientpulse-api-1" "clientpulse" "api" "127.0.0.1" "8080/tcp"; then
+        all_ok=false
+    fi
+
+    if [[ "${all_ok}" != "true" ]]; then
+        echo "❌ FATAL: Port availability and ownership validation failed!"
+        return 1
+    fi
+    echo "   Ports 3100 and 8090 verified successfully."
+    return 0
+}
+# END: PORT_VALIDATION_FUNCTIONS
+
+check_clientpulse_ports
 
 echo "4. Checking Authorized Nginx Site & TLS Certificate..."
 if [[ ! -f /etc/nginx/sites-available/mindu.ir ]]; then
