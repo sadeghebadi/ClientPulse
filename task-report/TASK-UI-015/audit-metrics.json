@@ -1,0 +1,79 @@
+{
+  "urlTested": "https://mindu.ir",
+  "timestamp": "2026-11-04T16:08:20.521Z",
+  "viewports": {},
+  "consoleErrors": [
+    "[Console Error] Failed to load resource: the server responded with a status of 404 (Not Found)"
+  ],
+  "performanceMetrics": {},
+  "observations": {},
+  "domSummary": {
+    "canvases": [
+      {
+        "width": 1214,
+        "height": 720,
+        "parentClass": "w-full h-full cursor-grab active:cursor-grabbing",
+        "style": "display: block; width: 1214px; height: 720px;"
+      },
+      {
+        "width": 1440,
+        "height": 900,
+        "parentClass": "absolute inset-0 w-full h-full pointer-events-none overflow-hidden",
+        "style": "display: block; width: 1440px; height: 900px;"
+      }
+    ],
+    "sections": [
+      {
+        "id": "",
+        "className": "relative overflow-hidden pt-8 pb-16 sm:pt-16 sm:pb-24 lg:pt-20 lg:pb-32 bg-[#050",
+        "height": 1700
+      },
+      {
+        "id": "story",
+        "className": "relative min-h-[500vh] sm:min-h-[550vh] bg-[#050811] text-slate-100 scroll-mt-0",
+        "height": 4950
+      },
+      {
+        "id": "demo",
+        "className": "py-20 sm:py-32 bg-[#050811] text-slate-100 relative overflow-hidden border-b bor",
+        "height": 1244
+      },
+      {
+        "id": "features",
+        "className": "py-20 sm:py-32 bg-[#060913] text-slate-100 border-b border-slate-800 scroll-mt-2",
+        "height": 1156
+      },
+      {
+        "id": "",
+        "className": "py-20 sm:py-32 bg-[#050811] text-slate-100 border-b border-slate-800 relative ov",
+        "height": 1011
+      },
+      {
+        "id": "",
+        "className": "py-20 sm:py-32 bg-[#060913] text-slate-100 border-b border-slate-800 relative ov",
+        "height": 921
+      },
+      {
+        "id": "",
+        "className": "py-20 sm:py-32 bg-[#050811] text-slate-100 border-b border-slate-800 relative ov",
+        "height": 1004
+      },
+      {
+        "id": "value",
+        "className": "py-20 sm:py-32 bg-[#060913] text-slate-100 border-b border-slate-800 scroll-mt-2",
+        "height": 1124
+      },
+      {
+        "id": "preview",
+        "className": "py-20 sm:py-28 bg-[#070b14] text-slate-100 border-b border-slate-800 scroll-mt-2",
+        "height": 821
+      },
+      {
+        "id": "",
+        "className": "py-24 sm:py-36 bg-gradient-to-b from-[#060913] via-[#0b1224] to-[#04060c] text-w",
+        "height": 732
+      }
+    ],
+    "bodyHeight": 15129
+  }
+}
