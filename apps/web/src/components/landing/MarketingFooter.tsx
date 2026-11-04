@@ -54,20 +54,29 @@ export function MarketingFooter() {
             <ul className="space-y-2">
               <li>
                 <a
+                  href="#story"
+                  onClick={(e) => handleSmoothScroll(e, "#story")}
+                  className="hover:text-white transition-colors"
+                >
+                  {isRTL ? "روایت پایش" : "Story"}
+                </a>
+              </li>
+              <li>
+                <a
+                  href="#demo"
+                  onClick={(e) => handleSmoothScroll(e, "#demo")}
+                  className="hover:text-white transition-colors"
+                >
+                  {isRTL ? "زمین بازی" : "Playground"}
+                </a>
+              </li>
+              <li>
+                <a
                   href="#features"
                   onClick={(e) => handleSmoothScroll(e, "#features")}
                   className="hover:text-white transition-colors"
                 >
                   {t.landingNavFeatures}
-                </a>
-              </li>
-              <li>
-                <a
-                  href="#how-it-works"
-                  onClick={(e) => handleSmoothScroll(e, "#how-it-works")}
-                  className="hover:text-white transition-colors"
-                >
-                  {t.landingNavHowItWorks}
                 </a>
               </li>
               <li>

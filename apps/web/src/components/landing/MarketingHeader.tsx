@@ -38,8 +38,9 @@ export function MarketingHeader() {
   }, [mobileMenuOpen]);
 
   const navLinks = [
+    { href: "#story", label: isRTL ? "روایت پایش" : "Story" },
+    { href: "#demo", label: isRTL ? "زمین بازی" : "Playground" },
     { href: "#features", label: t.landingNavFeatures },
-    { href: "#how-it-works", label: t.landingNavHowItWorks },
     { href: "#value", label: t.landingNavValue },
     { href: "#preview", label: t.landingNavPreview },
   ];

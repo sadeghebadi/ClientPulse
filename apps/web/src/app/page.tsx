@@ -6,10 +6,12 @@ import { useAuth } from "@/lib/auth-context";
 import { MarketingHeader } from "@/components/landing/MarketingHeader";
 import { HeroSection } from "@/components/landing/HeroSection";
 import { MonitoringLifecycleStory } from "@/components/landing/MonitoringLifecycleStory";
-import { CapabilitiesSection } from "@/components/landing/CapabilitiesSection";
-import { HowItWorksSection } from "@/components/landing/HowItWorksSection";
 import { InteractiveProductDemo } from "@/components/landing/InteractiveProductDemo";
-import { AgencyValueSection } from "@/components/landing/AgencyValueSection";
+import { WebAndApiObservabilitySection } from "@/components/landing/WebAndApiObservabilitySection";
+import { HeartbeatPulseSection } from "@/components/landing/HeartbeatPulseSection";
+import { IncidentCommandSection } from "@/components/landing/IncidentCommandSection";
+import { HistoricalReportsAnalyticsSection } from "@/components/landing/HistoricalReportsAnalyticsSection";
+import { AgencyCareRetainerSection } from "@/components/landing/AgencyCareRetainerSection";
 import { ProductPreviewSection } from "@/components/landing/ProductPreviewSection";
 import { FinalCtaSection } from "@/components/landing/FinalCtaSection";
 import { MarketingFooter } from "@/components/landing/MarketingFooter";
@@ -26,34 +28,40 @@ export default function MarketingLandingPage() {
   }, [user, loading, router]);
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#070b14] text-slate-100 antialiased selection:bg-blue-600 selection:text-white overflow-x-hidden">
+    <div className="min-h-screen flex flex-col bg-[#050811] text-slate-100 antialiased selection:bg-blue-600 selection:text-white overflow-x-hidden">
       {/* Public Marketing Header */}
       <MarketingHeader />
 
-      {/* Main Cinematic Marketing Narrative Sections */}
+      {/* Main Award-Level Marketing Narrative & Interactive Experience */}
       <main className="flex-1 w-full">
-        {/* 1. Cinematic Hero with 3D Node Mesh & Dynamic Counters */}
+        {/* 1. Immersive 3D Spatial Observability Hero */}
         <HeroSection />
 
-        {/* 2. Scroll-Driven Monitoring Lifecycle Story (5 Choreographed Scenes) */}
+        {/* 2. Scroll-Driven Cinematic Reliability Story (6 Choreographed Scenes) */}
         <MonitoringLifecycleStory />
 
-        {/* 3. Core Implemented Capabilities with 3D Tilt Micro-Interactions */}
-        <CapabilitiesSection />
-
-        {/* 4. Interactive Live Monitoring Sandbox (Outage & Recovery Simulator) */}
+        {/* 3. Live Interactive Monitoring Playground (Outage & Recovery Sandbox) */}
         <InteractiveProductDemo />
 
-        {/* 5. How It Works - Agency Operational Workflow */}
-        <HowItWorksSection />
+        {/* 4. Website & API Observability Engine (Interactive Request/Response Studio) */}
+        <WebAndApiObservabilitySection />
 
-        {/* 6. Agency Value Proposition */}
-        <AgencyValueSection />
+        {/* 5. Cron & Worker Heartbeat Pulse Chamber (EKG-style Oscillogram) */}
+        <HeartbeatPulseSection />
 
-        {/* 7. Product Preview Showcase */}
+        {/* 6. Tactical Incident Command & Resolution Timeline Desk */}
+        <IncidentCommandSection />
+
+        {/* 7. Historical Analytics & 90-Day Reliability Heatmap */}
+        <HistoricalReportsAnalyticsSection />
+
+        {/* 8. Dedicated Team & Agency Retainer Capabilities (Secondary Use Case) */}
+        <AgencyCareRetainerSection />
+
+        {/* 9. Authentic High-Fidelity Product Preview Showcase */}
         <ProductPreviewSection />
 
-        {/* 8. Final Call to Action */}
+        {/* 10. Cinematic Horizon Final Call to Action */}
         <FinalCtaSection />
       </main>
 
