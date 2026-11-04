@@ -2,10 +2,11 @@ package mail
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"net/smtp"
-	"strings"
 	"sync"
+
+	"clientpulse/services/api/internal/notification/email"
 )
 
 // EmailSender defines the interface for delivering emails.
@@ -22,44 +23,40 @@ type SMTPConfig struct {
 	Username string
 	Password string
 	From     string
+	FromName string
+	TLSMode  string
 }
 
-// SMTPMailer delivers emails over standard SMTP (e.g. Mailpit, AWS SES, SendGrid).
+// SMTPMailer adapts email delivery to the hardened internal/notification/email.Client.
 type SMTPMailer struct {
-	cfg SMTPConfig
+	client email.EmailSender
 }
 
-// NewSMTPMailer creates an SMTP-backed email sender.
+// NewSMTPMailer creates an SMTP-backed email sender adapting to internal/notification/email.Client.
 func NewSMTPMailer(cfg SMTPConfig) *SMTPMailer {
-	return &SMTPMailer{cfg: cfg}
+	client := email.NewClient(email.SMTPConfig{
+		Host:      cfg.Host,
+		Port:      cfg.Port,
+		Username:  cfg.Username,
+		Password:  cfg.Password,
+		FromEmail: cfg.From,
+		FromName:  cfg.FromName,
+		TLSMode:   cfg.TLSMode,
+	})
+	return &SMTPMailer{client: client}
 }
 
-// SendEmail transmits an email via SMTP.
+// NewSMTPMailerWithSender wraps an existing email.EmailSender.
+func NewSMTPMailerWithSender(client email.EmailSender) *SMTPMailer {
+	return &SMTPMailer{client: client}
+}
+
+// SendEmail transmits an email via the unified hardened SMTP client.
 func (m *SMTPMailer) SendEmail(ctx context.Context, to, subject, htmlBody, textBody string) error {
-	addr := fmt.Sprintf("%s:%d", m.cfg.Host, m.cfg.Port)
-
-	var auth smtp.Auth
-	if m.cfg.Username != "" || m.cfg.Password != "" {
-		auth = smtp.PlainAuth("", m.cfg.Username, m.cfg.Password, m.cfg.Host)
+	if m.client == nil {
+		return errors.New("underlying email client is not configured")
 	}
-
-	headers := make(map[string]string)
-	headers["From"] = m.cfg.From
-	headers["To"] = to
-	headers["Subject"] = subject
-	headers["MIME-Version"] = "1.0"
-	headers["Content-Type"] = `text/html; charset="UTF-8"`
-
-	var msgBuilder strings.Builder
-	for k, v := range headers {
-		msgBuilder.WriteString(fmt.Sprintf("%s: %s\r\n", k, v))
-	}
-	msgBuilder.WriteString("\r\n")
-	msgBuilder.WriteString(htmlBody)
-
-	msg := []byte(msgBuilder.String())
-
-	return smtp.SendMail(addr, auth, m.cfg.From, []string{to}, msg)
+	return m.client.SendEmail(ctx, to, subject, htmlBody, textBody)
 }
 
 // SendVerificationEmail builds and sends an email verification notification.

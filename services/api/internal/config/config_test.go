@@ -134,6 +134,69 @@ func TestConfigValidation(t *testing.T) {
 			},
 			wantErr: true,
 		},
+		{
+			name: "valid TelegramProxyURL with http",
+			mutate: func(c *Config) {
+				c.TelegramProxyURL = "http://proxy.example.com:8080"
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid TelegramProxyURL with https",
+			mutate: func(c *Config) {
+				c.TelegramProxyURL = "https://proxy.example.com:8443"
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid TelegramProxyURL with socks5",
+			mutate: func(c *Config) {
+				c.TelegramProxyURL = "socks5://127.0.0.1:1080"
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid TelegramProxyURL with socks5 and auth",
+			mutate: func(c *Config) {
+				c.TelegramProxyURL = "socks5://proxyuser:proxypass@proxy.example.com:1080"
+			},
+			wantErr: false,
+		},
+		{
+			name: "invalid TelegramProxyURL with socks5h rejected",
+			mutate: func(c *Config) {
+				c.TelegramProxyURL = "socks5h://127.0.0.1:1080"
+			},
+			wantErr: true,
+		},
+		{
+			name: "invalid TelegramProxyURL with unsupported scheme ftp rejected",
+			mutate: func(c *Config) {
+				c.TelegramProxyURL = "ftp://proxy.example.com:21"
+			},
+			wantErr: true,
+		},
+		{
+			name: "invalid TelegramProxyURL missing host rejected",
+			mutate: func(c *Config) {
+				c.TelegramProxyURL = "http://"
+			},
+			wantErr: true,
+		},
+		{
+			name: "invalid TelegramProxyURL missing scheme rejected",
+			mutate: func(c *Config) {
+				c.TelegramProxyURL = "proxy.example.com:8080"
+			},
+			wantErr: true,
+		},
+		{
+			name: "invalid TelegramProxyURL malformed rejected",
+			mutate: func(c *Config) {
+				c.TelegramProxyURL = "://bad-url"
+			},
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -148,6 +211,25 @@ func TestConfigValidation(t *testing.T) {
 				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestSanitizeProxyURL(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"", ""},
+		{"http://proxy.example.com:8080", "http://proxy.example.com:8080"},
+		{"socks5://user:secret123@proxy.example.com:1080", "socks5://REDACTED@proxy.example.com:1080"},
+		{"https://admin:pass@127.0.0.1:8443", "https://REDACTED@127.0.0.1:8443"},
+	}
+
+	for _, tt := range tests {
+		got := SanitizeProxyURL(tt.input)
+		if got != tt.expected {
+			t.Errorf("SanitizeProxyURL(%q) = %q, want %q", tt.input, got, tt.expected)
+		}
 	}
 }
 

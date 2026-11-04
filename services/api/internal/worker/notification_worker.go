@@ -2,9 +2,13 @@ package worker
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math/rand"
+	"net"
+	"net/textproto"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -17,6 +21,11 @@ import (
 	"clientpulse/services/api/internal/repository"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+var (
+	smtpTransientRegex = regexp.MustCompile(`\b4[0-9]{2}\b`)
+	smtpPermanentRegex = regexp.MustCompile(`\b5[0-9]{2}\b`)
 )
 
 // Delivery Guarantee Contract:
@@ -43,6 +52,7 @@ type NotificationWorker struct {
 	contextResolver *notification.NotificationContextResolver
 	telegramMode    string
 	emailProvider   string
+	deliveryTimeout time.Duration
 }
 
 func NewNotificationWorker(
@@ -61,14 +71,23 @@ func NewNotificationWorker(
 		concurrency = 5
 	}
 	return &NotificationWorker{
-		repo:           repo,
-		telegramSender: telegramSender,
-		emailSender:    emailSender,
-		appBaseURL:     strings.TrimRight(appBaseURL, "/"),
-		workerID:       workerID,
-		concurrency:    concurrency,
-		logger:         logger,
+		repo:            repo,
+		telegramSender:  telegramSender,
+		emailSender:     emailSender,
+		appBaseURL:      strings.TrimRight(appBaseURL, "/"),
+		workerID:        workerID,
+		concurrency:     concurrency,
+		logger:          logger,
+		deliveryTimeout: 15 * time.Second,
 	}
+}
+
+// WithDeliveryTimeout sets the bounded per-delivery timeout (default is 15s).
+func (w *NotificationWorker) WithDeliveryTimeout(timeout time.Duration) *NotificationWorker {
+	if timeout > 0 {
+		w.deliveryTimeout = timeout
+	}
+	return w
 }
 
 // WithProviders sets the transport mode for Telegram and Email.
@@ -198,49 +217,70 @@ func (w *NotificationWorker) pollAndDeliver(ctx context.Context) {
 
 // Deliver processes and transmits a single notification delivery item.
 func (w *NotificationWorker) Deliver(ctx context.Context, d *repository.NotificationDelivery) error {
+	timeout := w.deliveryTimeout
+	if timeout <= 0 {
+		timeout = 15 * time.Second
+	}
+	deliveryCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
 	switch d.DestinationType {
 	case "telegram_private", "telegram_group":
-		return w.deliverTelegram(ctx, d)
+		return w.deliverTelegram(ctx, deliveryCtx, d)
 	case "email":
-		return w.deliverEmail(ctx, d)
+		return w.deliverEmail(ctx, deliveryCtx, d)
 	default:
-		return w.repo.MarkDeliveryFailed(ctx, d.ID, w.workerID, fmt.Sprintf("unsupported destination type: %s", d.DestinationType), 0, true)
+		if w.repo != nil {
+			return w.repo.MarkDeliveryFailed(ctx, d.ID, w.workerID, fmt.Sprintf("unsupported destination type: %s", d.DestinationType), 0, true)
+		}
+		return fmt.Errorf("unsupported destination type: %s", d.DestinationType)
 	}
 }
 
-func (w *NotificationWorker) deliverTelegram(ctx context.Context, d *repository.NotificationDelivery) error {
+func (w *NotificationWorker) deliverTelegram(ctx, deliveryCtx context.Context, d *repository.NotificationDelivery) error {
 	if strings.EqualFold(w.telegramMode, "disabled") || w.telegramSender == nil {
 		w.logger.Info("telegram delivery transport disabled; cancelling delivery", "delivery_id", d.ID)
-		return w.repo.MarkDeliveryCancelled(ctx, d.ID, w.workerID, "transport disabled: Telegram delivery is intentionally disabled in this deployment")
+		if w.repo != nil {
+			return w.repo.MarkDeliveryCancelled(ctx, d.ID, w.workerID, "transport disabled: Telegram delivery is intentionally disabled in this deployment")
+		}
+		return nil
 	}
 
 	chatID, err := strconv.ParseInt(d.Recipient, 10, 64)
 	if err != nil {
-		_ = w.repo.MarkDeliveryFailed(ctx, d.ID, w.workerID, fmt.Sprintf("invalid telegram chat ID '%s': %v", d.Recipient, err), 0, true)
+		if w.repo != nil {
+			_ = w.repo.MarkDeliveryFailed(ctx, d.ID, w.workerID, fmt.Sprintf("invalid telegram chat ID '%s': %v", d.Recipient, err), 0, true)
+		}
 		return err
 	}
 
 	destLocale, _ := d.Payload["dest_locale"].(string)
 	var notifCtx *notification.NotificationContext
 	if w.contextResolver != nil {
-		notifCtx = w.contextResolver.ResolveAndRefreshContext(ctx, d.OrganizationID, d.EventType, d.Payload, w.appBaseURL, destLocale)
+		notifCtx = w.contextResolver.ResolveAndRefreshContext(deliveryCtx, d.OrganizationID, d.EventType, d.Payload, w.appBaseURL, destLocale)
 	} else {
 		notifCtx = notification.ParseContextFromPayload(d.EventType, d.Payload, w.appBaseURL, destLocale)
 	}
 
 	text := notiftg.RenderTelegramMessage(notifCtx)
 
-	sendErr := w.telegramSender.SendMessage(ctx, chatID, text, "HTML")
+	sendErr := w.telegramSender.SendMessage(deliveryCtx, chatID, text, "HTML")
 	if sendErr == nil {
-		return w.repo.MarkDeliverySent(ctx, d.ID, w.workerID)
+		if w.repo != nil {
+			return w.repo.MarkDeliverySent(ctx, d.ID, w.workerID)
+		}
+		return nil
 	}
 
 	// If Telegram rejected message due to entity parsing, fallback to unformatted plain-text
 	if strings.Contains(strings.ToLower(sendErr.Error()), "can't parse entities") {
 		plainText := notiftg.RenderTelegramMessagePlainText(notifCtx)
-		sendErr = w.telegramSender.SendMessage(ctx, chatID, plainText, "")
+		sendErr = w.telegramSender.SendMessage(deliveryCtx, chatID, plainText, "")
 		if sendErr == nil {
-			return w.repo.MarkDeliverySent(ctx, d.ID, w.workerID)
+			if w.repo != nil {
+				return w.repo.MarkDeliverySent(ctx, d.ID, w.workerID)
+			}
+			return nil
 		}
 	}
 
@@ -251,45 +291,59 @@ func (w *NotificationWorker) deliverTelegram(ctx context.Context, d *repository.
 	if isRateLimit(sendErr, &rateErr) {
 		jitter := time.Duration(rand.Intn(1000)) * time.Millisecond
 		backoff := rateErr.RetryAfter + jitter
-		_ = w.repo.MarkDeliveryFailed(ctx, d.ID, w.workerID, rateErr.Error(), backoff, false)
+		if w.repo != nil {
+			_ = w.repo.MarkDeliveryFailed(ctx, d.ID, w.workerID, rateErr.Error(), backoff, false)
+		}
 		return sendErr
 	}
 
 	if isPermanentTelegram(sendErr, &permErr) {
-		_ = w.repo.MarkDeliveryFailed(ctx, d.ID, w.workerID, permErr.Error(), 0, true)
+		if w.repo != nil {
+			_ = w.repo.MarkDeliveryFailed(ctx, d.ID, w.workerID, permErr.Error(), 0, true)
+		}
 		return sendErr
 	}
 
 	// Temporary network / internal error: exponential backoff + jitter
 	backoff := calculateBackoff(d.RetryCount)
-	_ = w.repo.MarkDeliveryFailed(ctx, d.ID, w.workerID, sendErr.Error(), backoff, false)
+	if w.repo != nil {
+		_ = w.repo.MarkDeliveryFailed(ctx, d.ID, w.workerID, sendErr.Error(), backoff, false)
+	}
 	return sendErr
 }
 
-func (w *NotificationWorker) deliverEmail(ctx context.Context, d *repository.NotificationDelivery) error {
+func (w *NotificationWorker) deliverEmail(ctx, deliveryCtx context.Context, d *repository.NotificationDelivery) error {
 	if strings.EqualFold(w.emailProvider, "disabled") || strings.EqualFold(w.emailProvider, "none") || w.emailSender == nil {
 		w.logger.Info("email delivery transport disabled; cancelling delivery", "delivery_id", d.ID)
-		return w.repo.MarkDeliveryCancelled(ctx, d.ID, w.workerID, "transport disabled: Email delivery is intentionally disabled in this deployment")
+		if w.repo != nil {
+			return w.repo.MarkDeliveryCancelled(ctx, d.ID, w.workerID, "transport disabled: Email delivery is intentionally disabled in this deployment")
+		}
+		return nil
 	}
 
 	destLocale, _ := d.Payload["dest_locale"].(string)
 	var notifCtx *notification.NotificationContext
 	if w.contextResolver != nil {
-		notifCtx = w.contextResolver.ResolveAndRefreshContext(ctx, d.OrganizationID, d.EventType, d.Payload, w.appBaseURL, destLocale)
+		notifCtx = w.contextResolver.ResolveAndRefreshContext(deliveryCtx, d.OrganizationID, d.EventType, d.Payload, w.appBaseURL, destLocale)
 	} else {
 		notifCtx = notification.ParseContextFromPayload(d.EventType, d.Payload, w.appBaseURL, destLocale)
 	}
 
 	rendered := email.RenderNotificationEmailFromContext(notifCtx, w.appBaseURL)
 
-	sendErr := w.emailSender.SendEmail(ctx, d.Recipient, rendered.Subject, rendered.HTMLBody, rendered.TextBody)
+	sendErr := w.emailSender.SendEmail(deliveryCtx, d.Recipient, rendered.Subject, rendered.HTMLBody, rendered.TextBody)
 	if sendErr == nil {
-		return w.repo.MarkDeliverySent(ctx, d.ID, w.workerID)
+		if w.repo != nil {
+			return w.repo.MarkDeliverySent(ctx, d.ID, w.workerID)
+		}
+		return nil
 	}
 
 	permanent := isPermanentEmailError(sendErr)
 	backoff := calculateBackoff(d.RetryCount)
-	_ = w.repo.MarkDeliveryFailed(ctx, d.ID, w.workerID, sendErr.Error(), backoff, permanent)
+	if w.repo != nil {
+		_ = w.repo.MarkDeliveryFailed(ctx, d.ID, w.workerID, sendErr.Error(), backoff, permanent)
+	}
 	return sendErr
 }
 
@@ -324,15 +378,67 @@ func isPermanentEmailError(err error) bool {
 	if err == nil {
 		return false
 	}
+
+	// 1. Context cancellation / deadlines are transient timeouts
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+
+	// 2. Network timeouts or transient connection issues are NOT permanent
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return false
+	}
+
 	errMsg := strings.ToLower(err.Error())
-	if strings.Contains(errMsg, "invalid") ||
-		strings.Contains(errMsg, "mailbox unavailable") ||
-		strings.Contains(errMsg, "no such user") ||
-		strings.Contains(errMsg, "user unknown") ||
-		strings.Contains(errMsg, "550") ||
-		strings.Contains(errMsg, "554") {
+	if strings.Contains(errMsg, "connection refused") ||
+		strings.Contains(errMsg, "connection reset") ||
+		strings.Contains(errMsg, "broken pipe") ||
+		strings.Contains(errMsg, "network is unreachable") ||
+		strings.Contains(errMsg, "i/o timeout") ||
+		strings.Contains(errMsg, "deadline exceeded") ||
+		strings.Contains(errMsg, "dial timeout") ||
+		strings.Contains(errMsg, "unexpected eof") {
+		return false
+	}
+
+	// 3. Inspect typed textproto.Error SMTP codes
+	var tpErr *textproto.Error
+	if errors.As(err, &tpErr) {
+		if tpErr.Code >= 400 && tpErr.Code < 500 {
+			// Transient SMTP failure (e.g. 421, 450, 451, 452, 454)
+			return false
+		}
+		if tpErr.Code >= 500 && tpErr.Code < 600 {
+			// Permanent SMTP failure (e.g. 501, 502, 503, 504, 535, 550, 554)
+			return true
+		}
+	}
+
+	// 4. Inspect status code patterns in error string (for wrapped/stringified errors)
+	if smtpTransientRegex.MatchString(errMsg) {
+		// Matches 4xx transient codes (e.g., 421, 450, 451, 452)
+		return false
+	}
+	if smtpPermanentRegex.MatchString(errMsg) {
+		// Matches 5xx permanent codes (e.g., 501, 502, 503, 504, 535, 550, 554)
 		return true
 	}
+
+	// 5. Inspect well-known permanent semantic phrases
+	if strings.Contains(errMsg, "mailbox unavailable") ||
+		strings.Contains(errMsg, "no such user") ||
+		strings.Contains(errMsg, "user unknown") ||
+		strings.Contains(errMsg, "invalid recipient") ||
+		strings.Contains(errMsg, "invalid address") ||
+		strings.Contains(errMsg, "authentication failed") ||
+		strings.Contains(errMsg, "auth failed") ||
+		strings.Contains(errMsg, "credentials rejected") ||
+		strings.Contains(errMsg, "recipient rejected") {
+		return true
+	}
+
+	// Default: unknown errors treated as transient/retriable
 	return false
 }
 

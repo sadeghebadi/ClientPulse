@@ -130,14 +130,8 @@ func main() {
 		}
 
 		var mailer mail.EmailSender
-		if !strings.EqualFold(cfg.EmailProvider, "disabled") && !strings.EqualFold(cfg.EmailProvider, "none") && cfg.SMTPHost != "" && (!cfg.IsProduction() || cfg.SMTPHost != "mailpit") {
-			mailer = mail.NewSMTPMailer(mail.SMTPConfig{
-				Host:     cfg.SMTPHost,
-				Port:     cfg.SMTPPort,
-				Username: cfg.SMTPUsername,
-				Password: cfg.SMTPPassword,
-				From:     cfg.SMTPFromEmail,
-			})
+		if emailClient != nil {
+			mailer = mail.NewSMTPMailerWithSender(emailClient)
 		} else {
 			mailer = mail.NewMockMailer()
 		}

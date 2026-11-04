@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -258,6 +259,102 @@ func TestRateLimiterMiddlewareAndProxyTrust(t *testing.T) {
 		clientHandler.ServeHTTP(rec, req)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("expected Client 2 behind trusted proxy to succeed (not affected by Client 1), got %d", rec.Code)
+		}
+	}
+}
+
+type failingMailer struct {
+	errToReturn error
+}
+
+func (f *failingMailer) SendEmail(ctx context.Context, to, subject, htmlBody, textBody string) error {
+	return f.errToReturn
+}
+func (f *failingMailer) SendVerificationEmail(ctx context.Context, to, displayName, verifyURL string) error {
+	return f.errToReturn
+}
+func (f *failingMailer) SendPasswordResetEmail(ctx context.Context, to, displayName, resetURL string) error {
+	return f.errToReturn
+}
+
+func TestForgotPasswordAntiEnumerationAndSMTPFailure(t *testing.T) {
+	db := testhelper.GetTestDB(t)
+	defer db.Close()
+	cfg := testhelper.GetTestConfig()
+
+	userRepo := repository.NewUserRepository(db.Pool)
+	sessionRepo := repository.NewSessionRepository(db.Pool)
+	orgRepo := repository.NewOrganizationRepository(db.Pool)
+	tokenRepo := repository.NewTokenRepository(db.Pool)
+	auditRepo := repository.NewAuditRepository(db.Pool)
+
+	userEmail := "enum-test-user@clientpulse.local"
+	passHash, _ := auth.HashPassword("TestPass1234!", auth.DefaultArgon2Params)
+	_, _ = userRepo.CreateUser(context.Background(), userEmail, passHash, "Enum Test User")
+
+	expectedMessage := "If your email is registered, you will receive password reset instructions shortly."
+
+	// Case 1: Existing user with working mailer
+	{
+		mockMailer := mail.NewMockMailer()
+		authSvc := service.NewAuthService(userRepo, sessionRepo, orgRepo, tokenRepo, auditRepo, mockMailer, cfg)
+		authHdr := NewAuthHandler(authSvc, false)
+
+		body, _ := json.Marshal(map[string]string{"email": userEmail})
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/forgot-password", bytes.NewReader(body))
+		rec := httptest.NewRecorder()
+		authHdr.ForgotPassword(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200 OK, got %d", rec.Code)
+		}
+		var resp map[string]string
+		_ = json.Unmarshal(rec.Body.Bytes(), &resp)
+		if resp["message"] != expectedMessage {
+			t.Fatalf("expected %q, got %q", expectedMessage, resp["message"])
+		}
+	}
+
+	// Case 2: Non-existent user
+	{
+		mockMailer := mail.NewMockMailer()
+		authSvc := service.NewAuthService(userRepo, sessionRepo, orgRepo, tokenRepo, auditRepo, mockMailer, cfg)
+		authHdr := NewAuthHandler(authSvc, false)
+
+		body, _ := json.Marshal(map[string]string{"email": "nobody-exists@clientpulse.local"})
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/forgot-password", bytes.NewReader(body))
+		rec := httptest.NewRecorder()
+		authHdr.ForgotPassword(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200 OK, got %d", rec.Code)
+		}
+		var resp map[string]string
+		_ = json.Unmarshal(rec.Body.Bytes(), &resp)
+		if resp["message"] != expectedMessage {
+			t.Fatalf("expected %q, got %q", expectedMessage, resp["message"])
+		}
+	}
+
+	// Case 3: Existing user when SMTP server fails
+	{
+		failMail := &failingMailer{errToReturn: errors.New("535 5.7.8 Authentication credentials invalid")}
+		authSvc := service.NewAuthService(userRepo, sessionRepo, orgRepo, tokenRepo, auditRepo, failMail, cfg)
+		authHdr := NewAuthHandler(authSvc, false)
+
+		body, _ := json.Marshal(map[string]string{"email": userEmail})
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/forgot-password", bytes.NewReader(body))
+		rec := httptest.NewRecorder()
+		authHdr.ForgotPassword(rec, req)
+
+		// Must STILL return identical 200 OK to prevent leaking user existence or infrastructure errors
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200 OK on SMTP failure, got %d: %s", rec.Code, rec.Body.String())
+		}
+		var resp map[string]string
+		_ = json.Unmarshal(rec.Body.Bytes(), &resp)
+		if resp["message"] != expectedMessage {
+			t.Fatalf("expected %q, got %q", expectedMessage, resp["message"])
 		}
 	}
 }

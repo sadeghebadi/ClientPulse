@@ -177,6 +177,10 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("invalid TELEGRAM_MODE: %q (must be 'polling', 'webhook', or 'disabled')", c.TelegramMode)
 	}
 
+	if err := ValidateTelegramProxyURL(c.TelegramProxyURL); err != nil {
+		return err
+	}
+
 	switch strings.ToLower(c.EmailProvider) {
 	case "smtp", "none", "disabled", "mock", "":
 		// valid modes
@@ -251,5 +255,60 @@ func getEnvAsDuration(key string, defaultVal time.Duration) time.Duration {
 		return defaultVal
 	}
 	return dur
+}
+
+// SupportedTelegramProxySchemes defines the proxy protocols supported by the Go HTTP transport.
+// Note: socks5h is NOT supported by standard Go net/http transport.
+var SupportedTelegramProxySchemes = map[string]bool{
+	"http":   true,
+	"https":  true,
+	"socks5": true,
+}
+
+// SanitizeProxyURL masks user credentials in a proxy URL for safe logging and error reporting.
+func SanitizeProxyURL(rawURL string) string {
+	rawURL = strings.TrimSpace(rawURL)
+	if rawURL == "" {
+		return ""
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return "[INVALID_URL]"
+	}
+	if u.User != nil {
+		u.User = url.User("REDACTED")
+	}
+	return u.String()
+}
+
+// ValidateTelegramProxyURL validates proxy URL format and ensures only supported schemes are accepted.
+func ValidateTelegramProxyURL(rawURL string) error {
+	rawURL = strings.TrimSpace(rawURL)
+	if rawURL == "" {
+		return nil
+	}
+
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("invalid TELEGRAM_PROXY_URL: %w", err)
+	}
+
+	scheme := strings.ToLower(u.Scheme)
+	if scheme == "" {
+		return fmt.Errorf("invalid TELEGRAM_PROXY_URL %q: scheme is required (must be 'http', 'https', or 'socks5')", SanitizeProxyURL(rawURL))
+	}
+
+	if !SupportedTelegramProxySchemes[scheme] {
+		if scheme == "socks5h" {
+			return fmt.Errorf("unsupported TELEGRAM_PROXY_URL scheme %q: Go net/http transport does not support socks5h (use socks5, http, or https)", scheme)
+		}
+		return fmt.Errorf("unsupported TELEGRAM_PROXY_URL scheme %q (must be 'http', 'https', or 'socks5')", scheme)
+	}
+
+	if u.Hostname() == "" {
+		return fmt.Errorf("invalid TELEGRAM_PROXY_URL %q: host is required", SanitizeProxyURL(rawURL))
+	}
+
+	return nil
 }
 
