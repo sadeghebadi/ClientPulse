@@ -102,6 +102,8 @@ services:
     build:
       context: .
       dockerfile: deploy/docker/web.Dockerfile
+      args:
+        NEXT_PUBLIC_API_BASE_URL: ${API_BASE_URL:-http://localhost:8080}
     container_name: clientpulse_web
     depends_on:
       - api

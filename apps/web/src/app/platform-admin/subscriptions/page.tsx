@@ -39,6 +39,29 @@ interface SubscriptionItem {
   assigned_by: string;
   administrative_note?: string;
   created_at: string;
+  offer_version_id?: string;
+  offer_name?: string;
+  offer_locale?: string;
+  offer_market?: string;
+  offer_version?: number;
+  display_denomination?: string;
+  denomination_ratio?: number;
+  display_price?: number;
+  formatted_price?: string;
+}
+
+interface OfferOption {
+  id: string;
+  locale: string;
+  market: string;
+  name: string;
+  status: string;
+  latest_version?: {
+    id: string;
+    version: number;
+    status: string;
+    formatted_price: string;
+  };
 }
 
 interface PlanOption {
@@ -72,6 +95,8 @@ export default function PlatformAdminSubscriptionsPage() {
   const [planOptions, setPlanOptions] = useState<PlanOption[]>([]);
   const [targetOrgId, setTargetOrgId] = useState("");
   const [targetPlanId, setTargetPlanId] = useState("");
+  const [planOffers, setPlanOffers] = useState<OfferOption[]>([]);
+  const [targetOfferVersionId, setTargetOfferVersionId] = useState("");
   const [assignNote, setAssignNote] = useState("");
   const [assignWarnings, setAssignWarnings] = useState<string[]>([]);
   const [checkingWarnings, setCheckingWarnings] = useState(false);
@@ -132,6 +157,29 @@ export default function PlatformAdminSubscriptionsPage() {
 
   const handlePlanOrOrgChange = async (orgId: string, planId: string) => {
     setAssignWarnings([]);
+    if (planId) {
+      try {
+        const offersRes = await apiFetch<{ offers: OfferOption[] }>(
+          `/api/v1/platform-admin/plans/${planId}/offers`
+        );
+        const publishedOffers = (offersRes.offers || []).filter(
+          (o) => o.status === "published" && o.latest_version
+        );
+        setPlanOffers(publishedOffers);
+        if (publishedOffers.length > 0) {
+          setTargetOfferVersionId(publishedOffers[0].latest_version?.id || "");
+        } else {
+          setTargetOfferVersionId("");
+        }
+      } catch {
+        setPlanOffers([]);
+        setTargetOfferVersionId("");
+      }
+    } else {
+      setPlanOffers([]);
+      setTargetOfferVersionId("");
+    }
+
     if (!orgId || !planId) return;
 
     try {
@@ -163,6 +211,7 @@ export default function PlatformAdminSubscriptionsPage() {
         body: JSON.stringify({
           organization_id: targetOrgId,
           plan_id: targetPlanId,
+          offer_version_id: targetOfferVersionId || undefined,
           administrative_note: assignNote || "Manual assignment from admin subscriptions panel",
         }),
       });
@@ -171,6 +220,8 @@ export default function PlatformAdminSubscriptionsPage() {
       setAssignModalOpen(false);
       setTargetOrgId("");
       setTargetPlanId("");
+      setTargetOfferVersionId("");
+      setPlanOffers([]);
       setAssignNote("");
       setAssignWarnings([]);
       fetchSubscriptions();
@@ -314,8 +365,16 @@ export default function PlatformAdminSubscriptionsPage() {
                       </td>
                       <td className="py-3 px-4">
                         <div className="font-bold text-slate-800">{sub.plan_name}</div>
-                        <div className="text-[10px] text-slate-400 font-mono">
-                          version v{sub.plan_version}
+                        <div className="text-[10px] text-slate-400 font-mono flex items-center gap-1.5 mt-0.5">
+                          <span>v{sub.plan_version}</span>
+                          {sub.offer_name && (
+                            <>
+                              <span>•</span>
+                              <span className="text-emerald-700 font-semibold bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
+                                {sub.offer_name} ({sub.offer_locale?.toUpperCase()})
+                              </span>
+                            </>
+                          )}
                         </div>
                       </td>
                       <td className="py-3 px-4">
@@ -336,7 +395,11 @@ export default function PlatformAdminSubscriptionsPage() {
                         )}
                       </td>
                       <td className="py-3 px-4 font-mono text-slate-700">
-                        {(sub.price_amount / 100).toFixed(2)} {sub.currency} / {sub.billing_interval}
+                        {sub.formatted_price ? (
+                          <div className="font-bold text-slate-900">{sub.formatted_price}</div>
+                        ) : (
+                          <div>{(sub.price_amount / 100).toFixed(2)} {sub.currency} / {sub.billing_interval}</div>
+                        )}
                       </td>
                       <td className="py-3 px-4 text-slate-500 font-mono text-[11px]">
                         {new Date(sub.started_at).toLocaleDateString()}
@@ -483,6 +546,29 @@ export default function PlatformAdminSubscriptionsPage() {
                 ))}
               </select>
             </div>
+
+            {planOffers.length > 0 && (
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Localized Regional Offer (Optional)
+                </label>
+                <select
+                  value={targetOfferVersionId}
+                  onChange={(e) => setTargetOfferVersionId(e.target.value)}
+                  className="w-full text-xs p-3 rounded-xl border border-slate-200 bg-slate-50 font-medium focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                >
+                  <option value="">Base Plan Default (Unlocalized)</option>
+                  {planOffers.map((o) => (
+                    <option key={o.latest_version?.id || o.id} value={o.latest_version?.id || ""}>
+                      {o.name} ({o.locale.toUpperCase()} / {o.market.toUpperCase()}) — {o.latest_version?.formatted_price || "Draft"}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-[11px] text-slate-400 mt-1">
+                  Selecting an offer locks in the immutable regional pricing and denomination.
+                </p>
+              </div>
+            )}
 
             {checkingWarnings && (
               <p className="text-xs text-slate-400 italic">Validating resource limits against existing usage...</p>

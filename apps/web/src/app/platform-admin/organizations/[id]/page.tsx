@@ -72,6 +72,15 @@ interface OrgDetail {
     billing_interval: string;
     administrative_note?: string;
     limits: PlanLimits;
+    offer_version_id?: string;
+    offer_name?: string;
+    offer_locale?: string;
+    offer_market?: string;
+    offer_version?: number;
+    display_denomination?: string;
+    denomination_ratio?: number;
+    display_price?: number;
+    formatted_price?: string;
   } | null;
   usage: {
     client_count: number;
@@ -98,6 +107,20 @@ interface PlanOption {
   published_version_id?: string;
 }
 
+interface OfferOption {
+  id: string;
+  locale: string;
+  market: string;
+  name: string;
+  status: string;
+  latest_version?: {
+    id: string;
+    version: number;
+    status: string;
+    formatted_price: string;
+  };
+}
+
 export default function PlatformAdminOrganizationDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
@@ -116,7 +139,8 @@ export default function PlatformAdminOrganizationDetailPage() {
   // Assign plan modal
   const [planModalOpen, setPlanModalOpen] = useState(false);
   const [selectedPlanId, setSelectedPlanId] = useState("");
-  const [selectedVersionId, setSelectedVersionId] = useState("");
+  const [planOffers, setPlanOffers] = useState<OfferOption[]>([]);
+  const [selectedOfferVersionId, setSelectedOfferVersionId] = useState("");
   const [assignNote, setAssignNote] = useState("");
   const [assignWarnings, setAssignWarnings] = useState<string[]>([]);
   const [checkingWarnings, setCheckingWarnings] = useState(false);
@@ -146,10 +170,34 @@ export default function PlatformAdminOrganizationDetailPage() {
     if (id) fetchDetail();
   }, [id, fetchDetail]);
 
-  // When plan selection changes in modal, check warnings
+  // When plan selection changes in modal, load offers and check warnings
   const handlePlanSelectionChange = async (planId: string) => {
     setSelectedPlanId(planId);
     setAssignWarnings([]);
+
+    if (planId) {
+      try {
+        const offersRes = await apiFetch<{ offers: OfferOption[] }>(
+          `/api/v1/platform-admin/plans/${planId}/offers`
+        );
+        const publishedOffers = (offersRes.offers || []).filter(
+          (o) => o.status === "published" && o.latest_version
+        );
+        setPlanOffers(publishedOffers);
+        if (publishedOffers.length > 0) {
+          setSelectedOfferVersionId(publishedOffers[0].latest_version?.id || "");
+        } else {
+          setSelectedOfferVersionId("");
+        }
+      } catch {
+        setPlanOffers([]);
+        setSelectedOfferVersionId("");
+      }
+    } else {
+      setPlanOffers([]);
+      setSelectedOfferVersionId("");
+    }
+
     if (!planId || !detail) return;
 
     try {
@@ -181,6 +229,7 @@ export default function PlatformAdminOrganizationDetailPage() {
         body: JSON.stringify({
           organization_id: detail.organization.id,
           plan_id: selectedPlanId,
+          offer_version_id: selectedOfferVersionId || undefined,
           administrative_note: assignNote || "Manual subscription plan assignment",
         }),
       });
@@ -188,6 +237,8 @@ export default function PlatformAdminOrganizationDetailPage() {
       setToastMessage("Subscription plan assigned successfully.");
       setPlanModalOpen(false);
       setSelectedPlanId("");
+      setSelectedOfferVersionId("");
+      setPlanOffers([]);
       setAssignNote("");
       setAssignWarnings([]);
       fetchDetail();
@@ -379,14 +430,23 @@ export default function PlatformAdminOrganizationDetailPage() {
             </p>
           </div>
           {subscription ? (
-            <div className="inline-flex items-center gap-2 bg-blue-50 border border-blue-200 px-3 py-1.5 rounded-xl">
-              <span className="text-xs font-bold text-blue-900">{subscription.plan_name}</span>
-              <span className="text-[10px] font-mono text-blue-600 bg-blue-100 px-1.5 py-0.5 rounded">
-                v{subscription.plan_version}
-              </span>
-              <span className="text-[10px] text-blue-500 uppercase font-bold tracking-wider">
-                ({subscription.billing_interval})
-              </span>
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="inline-flex items-center gap-2 bg-blue-50 border border-blue-200 px-3 py-1.5 rounded-xl">
+                <span className="text-xs font-bold text-blue-900">{subscription.plan_name}</span>
+                <span className="text-[10px] font-mono text-blue-600 bg-blue-100 px-1.5 py-0.5 rounded">
+                  v{subscription.plan_version}
+                </span>
+                <span className="text-[10px] text-blue-500 uppercase font-bold tracking-wider">
+                  ({subscription.billing_interval})
+                </span>
+              </div>
+              {subscription.offer_name && (
+                <div className="inline-flex items-center gap-1.5 bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-xl text-xs font-bold text-emerald-800">
+                  <span>{subscription.offer_name} ({subscription.offer_locale?.toUpperCase()})</span>
+                  <span>•</span>
+                  <span>{subscription.formatted_price}</span>
+                </div>
+              )}
             </div>
           ) : (
             <div className="inline-flex items-center gap-1.5 bg-amber-50 border border-amber-200 text-amber-800 px-3 py-1.5 rounded-xl text-xs font-bold">
@@ -511,6 +571,29 @@ export default function PlatformAdminOrganizationDetailPage() {
                 ))}
               </select>
             </div>
+
+            {planOffers.length > 0 && (
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Localized Regional Offer (Optional)
+                </label>
+                <select
+                  value={selectedOfferVersionId}
+                  onChange={(e) => setSelectedOfferVersionId(e.target.value)}
+                  className="w-full text-xs p-3 rounded-xl border border-slate-200 bg-slate-50 font-medium focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                >
+                  <option value="">Base Plan Default (Unlocalized)</option>
+                  {planOffers.map((o) => (
+                    <option key={o.latest_version?.id || o.id} value={o.latest_version?.id || ""}>
+                      {o.name} ({o.locale.toUpperCase()}) — {o.latest_version?.formatted_price || "Draft"}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-[11px] text-slate-400 mt-1">
+                  Selecting a regional offer locks in localized currency, denomination, and billing rate.
+                </p>
+              </div>
+            )}
 
             {/* Over-limit warning check indicator */}
             {checkingWarnings && (

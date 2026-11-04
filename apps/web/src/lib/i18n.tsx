@@ -3,6 +3,7 @@
 import React, { createContext, useContext, useSyncExternalStore } from "react";
 
 export type Locale = "en" | "fa";
+export type Language = Locale;
 
 export const translations = {
   en: {
@@ -1615,7 +1616,9 @@ export function formatPersianNumber(n: number | string): string {
 
 interface I18nContextType {
   locale: Locale;
+  language: Locale;
   setLocale: (l: Locale) => void;
+  setLanguage: (l: Locale) => void;
   toggleLocale: () => void;
   t: (typeof translations)["en"];
   isRTL: boolean;
@@ -1624,6 +1627,7 @@ interface I18nContextType {
   isLocaleEnabled: (l: string) => boolean;
   formatNumber: (n: number | string) => string;
   formatMoney: (amount: number, currency: string, denomination?: string) => string;
+  formatPersianNumber: (n: number | string) => string;
 }
 
 const I18nContext = createContext<I18nContextType | null>(null);
@@ -1743,7 +1747,13 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
     <I18nContext.Provider
       value={{
         locale,
+        language: locale,
         setLocale: (l: Locale) => {
+          if (enabledLocales.includes(l)) {
+            changeLocale(l);
+          }
+        },
+        setLanguage: (l: Locale) => {
           if (enabledLocales.includes(l)) {
             changeLocale(l);
           }
@@ -1756,6 +1766,7 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
         isLocaleEnabled,
         formatNumber,
         formatMoney,
+        formatPersianNumber,
       }}
     >
       <div

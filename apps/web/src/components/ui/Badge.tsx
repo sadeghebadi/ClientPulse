@@ -61,6 +61,7 @@ export interface BadgeProps {
   showIcon?: boolean;
   className?: string;
   icon?: React.ReactNode;
+  size?: "sm" | "md" | "lg";
 }
 
 type BadgeConfig = {
