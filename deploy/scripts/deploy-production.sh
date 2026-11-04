@@ -132,10 +132,10 @@ if ! docker image inspect "${POSTGRES_IMAGE}" > /dev/null 2>&1; then
 fi
 
 echo "4. Exporting runtime images to compressed archive..."
-# Use pigz if available, otherwise gzip
-COMPRESS_CMD="gzip -c"
+# Use pigz if available, otherwise gzip (maximum compression)
+COMPRESS_CMD="gzip -9 -c"
 if command -v pigz >/dev/null 2>&1; then
-    COMPRESS_CMD="pigz -1"
+    COMPRESS_CMD="pigz -9"
 fi
 
 docker save "${API_IMAGE}" "${WORKER_IMAGE}" "${WEB_IMAGE}" "${POSTGRES_IMAGE}" | ${COMPRESS_CMD} > "${ARCHIVE_PATH}"
@@ -562,12 +562,13 @@ echo "✅ Docker images loaded successfully."
 echo ""
 echo ">>> Stage G: Starting ClientPulse PostgreSQL & applying migrations..."
 
-ssh -p "${PORT}" "${USER}@${HOST}" bash -s -- "${REMOTE_DIR}" << 'EOF'
+ssh -p "${PORT}" "${USER}@${HOST}" bash -s -- "${REMOTE_DIR}" "${VERSION_TAG}" << 'EOF'
 set -euo pipefail
 REMOTE_DIR="$1"
+VERSION="$2"
 
 echo "1. Starting isolated PostgreSQL service..."
-sudo docker compose \
+sudo env VERSION="${VERSION}" docker compose \
     -p clientpulse \
     -f "${REMOTE_DIR}/docker-compose.production.yml" \
     --env-file "${REMOTE_DIR}/.env" \
@@ -575,7 +576,7 @@ sudo docker compose \
 
 echo "2. Waiting for PostgreSQL to become healthy..."
 for i in {1..30}; do
-    STATUS=$(sudo docker inspect --format '{{.State.Health.Status}}' $(sudo docker compose -p clientpulse -f "${REMOTE_DIR}/docker-compose.production.yml" ps -q postgres) 2>/dev/null || echo "starting")
+    STATUS=$(sudo docker inspect --format '{{.State.Health.Status}}' $(sudo env VERSION="${VERSION}" docker compose -p clientpulse -f "${REMOTE_DIR}/docker-compose.production.yml" --env-file "${REMOTE_DIR}/.env" ps -q postgres) 2>/dev/null || echo "starting")
     if [[ "${STATUS}" == "healthy" ]]; then
         echo "✅ PostgreSQL is healthy."
         break
@@ -585,7 +586,7 @@ for i in {1..30}; do
 done
 
 echo "3. Executing safe ClientPulse database migrations..."
-sudo docker compose \
+sudo env VERSION="${VERSION}" docker compose \
     -p clientpulse \
     -f "${REMOTE_DIR}/docker-compose.production.yml" \
     --env-file "${REMOTE_DIR}/.env" \
@@ -598,7 +599,7 @@ APP_PWD=$(grep '^APP_DB_PASSWORD=' "${REMOTE_DIR}/.env" | cut -d= -f2-)
 WORKER_PWD=$(grep '^WORKER_DB_PASSWORD=' "${REMOTE_DIR}/.env" | cut -d= -f2-)
 POSTGRES_PWD=$(grep '^POSTGRES_PASSWORD=' "${REMOTE_DIR}/.env" | cut -d= -f2-)
 
-PG_CONTAINER=$(sudo docker compose -p clientpulse -f "${REMOTE_DIR}/docker-compose.production.yml" ps -q postgres)
+PG_CONTAINER=$(sudo env VERSION="${VERSION}" docker compose -p clientpulse -f "${REMOTE_DIR}/docker-compose.production.yml" --env-file "${REMOTE_DIR}/.env" ps -q postgres)
 
 sudo docker exec -i "${PG_CONTAINER}" psql -U clientpulse_admin -d clientpulse << EOSQL
 ALTER ROLE clientpulse_app WITH PASSWORD '${APP_PWD}';
@@ -614,11 +615,12 @@ EOF
 echo ""
 echo ">>> Stage H: Starting ClientPulse application containers..."
 
-ssh -p "${PORT}" "${USER}@${HOST}" bash -s -- "${REMOTE_DIR}" << 'EOF'
+ssh -p "${PORT}" "${USER}@${HOST}" bash -s -- "${REMOTE_DIR}" "${VERSION_TAG}" << 'EOF'
 set -euo pipefail
 REMOTE_DIR="$1"
+VERSION="$2"
 
-sudo docker compose \
+sudo env VERSION="${VERSION}" docker compose \
     -p clientpulse \
     -f "${REMOTE_DIR}/docker-compose.production.yml" \
     --env-file "${REMOTE_DIR}/.env" \
@@ -626,7 +628,11 @@ sudo docker compose \
 
 echo "Verifying local service health..."
 sleep 5
-sudo docker compose -p clientpulse -f "${REMOTE_DIR}/docker-compose.production.yml" ps
+sudo env VERSION="${VERSION}" docker compose \
+    -p clientpulse \
+    -f "${REMOTE_DIR}/docker-compose.production.yml" \
+    --env-file "${REMOTE_DIR}/.env" \
+    ps
 
 echo "Checking localhost upstreams..."
 curl -s -f http://127.0.0.1:8090/health/live | grep -q '"status":"ok"' && echo "✅ API live on 127.0.0.1:8090"

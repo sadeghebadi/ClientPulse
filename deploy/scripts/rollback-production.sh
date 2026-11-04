@@ -41,13 +41,17 @@ if [[ -z "${TARGET_VERSION}" ]]; then
     usage
 fi
 
+# Normalize version tag
+TARGET_VERSION="${TARGET_VERSION#v}"
+VERSION_TAG="v${TARGET_VERSION}"
+
 echo "========================================================"
 echo "  ClientPulse Production Rollback"
-echo "  Target Release: ${TARGET_VERSION}"
+echo "  Target Release: ${VERSION_TAG}"
 echo "  Target VPS:     ${SSH_USER}@${HOST}:${PORT}"
 echo "========================================================"
 
-ssh -p "${PORT}" "${SSH_USER}@${HOST}" bash -s -- "${TARGET_VERSION}" "${RESTORE_NGINX}" "${REMOTE_DIR}" << 'EOF'
+ssh -p "${PORT}" "${SSH_USER}@${HOST}" bash -s -- "${VERSION_TAG}" "${RESTORE_NGINX}" "${REMOTE_DIR}" << 'EOF'
 set -euo pipefail
 VERSION="$1"
 RESTORE_NGINX="$2"
@@ -77,14 +81,18 @@ if [[ -f "${RELEASE_DIR}/docker-compose.production.yml" ]]; then
 fi
 
 echo "[4/5] Recreating ClientPulse containers with target release..."
-sudo docker compose \
+sudo env VERSION="${VERSION}" docker compose \
     -p clientpulse \
     -f "${REMOTE_DIR}/docker-compose.production.yml" \
     --env-file "${REMOTE_DIR}/.env" \
     up -d --force-recreate
 
 echo "[5/5] Checking container status..."
-sudo docker compose -p clientpulse -f "${REMOTE_DIR}/docker-compose.production.yml" ps
+sudo env VERSION="${VERSION}" docker compose \
+    -p clientpulse \
+    -f "${REMOTE_DIR}/docker-compose.production.yml" \
+    --env-file "${REMOTE_DIR}/.env" \
+    ps
 
 if [[ "${RESTORE_NGINX}" == "true" ]]; then
     echo "Restoring latest Nginx configuration backup..."

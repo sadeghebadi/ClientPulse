@@ -11,9 +11,9 @@ RUN go mod download
 COPY services/api/ ./
 
 # Build statically linked binaries
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o /bin/api ./cmd/api
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o /bin/migrate ./cmd/migrate
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o /bin/worker ./cmd/worker
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-w -s" -o /bin/api ./cmd/api
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-w -s" -o /bin/migrate ./cmd/migrate
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-w -s" -o /bin/worker ./cmd/worker
 
 # Production Runner
 FROM alpine:3.24.3
@@ -21,6 +21,7 @@ FROM alpine:3.24.3
 WORKDIR /app
 
 RUN apk add --no-cache ca-certificates tzdata curl chromium font-dejavu font-noto-arabic && \
+    rm -rf /usr/lib/libLLVM* /usr/lib/libgallium* /usr/share/hwdata /usr/share/X11 /usr/share/misc /usr/share/doc /usr/share/man /var/cache/apk/* && \
     mkdir -p /app/data/storage && \
     addgroup -S clientpulse && adduser -S clientpulse -G clientpulse && \
     chown -R clientpulse:clientpulse /app/data
