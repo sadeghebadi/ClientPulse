@@ -786,3 +786,4 @@ export function CinematicStoryCanvas({ progress, activeScene, isRTL = false }: C
     />
   );
 }
+

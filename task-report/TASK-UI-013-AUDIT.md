@@ -81,3 +81,4 @@ A comprehensive forensic audit was conducted on the current landing page impleme
    - Responsive camera FOV and node layout adjustments for mobile (360px - 768px).
    - Full RTL and Persian typography compatibility preserved.
    - Accessible fallback when `prefers-reduced-motion` is active.
+
