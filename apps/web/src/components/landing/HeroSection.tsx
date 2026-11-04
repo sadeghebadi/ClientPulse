@@ -167,6 +167,24 @@ export function HeroSection() {
             </div>
           </div>
         </div>
+
+        {/* Hero-to-Story Continuous Visual Bridge */}
+        <div className="pt-10 flex flex-col items-center justify-center relative">
+          {/* Vertical Connecting Data Beam */}
+          <div className="w-[2px] h-14 bg-gradient-to-b from-blue-500 via-cyan-400 to-transparent relative overflow-hidden">
+            <div className="w-full h-4 bg-white rounded-full animate-bounce" />
+          </div>
+
+          <a
+            href="#story"
+            onClick={handleScrollToStory}
+            className="group mt-2 inline-flex items-center gap-2 px-5 py-2 rounded-full text-xs font-mono font-bold text-cyan-300 bg-slate-950/80 border border-cyan-800/60 shadow-lg shadow-cyan-950/50 hover:bg-cyan-950/40 hover:border-cyan-500/80 transition-all cursor-pointer"
+          >
+            <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping" />
+            <span>{isRTL ? "ورود به روایت پایش بلادرنگ" : "Enter Reliability Chronicle"}</span>
+            <ChevronDown className="w-3.5 h-3.5 text-cyan-400 group-hover:translate-y-0.5 transition-transform" />
+          </a>
+        </div>
       </div>
     </section>
   );

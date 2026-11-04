@@ -28,7 +28,7 @@ export default function MarketingLandingPage() {
   }, [user, loading, router]);
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#050811] text-slate-100 antialiased selection:bg-blue-600 selection:text-white overflow-x-hidden">
+    <div className="min-h-screen flex flex-col bg-[#050811] text-slate-100 antialiased selection:bg-blue-600 selection:text-white overflow-x-clip">
       {/* Public Marketing Header */}
       <MarketingHeader />
 
