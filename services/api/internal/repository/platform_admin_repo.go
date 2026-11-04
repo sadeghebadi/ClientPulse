@@ -159,6 +159,7 @@ func (r *PlatformAdminRepository) GetOverviewStats(ctx context.Context) (*Platfo
 		&stats.PublishedPlans,
 		&stats.ActiveSubscriptions,
 		&stats.UnassignedOrganizations,
+		&stats.PublishedOffers,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query overview stats: %w", err)
@@ -674,3 +675,164 @@ func (r *PlatformAdminRepository) ListAuditLogs(ctx context.Context, actorID, ac
 	return logs, total, nil
 }
 
+
+
+// OverviewRecentSignup represents recent user registration for platform overview.
+type OverviewRecentSignup struct {
+	ID          string    `json:"id"`
+	Email       string    `json:"email"`
+	DisplayName string    `json:"display_name"`
+	Status      string    `json:"status"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+// OverviewSubscriptionDistribution represents subscription breakdown counters.
+type OverviewSubscriptionDistribution struct {
+	Category string `json:"category"`
+	Count    int64  `json:"count"`
+}
+
+// PlatformOverviewResponse aggregates KPI counters and real operational metrics.
+type PlatformOverviewResponse struct {
+	Stats                          *PlatformOverviewStats             `json:"stats"`
+	RecentSignups                  []OverviewRecentSignup             `json:"recent_signups"`
+	RecentActivity                 []PlatformAdminAuditLog            `json:"recent_activity"`
+	SubscriptionDistributionLocale []OverviewSubscriptionDistribution `json:"subscription_distribution_locale"`
+	SubscriptionDistributionPlan   []OverviewSubscriptionDistribution `json:"subscription_distribution_plan"`
+	RecentSecurityEvents           []PlatformAdminAuditLog            `json:"recent_security_events"`
+
+	// Flat fields for backward-compatibility with existing tests
+	TotalUsers              int64 `json:"total_users"`
+	ActiveUsers             int64 `json:"active_users"`
+	SuspendedUsers          int64 `json:"suspended_users"`
+	TotalOrganizations      int64 `json:"total_organizations"`
+	ActiveOrganizations     int64 `json:"active_organizations"`
+	SuspendedOrganizations  int64 `json:"suspended_organizations"`
+	PublishedPlans          int64 `json:"published_plans"`
+	ActiveSubscriptions     int64 `json:"active_subscriptions"`
+	UnassignedOrganizations int64 `json:"unassigned_organizations"`
+	PublishedOffers         int64 `json:"published_offers"`
+}
+
+// GetPlatformOverview collects real KPI stats and operational platform data.
+func (r *PlatformAdminRepository) GetPlatformOverview(ctx context.Context) (*PlatformOverviewResponse, error) {
+	stats, err := r.GetOverviewStats(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	resp := &PlatformOverviewResponse{
+		Stats:                   stats,
+		TotalUsers:              stats.TotalUsers,
+		ActiveUsers:             stats.ActiveUsers,
+		SuspendedUsers:          stats.SuspendedUsers,
+		TotalOrganizations:      stats.TotalOrganizations,
+		ActiveOrganizations:     stats.ActiveOrganizations,
+		SuspendedOrganizations:  stats.SuspendedOrganizations,
+		PublishedPlans:          stats.PublishedPlans,
+		ActiveSubscriptions:     stats.ActiveSubscriptions,
+		UnassignedOrganizations: stats.UnassignedOrganizations,
+		PublishedOffers:         stats.PublishedOffers,
+		RecentSignups:           []OverviewRecentSignup{},
+		RecentActivity:          []PlatformAdminAuditLog{},
+		SubscriptionDistributionLocale: []OverviewSubscriptionDistribution{},
+		SubscriptionDistributionPlan:   []OverviewSubscriptionDistribution{},
+		RecentSecurityEvents:           []PlatformAdminAuditLog{},
+	}
+
+	// 1. Recent Signups
+	userRows, err := r.pool.Query(ctx, `
+		SELECT id, email, display_name, status, created_at
+		FROM users
+		ORDER BY created_at DESC
+		LIMIT 5
+	`)
+	if err == nil {
+		defer userRows.Close()
+		for userRows.Next() {
+			var u OverviewRecentSignup
+			if err := userRows.Scan(&u.ID, &u.Email, &u.DisplayName, &u.Status, &u.CreatedAt); err == nil {
+				resp.RecentSignups = append(resp.RecentSignups, u)
+			}
+		}
+	}
+
+	// 2. Recent Administrative Activity
+	recentLogs, _, err := r.ListAuditLogs(ctx, "", "", "", "", nil, nil, 6, 0)
+	if err == nil {
+		resp.RecentActivity = recentLogs
+	}
+
+	// 3. Subscription Distribution by Locale
+	locRows, err := r.pool.Query(ctx, `
+		SELECT COALESCE(NULLIF(so.locale, ''), 'unspecified') AS cat, COUNT(*)
+		FROM organization_subscriptions os
+		LEFT JOIN subscription_offer_versions sov ON sov.id = os.offer_version_id
+		LEFT JOIN subscription_offers so ON so.id = sov.offer_id
+		WHERE os.status = 'active'
+		GROUP BY cat
+		ORDER BY COUNT(*) DESC
+	`)
+	if err == nil {
+		defer locRows.Close()
+		for locRows.Next() {
+			var dist OverviewSubscriptionDistribution
+			if err := locRows.Scan(&dist.Category, &dist.Count); err == nil {
+				resp.SubscriptionDistributionLocale = append(resp.SubscriptionDistributionLocale, dist)
+			}
+		}
+	}
+
+	// 4. Subscription Distribution by Plan
+	planRows, err := r.pool.Query(ctx, `
+		SELECT p.name, COUNT(*)
+		FROM organization_subscriptions os
+		JOIN subscription_plan_versions spv ON spv.id = os.plan_version_id
+		JOIN subscription_plans p ON p.id = spv.plan_id
+		WHERE os.status = 'active'
+		GROUP BY p.name
+		ORDER BY COUNT(*) DESC
+		LIMIT 5
+	`)
+	if err == nil {
+		defer planRows.Close()
+		for planRows.Next() {
+			var dist OverviewSubscriptionDistribution
+			if err := planRows.Scan(&dist.Category, &dist.Count); err == nil {
+				resp.SubscriptionDistributionPlan = append(resp.SubscriptionDistributionPlan, dist)
+			}
+		}
+	}
+
+	// 5. Recent Security Events
+	secRows, err := r.pool.Query(ctx, `
+		SELECT 
+			al.id, al.actor_user_id, u.email, u.display_name,
+			al.action, al.target_type, al.target_id, al.reason,
+			al.metadata_json, al.ip_address, al.user_agent, al.created_at
+		FROM platform_admin_audit_logs al
+		JOIN users u ON u.id = al.actor_user_id
+		WHERE al.action ILIKE '%suspend%' OR al.action ILIKE '%reactivate%' OR al.action ILIKE '%grant%' OR al.action ILIKE '%security%' OR al.action ILIKE '%localization%'
+		ORDER BY al.created_at DESC
+		LIMIT 5
+	`)
+	if err == nil {
+		defer secRows.Close()
+		for secRows.Next() {
+			var l PlatformAdminAuditLog
+			var rawMeta []byte
+			if err := secRows.Scan(
+				&l.ID, &l.ActorUserID, &l.ActorEmail, &l.ActorName,
+				&l.Action, &l.TargetType, &l.TargetID, &l.Reason,
+				&rawMeta, &l.IPAddress, &l.UserAgent, &l.CreatedAt,
+			); err == nil {
+				if len(rawMeta) > 0 {
+					_ = json.Unmarshal(rawMeta, &l.MetadataJSON)
+				}
+				resp.RecentSecurityEvents = append(resp.RecentSecurityEvents, l)
+			}
+		}
+	}
+
+	return resp, nil
+}

@@ -26,9 +26,10 @@ func NewSubscriptionRepository(pool *pgxpool.Pool) *SubscriptionRepository {
 	return &SubscriptionRepository{pool: pool}
 }
 
-// AssignPlan assigns a published plan version to an organization, replacing any existing active subscription.
-// If existing usage exceeds the newly assigned plan limits, warnings are generated but resources are preserved.
-func (r *SubscriptionRepository) AssignPlan(ctx context.Context, orgID, planVersionID, assignedBy, adminNote string) (*OrganizationSubscription, []string, error) {
+// AssignPlan assigns a published plan version (and optional localized offer version) to an organization,
+// replacing any existing active subscription. If existing usage exceeds the newly assigned plan limits,
+// warnings are generated but resources are preserved.
+func (r *SubscriptionRepository) AssignPlan(ctx context.Context, orgID, planVersionID, assignedBy, adminNote string, offerVersionID *string) (*OrganizationSubscription, []string, error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return nil, nil, fmt.Errorf("begin transaction: %w", err)
@@ -81,6 +82,56 @@ func (r *SubscriptionRepository) AssignPlan(ctx context.Context, orgID, planVers
 		return nil, nil, fmt.Errorf("cannot assign plan with status %s: plan must be active", planStatus)
 	}
 
+	// 2b. If offer version specified, verify offer version is published and extract pricing
+	var offerName, offerLocale, offerMarket, offerDenom *string
+	var offerVersionNum *int
+	var offerRatio *int64
+	var offerPrice *int64
+	var offerCurrency, offerBillingInterval *string
+
+	if offerVersionID != nil && *offerVersionID != "" {
+		var oID, oName, oLocale, oMarket, sovStatus, sovCurrency, sovDenom, sovInterval string
+		var sovVer int
+		var sovPrice, sovRatio int64
+		err = tx.QueryRow(ctx, `
+			SELECT 
+				so.id, so.name, so.locale, so.market, sov.version, sov.status,
+				sov.price_amount, sov.currency, sov.display_denomination, sov.denomination_ratio, sov.billing_interval
+			FROM subscription_offer_versions sov
+			JOIN subscription_offers so ON so.id = sov.offer_id
+			WHERE sov.id = $1
+		`, *offerVersionID).Scan(
+			&oID, &oName, &oLocale, &oMarket, &sovVer, &sovStatus,
+			&sovPrice, &sovCurrency, &sovDenom, &sovRatio, &sovInterval,
+		)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil, nil, ErrOfferVersionNotFound
+			}
+			return nil, nil, fmt.Errorf("query offer version: %w", err)
+		}
+		if sovStatus != "published" {
+			return nil, nil, fmt.Errorf("cannot assign unpublished offer version (status: %s)", sovStatus)
+		}
+
+		offerName = &oName
+		offerLocale = &oLocale
+		offerMarket = &oMarket
+		offerVersionNum = &sovVer
+		offerPrice = &sovPrice
+		offerCurrency = &sovCurrency
+		offerDenom = &sovDenom
+		offerRatio = &sovRatio
+		offerBillingInterval = &sovInterval
+
+		// Override plan version price display with localized offer price
+		priceAmount = offerPrice
+		currency = offerCurrency
+		billingInterval = offerBillingInterval
+	} else {
+		offerVersionID = nil
+	}
+
 	// 3. Mark any existing active subscription as canceled/replaced
 	_, err = tx.Exec(ctx, `
 		UPDATE organization_subscriptions
@@ -95,13 +146,13 @@ func (r *SubscriptionRepository) AssignPlan(ctx context.Context, orgID, planVers
 	var sub OrganizationSubscription
 	err = tx.QueryRow(ctx, `
 		INSERT INTO organization_subscriptions (
-			organization_id, plan_version_id, status, started_at, assigned_by, administrative_note
+			organization_id, plan_version_id, offer_version_id, status, started_at, assigned_by, administrative_note
 		) VALUES (
-			$1, $2, 'active', NOW(), $3, $4
+			$1, $2, $3, 'active', NOW(), $4, $5
 		)
-		RETURNING id, organization_id, plan_version_id, status, started_at, ends_at, assigned_by, administrative_note, created_at, updated_at
-	`, orgID, planVersionID, assignedBy, adminNote).Scan(
-		&sub.ID, &sub.OrganizationID, &sub.PlanVersionID, &sub.Status, &sub.StartedAt, &sub.EndsAt,
+		RETURNING id, organization_id, plan_version_id, offer_version_id, status, started_at, ends_at, assigned_by, administrative_note, created_at, updated_at
+	`, orgID, planVersionID, offerVersionID, assignedBy, adminNote).Scan(
+		&sub.ID, &sub.OrganizationID, &sub.PlanVersionID, &sub.OfferVersionID, &sub.Status, &sub.StartedAt, &sub.EndsAt,
 		&sub.AssignedBy, &sub.AdministrativeNote, &sub.CreatedAt, &sub.UpdatedAt,
 	)
 	if err != nil {
@@ -117,6 +168,21 @@ func (r *SubscriptionRepository) AssignPlan(ctx context.Context, orgID, planVers
 	sub.Currency = currency
 	sub.BillingInterval = billingInterval
 	sub.Limits = limits
+
+	if offerVersionID != nil {
+		sub.OfferName = offerName
+		sub.OfferLocale = offerLocale
+		sub.OfferMarket = offerMarket
+		sub.OfferVersion = offerVersionNum
+		sub.DisplayDenomination = offerDenom
+		sub.DenominationRatio = offerRatio
+		if offerRatio != nil && *offerRatio > 0 && offerPrice != nil {
+			dp := *offerPrice / *offerRatio
+			sub.DisplayPrice = &dp
+			_, formatted := FormatDisplayPrice(*offerPrice, *currency, *offerDenom, *offerRatio, *offerLocale)
+			sub.FormattedPrice = &formatted
+		}
+	}
 
 	// 5. Query current usage using the definer function to detect over-limit warnings
 	var usage PlatformOrganizationUsage
@@ -216,17 +282,26 @@ func (r *SubscriptionRepository) GetActiveSubscriptionForOrg(ctx context.Context
 	var subPriceAmount *int64
 	var subCurrency, subBillingInterval *string
 	var limits PlanLimits
+	var offerVerID, offerName, offerLocale, offerMarket, offerDenom *string
+	var offerVerNum *int
+	var offerRatio *int64
 
 	err := r.pool.QueryRow(ctx, `
 		SELECT 
 			s.id, s.organization_id, s.plan_version_id, s.status, s.started_at, s.ends_at,
 			s.assigned_by, s.administrative_note, s.created_at, s.updated_at,
-			p.id, p.name, p.slug, pv.version, pv.price_amount, pv.currency, pv.billing_interval,
+			p.id, p.name, p.slug, pv.version,
+			COALESCE(sov.price_amount, pv.price_amount),
+			COALESCE(sov.currency, pv.currency),
+			COALESCE(sov.billing_interval, pv.billing_interval),
 			pv.max_clients, pv.max_assets, pv.max_monitors, pv.max_heartbeats, pv.max_members,
-			pv.min_check_interval_seconds, pv.retention_days, pv.custom_branding_enabled, pv.public_reports_enabled
+			pv.min_check_interval_seconds, pv.retention_days, pv.custom_branding_enabled, pv.public_reports_enabled,
+			s.offer_version_id, so.name, so.locale, so.market, sov.version, sov.display_denomination, sov.denomination_ratio
 		FROM organization_subscriptions s
 		JOIN subscription_plan_versions pv ON pv.id = s.plan_version_id
 		JOIN subscription_plans p ON p.id = pv.plan_id
+		LEFT JOIN subscription_offer_versions sov ON sov.id = s.offer_version_id
+		LEFT JOIN subscription_offers so ON so.id = sov.offer_id
 		WHERE s.organization_id = $1 AND s.status = 'active'
 		ORDER BY s.started_at DESC
 		LIMIT 1
@@ -236,6 +311,7 @@ func (r *SubscriptionRepository) GetActiveSubscriptionForOrg(ctx context.Context
 		&subPlanID, &subPlanName, &subPlanSlug, &subPlanVersion, &subPriceAmount, &subCurrency, &subBillingInterval,
 		&limits.MaxClients, &limits.MaxAssets, &limits.MaxMonitors, &limits.MaxHeartbeats, &limits.MaxMembers,
 		&limits.MinCheckIntervalSeconds, &limits.RetentionDays, &limits.CustomBrandingEnabled, &limits.PublicReportsEnabled,
+		&offerVerID, &offerName, &offerLocale, &offerMarket, &offerVerNum, &offerDenom, &offerRatio,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -252,6 +328,24 @@ func (r *SubscriptionRepository) GetActiveSubscriptionForOrg(ctx context.Context
 	sub.Currency = subCurrency
 	sub.BillingInterval = subBillingInterval
 	sub.Limits = limits
+	sub.OfferVersionID = offerVerID
+	sub.OfferName = offerName
+	sub.OfferLocale = offerLocale
+	sub.OfferMarket = offerMarket
+	sub.OfferVersion = offerVerNum
+	sub.DisplayDenomination = offerDenom
+	sub.DenominationRatio = offerRatio
+
+	if offerRatio != nil && *offerRatio > 0 && subPriceAmount != nil && subCurrency != nil && offerDenom != nil {
+		dp := *subPriceAmount / *offerRatio
+		sub.DisplayPrice = &dp
+		loc := "en"
+		if offerLocale != nil {
+			loc = *offerLocale
+		}
+		_, formatted := FormatDisplayPrice(*subPriceAmount, *subCurrency, *offerDenom, *offerRatio, loc)
+		sub.FormattedPrice = &formatted
+	}
 
 	return &sub, nil
 }
@@ -265,17 +359,26 @@ func (r *SubscriptionRepository) GetLatestSubscriptionForOrg(ctx context.Context
 	var subPriceAmount *int64
 	var subCurrency, subBillingInterval *string
 	var limits PlanLimits
+	var offerVerID, offerName, offerLocale, offerMarket, offerDenom *string
+	var offerVerNum *int
+	var offerRatio *int64
 
 	err := r.pool.QueryRow(ctx, `
 		SELECT 
 			s.id, s.organization_id, s.plan_version_id, s.status, s.started_at, s.ends_at,
 			s.assigned_by, s.administrative_note, s.created_at, s.updated_at,
-			p.id, p.name, p.slug, pv.version, pv.price_amount, pv.currency, pv.billing_interval,
+			p.id, p.name, p.slug, pv.version,
+			COALESCE(sov.price_amount, pv.price_amount),
+			COALESCE(sov.currency, pv.currency),
+			COALESCE(sov.billing_interval, pv.billing_interval),
 			pv.max_clients, pv.max_assets, pv.max_monitors, pv.max_heartbeats, pv.max_members,
-			pv.min_check_interval_seconds, pv.retention_days, pv.custom_branding_enabled, pv.public_reports_enabled
+			pv.min_check_interval_seconds, pv.retention_days, pv.custom_branding_enabled, pv.public_reports_enabled,
+			s.offer_version_id, so.name, so.locale, so.market, sov.version, sov.display_denomination, sov.denomination_ratio
 		FROM organization_subscriptions s
 		JOIN subscription_plan_versions pv ON pv.id = s.plan_version_id
 		JOIN subscription_plans p ON p.id = pv.plan_id
+		LEFT JOIN subscription_offer_versions sov ON sov.id = s.offer_version_id
+		LEFT JOIN subscription_offers so ON so.id = sov.offer_id
 		WHERE s.organization_id = $1
 		ORDER BY s.started_at DESC, s.created_at DESC
 		LIMIT 1
@@ -285,6 +388,7 @@ func (r *SubscriptionRepository) GetLatestSubscriptionForOrg(ctx context.Context
 		&subPlanID, &subPlanName, &subPlanSlug, &subPlanVersion, &subPriceAmount, &subCurrency, &subBillingInterval,
 		&limits.MaxClients, &limits.MaxAssets, &limits.MaxMonitors, &limits.MaxHeartbeats, &limits.MaxMembers,
 		&limits.MinCheckIntervalSeconds, &limits.RetentionDays, &limits.CustomBrandingEnabled, &limits.PublicReportsEnabled,
+		&offerVerID, &offerName, &offerLocale, &offerMarket, &offerVerNum, &offerDenom, &offerRatio,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -301,12 +405,30 @@ func (r *SubscriptionRepository) GetLatestSubscriptionForOrg(ctx context.Context
 	sub.Currency = subCurrency
 	sub.BillingInterval = subBillingInterval
 	sub.Limits = limits
+	sub.OfferVersionID = offerVerID
+	sub.OfferName = offerName
+	sub.OfferLocale = offerLocale
+	sub.OfferMarket = offerMarket
+	sub.OfferVersion = offerVerNum
+	sub.DisplayDenomination = offerDenom
+	sub.DenominationRatio = offerRatio
+
+	if offerRatio != nil && *offerRatio > 0 && subPriceAmount != nil && subCurrency != nil && offerDenom != nil {
+		dp := *subPriceAmount / *offerRatio
+		sub.DisplayPrice = &dp
+		loc := "en"
+		if offerLocale != nil {
+			loc = *offerLocale
+		}
+		_, formatted := FormatDisplayPrice(*subPriceAmount, *subCurrency, *offerDenom, *offerRatio, loc)
+		sub.FormattedPrice = &formatted
+	}
 
 	return &sub, nil
 }
 
-// ListSubscriptions retrieves subscriptions with optional filters on orgID and status.
-func (r *SubscriptionRepository) ListSubscriptions(ctx context.Context, orgID, status string, limit, offset int) ([]OrganizationSubscription, int, error) {
+// ListSubscriptions returns paginated subscriptions across organizations.
+func (r *SubscriptionRepository) ListSubscriptions(ctx context.Context, status, orgID string, limit, offset int) ([]OrganizationSubscription, int, error) {
 	if limit <= 0 {
 		limit = 20
 	}
@@ -347,13 +469,19 @@ func (r *SubscriptionRepository) ListSubscriptions(ctx context.Context, orgID, s
 		SELECT 
 			os.id, os.organization_id, o.name, os.plan_version_id, p.id, p.name, p.slug, spv.version,
 			os.status, os.started_at, os.ends_at, os.assigned_by, os.administrative_note,
-			os.created_at, os.updated_at, spv.price_amount, spv.currency, spv.billing_interval,
+			os.created_at, os.updated_at,
+			COALESCE(sov.price_amount, spv.price_amount) AS price_amount,
+			COALESCE(sov.currency, spv.currency) AS currency,
+			COALESCE(sov.billing_interval, spv.billing_interval) AS billing_interval,
 			spv.max_clients, spv.max_assets, spv.max_monitors, spv.max_heartbeats, spv.max_members,
-			spv.min_check_interval_seconds, spv.retention_days, spv.custom_branding_enabled, spv.public_reports_enabled
+			spv.min_check_interval_seconds, spv.retention_days, spv.custom_branding_enabled, spv.public_reports_enabled,
+			os.offer_version_id, so.name, so.locale, so.market, sov.version, sov.display_denomination, sov.denomination_ratio
 		FROM organization_subscriptions os
 		JOIN organizations o ON o.id = os.organization_id
 		JOIN subscription_plan_versions spv ON spv.id = os.plan_version_id
 		JOIN subscription_plans p ON p.id = spv.plan_id
+		LEFT JOIN subscription_offer_versions sov ON sov.id = os.offer_version_id
+		LEFT JOIN subscription_offers so ON so.id = sov.offer_id
 		%s
 		ORDER BY os.started_at DESC
 		LIMIT $%d OFFSET $%d
@@ -371,16 +499,40 @@ func (r *SubscriptionRepository) ListSubscriptions(ctx context.Context, orgID, s
 	for rows.Next() {
 		var sub OrganizationSubscription
 		var limits PlanLimits
+		var offerVerID, offerName, offerLocale, offerMarket, offerDenom *string
+		var offerVerNum *int
+		var offerRatio *int64
+
 		if err := rows.Scan(
 			&sub.ID, &sub.OrganizationID, &sub.OrganizationName, &sub.PlanVersionID, &sub.PlanID, &sub.PlanName, &sub.PlanSlug, &sub.PlanVersion,
 			&sub.Status, &sub.StartedAt, &sub.EndsAt, &sub.AssignedBy, &sub.AdministrativeNote,
 			&sub.CreatedAt, &sub.UpdatedAt, &sub.PriceAmount, &sub.Currency, &sub.BillingInterval,
 			&limits.MaxClients, &limits.MaxAssets, &limits.MaxMonitors, &limits.MaxHeartbeats, &limits.MaxMembers,
 			&limits.MinCheckIntervalSeconds, &limits.RetentionDays, &limits.CustomBrandingEnabled, &limits.PublicReportsEnabled,
+			&offerVerID, &offerName, &offerLocale, &offerMarket, &offerVerNum, &offerDenom, &offerRatio,
 		); err != nil {
 			return nil, 0, fmt.Errorf("scan subscription: %w", err)
 		}
 		sub.Limits = limits
+		sub.OfferVersionID = offerVerID
+		sub.OfferName = offerName
+		sub.OfferLocale = offerLocale
+		sub.OfferMarket = offerMarket
+		sub.OfferVersion = offerVerNum
+		sub.DisplayDenomination = offerDenom
+		sub.DenominationRatio = offerRatio
+
+		if offerRatio != nil && *offerRatio > 0 && sub.PriceAmount != nil && sub.Currency != nil && offerDenom != nil {
+			dp := *sub.PriceAmount / *offerRatio
+			sub.DisplayPrice = &dp
+			loc := "en"
+			if offerLocale != nil {
+				loc = *offerLocale
+			}
+			_, formatted := FormatDisplayPrice(*sub.PriceAmount, *sub.Currency, *offerDenom, *offerRatio, loc)
+			sub.FormattedPrice = &formatted
+		}
+
 		subs = append(subs, sub)
 	}
 
@@ -402,4 +554,3 @@ func (r *SubscriptionRepository) UpdateSubscriptionStatus(ctx context.Context, s
 	}
 	return nil
 }
-

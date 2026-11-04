@@ -34,6 +34,8 @@ type testAdminEnv struct {
 	adminRepo        *repository.PlatformAdminRepository
 	planRepo         *repository.PlanRepository
 	subscriptionRepo *repository.SubscriptionRepository
+	localizationRepo *repository.LocalizationRepository
+	offerRepo        *repository.OfferRepository
 	entitlementSvc   *entitlement.Service
 	dbPool           *database.DB
 	cleanup          func()
@@ -78,6 +80,9 @@ func setupTestPlatformAdminServer(t *testing.T) *testAdminEnv {
 	orgService := service.NewOrgService(orgRepo, userRepo, sessionRepo, auditRepo, cfg)
 	testLog := slog.New(slog.NewTextHandler(io.Discard, nil))
 
+	localizationRepo := repository.NewLocalizationRepository(db.Pool)
+	offerRepo := repository.NewOfferRepository(db.Pool)
+
 	deps := Dependencies{
 		AuthHdr:          NewAuthHandler(authService, false),
 		OrgHdr:           NewOrgHandler(orgService).WithEntitlements(entitlementSvc),
@@ -88,7 +93,7 @@ func setupTestPlatformAdminServer(t *testing.T) *testAdminEnv {
 		IncidentHdr:      NewIncidentHandler(incidentRepo, eventRepo, testLog),
 		BrandingHdr:      NewBrandingHandler(brandingRepo, st, testLog).WithEntitlements(entitlementSvc),
 		ReportHdr:        NewReportHandler(reportRepo, brandingRepo, eventRepo, st, pdfGen, testLog),
-		PlatformAdminHdr: NewPlatformAdminHandler(platformAdminRepo, planRepo, subscriptionRepo, testLog),
+		PlatformAdminHdr: NewPlatformAdminHandler(platformAdminRepo, planRepo, subscriptionRepo, localizationRepo, offerRepo, testLog),
 		AuthMiddleware:   NewAuthMiddleware(sessionRepo, userRepo, cfg).WithPlatformAdminRepo(platformAdminRepo),
 		TenantMiddleware: NewTenantMiddleware(orgRepo, sessionRepo),
 	}
@@ -108,6 +113,8 @@ func setupTestPlatformAdminServer(t *testing.T) *testAdminEnv {
 		adminRepo:        platformAdminRepo,
 		planRepo:         planRepo,
 		subscriptionRepo: subscriptionRepo,
+		localizationRepo: localizationRepo,
+		offerRepo:        offerRepo,
 		entitlementSvc:   entitlementSvc,
 		dbPool:           db,
 		cleanup:          cleanup,

@@ -18,6 +18,8 @@ type PlatformAdminHandler struct {
 	adminRepo        *repository.PlatformAdminRepository
 	planRepo         *repository.PlanRepository
 	subscriptionRepo *repository.SubscriptionRepository
+	localizationRepo *repository.LocalizationRepository
+	offerRepo        *repository.OfferRepository
 	logger           *slog.Logger
 }
 
@@ -26,12 +28,16 @@ func NewPlatformAdminHandler(
 	adminRepo *repository.PlatformAdminRepository,
 	planRepo *repository.PlanRepository,
 	subscriptionRepo *repository.SubscriptionRepository,
+	localizationRepo *repository.LocalizationRepository,
+	offerRepo *repository.OfferRepository,
 	logger *slog.Logger,
 ) *PlatformAdminHandler {
 	return &PlatformAdminHandler{
 		adminRepo:        adminRepo,
 		planRepo:         planRepo,
 		subscriptionRepo: subscriptionRepo,
+		localizationRepo: localizationRepo,
+		offerRepo:        offerRepo,
 		logger:           logger,
 	}
 }
@@ -68,13 +74,13 @@ func (h *PlatformAdminHandler) CheckPrivilege(w http.ResponseWriter, r *http.Req
 
 // GetOverview handles GET /api/v1/platform-admin/overview.
 func (h *PlatformAdminHandler) GetOverview(w http.ResponseWriter, r *http.Request) {
-	stats, err := h.adminRepo.GetOverviewStats(r.Context())
+	overview, err := h.adminRepo.GetPlatformOverview(r.Context())
 	if err != nil {
-		h.logger.Error("failed to get overview stats", "error", err)
+		h.logger.Error("failed to get platform overview", "error", err)
 		sendJSONError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to retrieve overview statistics")
 		return
 	}
-	sendJSONResponse(w, http.StatusOK, stats)
+	sendJSONResponse(w, http.StatusOK, overview)
 }
 
 // ListUsers handles GET /api/v1/platform-admin/users.
@@ -590,10 +596,11 @@ func (h *PlatformAdminHandler) AssignSubscription(w http.ResponseWriter, r *http
 	actor := tenant.GetUserContext(r.Context())
 
 	var req struct {
-		OrganizationID     string `json:"organization_id"`
-		PlanID             string `json:"plan_id"`
-		PlanVersionID      string `json:"plan_version_id"`
-		AdministrativeNote string `json:"administrative_note"`
+		OrganizationID     string  `json:"organization_id"`
+		PlanID             string  `json:"plan_id"`
+		PlanVersionID      string  `json:"plan_version_id"`
+		OfferVersionID     *string `json:"offer_version_id"`
+		AdministrativeNote string  `json:"administrative_note"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -618,7 +625,7 @@ func (h *PlatformAdminHandler) AssignSubscription(w http.ResponseWriter, r *http
 		return
 	}
 
-	sub, warnings, err := h.subscriptionRepo.AssignPlan(r.Context(), req.OrganizationID, req.PlanVersionID, actor.UserID, req.AdministrativeNote)
+	sub, warnings, err := h.subscriptionRepo.AssignPlan(r.Context(), req.OrganizationID, req.PlanVersionID, actor.UserID, req.AdministrativeNote, req.OfferVersionID)
 	if err != nil {
 		if errors.Is(err, repository.ErrOrgNotFound) {
 			sendJSONError(w, http.StatusNotFound, "NOT_FOUND", "Organization not found")
@@ -626,6 +633,10 @@ func (h *PlatformAdminHandler) AssignSubscription(w http.ResponseWriter, r *http
 		}
 		if errors.Is(err, repository.ErrPlanVersionNotFound) {
 			sendJSONError(w, http.StatusNotFound, "NOT_FOUND", "Plan version not found")
+			return
+		}
+		if errors.Is(err, repository.ErrOfferVersionNotFound) {
+			sendJSONError(w, http.StatusNotFound, "NOT_FOUND", "Offer version not found")
 			return
 		}
 		if errors.Is(err, repository.ErrCannotAssignDraft) || errors.Is(err, repository.ErrCannotAssignArchived) {
@@ -637,12 +648,29 @@ func (h *PlatformAdminHandler) AssignSubscription(w http.ResponseWriter, r *http
 		return
 	}
 
-	_ = h.adminRepo.RecordAuditLog(r.Context(), actor.UserID, "subscription.assigned", "subscription", sub.ID, req.AdministrativeNote, map[string]interface{}{
+	auditMeta := map[string]interface{}{
 		"organization_id": sub.OrganizationID,
 		"plan_name":       sub.PlanName,
 		"plan_version":    sub.PlanVersion,
 		"warnings":        warnings,
-	}, r.RemoteAddr, r.UserAgent())
+	}
+	if sub.OfferVersionID != nil {
+		auditMeta["offer_version_id"] = *sub.OfferVersionID
+		if sub.OfferName != nil {
+			auditMeta["offer_name"] = *sub.OfferName
+		}
+		if sub.OfferLocale != nil {
+			auditMeta["offer_locale"] = *sub.OfferLocale
+		}
+		if sub.Currency != nil {
+			auditMeta["currency"] = *sub.Currency
+		}
+		if sub.PriceAmount != nil {
+			auditMeta["price_amount"] = *sub.PriceAmount
+		}
+	}
+
+	_ = h.adminRepo.RecordAuditLog(r.Context(), actor.UserID, "subscription.assigned", "subscription", sub.ID, req.AdministrativeNote, auditMeta, r.RemoteAddr, r.UserAgent())
 
 	sendJSONResponse(w, http.StatusOK, map[string]interface{}{
 		"subscription": sub,
@@ -810,3 +838,288 @@ func (h *PlatformAdminHandler) ListAuditLogs(w http.ResponseWriter, r *http.Requ
 	})
 }
 
+
+
+// --- Centralized Language Management Handlers ---
+
+// GetLocalizationSettings handles GET /api/v1/platform-admin/settings/localization.
+func (h *PlatformAdminHandler) GetLocalizationSettings(w http.ResponseWriter, r *http.Request) {
+	cfg, err := h.localizationRepo.GetLocalizationConfig(r.Context())
+	if err != nil {
+		h.logger.Error("failed to get localization settings", "error", err)
+		sendJSONError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to retrieve localization settings")
+		return
+	}
+	sendJSONResponse(w, http.StatusOK, cfg)
+}
+
+// UpdateLocalizationSettings handles PUT /api/v1/platform-admin/settings/localization.
+func (h *PlatformAdminHandler) UpdateLocalizationSettings(w http.ResponseWriter, r *http.Request) {
+	actor := tenant.GetUserContext(r.Context())
+
+	var req struct {
+		EnabledLocales []string `json:"enabled_locales"`
+		DefaultLocale  string   `json:"default_locale"`
+		Reason         string   `json:"reason"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		sendJSONError(w, http.StatusBadRequest, "INVALID_REQUEST", "Invalid JSON payload")
+		return
+	}
+
+	cfg, err := h.localizationRepo.UpdateLocalizationConfig(r.Context(), actor.UserID, req.EnabledLocales, req.DefaultLocale)
+	if err != nil {
+		if errors.Is(err, repository.ErrAtLeastOneLocaleRequired) ||
+			errors.Is(err, repository.ErrDefaultLocaleNotEnabled) ||
+			errors.Is(err, repository.ErrInvalidLocale) {
+			sendJSONError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error())
+			return
+		}
+		h.logger.Error("failed to update localization settings", "error", err)
+		sendJSONError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to update localization settings")
+		return
+	}
+
+	_ = h.adminRepo.RecordAuditLog(r.Context(), actor.UserID, "localization.updated", "system_settings", "localization", req.Reason, map[string]interface{}{
+		"enabled_locales": cfg.EnabledLocales,
+		"default_locale":  cfg.DefaultLocale,
+	}, r.RemoteAddr, r.UserAgent())
+
+	sendJSONResponse(w, http.StatusOK, cfg)
+}
+
+// GetPublicLocalization handles GET /api/v1/public/localization.
+func (h *PlatformAdminHandler) GetPublicLocalization(w http.ResponseWriter, r *http.Request) {
+	pub, err := h.localizationRepo.GetPublicLocalizationConfig(r.Context())
+	if err != nil {
+		h.logger.Error("failed to get public localization", "error", err)
+		sendJSONError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to retrieve localization configuration")
+		return
+	}
+	sendJSONResponse(w, http.StatusOK, pub)
+}
+
+// --- Localized Subscription Offer & Catalog Handlers ---
+
+// ListAllCatalogs handles GET /api/v1/platform-admin/catalogs.
+func (h *PlatformAdminHandler) ListAllCatalogs(w http.ResponseWriter, r *http.Request) {
+	offers, err := h.offerRepo.ListAllAdminCatalogs(r.Context())
+	if err != nil {
+		h.logger.Error("failed to list all admin catalogs", "error", err)
+		sendJSONError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to retrieve catalogs")
+		return
+	}
+	sendJSONResponse(w, http.StatusOK, map[string]interface{}{
+		"offers": offers,
+		"total":  len(offers),
+	})
+}
+
+// ListPlanOffers handles GET /api/v1/platform-admin/plans/{id}/offers.
+func (h *PlatformAdminHandler) ListPlanOffers(w http.ResponseWriter, r *http.Request) {
+	planID := r.PathValue("id")
+	offers, err := h.offerRepo.ListOffersByPlan(r.Context(), planID)
+	if err != nil {
+		h.logger.Error("failed to list offers by plan", "plan_id", planID, "error", err)
+		sendJSONError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to retrieve plan offers")
+		return
+	}
+	sendJSONResponse(w, http.StatusOK, map[string]interface{}{
+		"offers": offers,
+	})
+}
+
+// CreatePlanOffer handles POST /api/v1/platform-admin/plans/{id}/offers.
+func (h *PlatformAdminHandler) CreatePlanOffer(w http.ResponseWriter, r *http.Request) {
+	actor := tenant.GetUserContext(r.Context())
+	planID := r.PathValue("id")
+
+	var params repository.CreateOfferParams
+	if err := json.NewDecoder(r.Body).Decode(&params); err != nil {
+		sendJSONError(w, http.StatusBadRequest, "INVALID_REQUEST", "Invalid JSON payload")
+		return
+	}
+	params.PlanID = planID
+
+	offer, ver, err := h.offerRepo.CreateDraftOffer(r.Context(), actor.UserID, params)
+	if err != nil {
+		if errors.Is(err, repository.ErrNegativePrice) || errors.Is(err, repository.ErrInvalidCurrency) || errors.Is(err, repository.ErrInvalidDenomination) {
+			sendJSONError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error())
+			return
+		}
+		h.logger.Error("failed to create draft offer", "plan_id", planID, "error", err)
+		sendJSONError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create localized offer")
+		return
+	}
+
+	_ = h.adminRepo.RecordAuditLog(r.Context(), actor.UserID, "offer.created", "offer", offer.ID, "Created localized plan offer", map[string]interface{}{
+		"plan_id":              planID,
+		"locale":               offer.Locale,
+		"currency":             ver.Currency,
+		"display_denomination": ver.DisplayDenomination,
+		"denomination_ratio":   ver.DenominationRatio,
+		"price_amount":         ver.PriceAmount,
+	}, r.RemoteAddr, r.UserAgent())
+
+	sendJSONResponse(w, http.StatusCreated, map[string]interface{}{
+		"offer":   offer,
+		"version": ver,
+	})
+}
+
+// GetOffer handles GET /api/v1/platform-admin/offers/{id}.
+func (h *PlatformAdminHandler) GetOffer(w http.ResponseWriter, r *http.Request) {
+	offerID := r.PathValue("id")
+	offer, versions, err := h.offerRepo.GetOfferByID(r.Context(), offerID)
+	if err != nil {
+		if errors.Is(err, repository.ErrOfferNotFound) {
+			sendJSONError(w, http.StatusNotFound, "NOT_FOUND", "Offer not found")
+			return
+		}
+		h.logger.Error("failed to get offer", "offer_id", offerID, "error", err)
+		sendJSONError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to retrieve offer")
+		return
+	}
+	sendJSONResponse(w, http.StatusOK, map[string]interface{}{
+		"offer":    offer,
+		"versions": versions,
+	})
+}
+
+// UpdateOffer handles PUT /api/v1/platform-admin/offers/{id}.
+func (h *PlatformAdminHandler) UpdateOffer(w http.ResponseWriter, r *http.Request) {
+	actor := tenant.GetUserContext(r.Context())
+	offerID := r.PathValue("id")
+
+	var params repository.UpdateOfferParams
+	if err := json.NewDecoder(r.Body).Decode(&params); err != nil {
+		sendJSONError(w, http.StatusBadRequest, "INVALID_REQUEST", "Invalid JSON payload")
+		return
+	}
+
+	offer, ver, err := h.offerRepo.UpdateDraftOffer(r.Context(), actor.UserID, offerID, params)
+	if err != nil {
+		if errors.Is(err, repository.ErrOfferNotFound) {
+			sendJSONError(w, http.StatusNotFound, "NOT_FOUND", "Offer not found")
+			return
+		}
+		if errors.Is(err, repository.ErrNegativePrice) || errors.Is(err, repository.ErrInvalidCurrency) || errors.Is(err, repository.ErrInvalidDenomination) {
+			sendJSONError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error())
+			return
+		}
+		h.logger.Error("failed to update offer", "offer_id", offerID, "error", err)
+		sendJSONError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to update localized offer")
+		return
+	}
+
+	_ = h.adminRepo.RecordAuditLog(r.Context(), actor.UserID, "offer.updated", "offer", offer.ID, "Updated localized offer", map[string]interface{}{
+		"version":              ver.Version,
+		"currency":             ver.Currency,
+		"display_denomination": ver.DisplayDenomination,
+		"denomination_ratio":   ver.DenominationRatio,
+		"price_amount":         ver.PriceAmount,
+	}, r.RemoteAddr, r.UserAgent())
+
+	sendJSONResponse(w, http.StatusOK, map[string]interface{}{
+		"offer":   offer,
+		"version": ver,
+	})
+}
+
+// PublishOffer handles POST /api/v1/platform-admin/offers/{id}/publish.
+func (h *PlatformAdminHandler) PublishOffer(w http.ResponseWriter, r *http.Request) {
+	actor := tenant.GetUserContext(r.Context())
+	offerID := r.PathValue("id")
+
+	offer, ver, err := h.offerRepo.PublishOffer(r.Context(), actor.UserID, offerID)
+	if err != nil {
+		h.logger.Error("failed to publish offer", "offer_id", offerID, "error", err)
+		sendJSONError(w, http.StatusBadRequest, "PUBLISH_FAILED", err.Error())
+		return
+	}
+
+	_ = h.adminRepo.RecordAuditLog(r.Context(), actor.UserID, "offer.published", "offer", offer.ID, "Published immutable localized offer version", map[string]interface{}{
+		"version":              ver.Version,
+		"currency":             ver.Currency,
+		"display_denomination": ver.DisplayDenomination,
+		"denomination_ratio":   ver.DenominationRatio,
+		"price_amount":         ver.PriceAmount,
+	}, r.RemoteAddr, r.UserAgent())
+
+	sendJSONResponse(w, http.StatusOK, map[string]interface{}{
+		"offer":   offer,
+		"version": ver,
+	})
+}
+
+// ArchiveOffer handles POST /api/v1/platform-admin/offers/{id}/archive.
+func (h *PlatformAdminHandler) ArchiveOffer(w http.ResponseWriter, r *http.Request) {
+	actor := tenant.GetUserContext(r.Context())
+	offerID := r.PathValue("id")
+
+	if err := h.offerRepo.ArchiveOffer(r.Context(), actor.UserID, offerID); err != nil {
+		if errors.Is(err, repository.ErrOfferNotFound) {
+			sendJSONError(w, http.StatusNotFound, "NOT_FOUND", "Offer not found")
+			return
+		}
+		h.logger.Error("failed to archive offer", "offer_id", offerID, "error", err)
+		sendJSONError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to archive offer")
+		return
+	}
+
+	_ = h.adminRepo.RecordAuditLog(r.Context(), actor.UserID, "offer.archived", "offer", offerID, "Archived localized offer", nil, r.RemoteAddr, r.UserAgent())
+	sendJSONResponse(w, http.StatusOK, map[string]interface{}{
+		"status": "archived",
+	})
+}
+
+// GetPublicCatalog handles GET /api/v1/public/catalog.
+// Gracefully falls back to default locale if requested locale is disabled.
+func (h *PlatformAdminHandler) GetPublicCatalog(w http.ResponseWriter, r *http.Request) {
+	locCfg, err := h.localizationRepo.GetLocalizationConfig(r.Context())
+	if err != nil {
+		h.logger.Error("failed to get localization config for catalog", "error", err)
+		sendJSONError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to retrieve catalog configuration")
+		return
+	}
+
+	reqLocale := strings.TrimSpace(r.URL.Query().Get("locale"))
+	if reqLocale == "" {
+		reqLocale = locCfg.DefaultLocale
+	}
+
+	// Validate if requested locale is enabled; gracefully fall back to default if disabled
+	isEnabled := false
+	for _, l := range locCfg.EnabledLocales {
+		if l == reqLocale {
+			isEnabled = true
+			break
+		}
+	}
+	if !isEnabled {
+		reqLocale = locCfg.DefaultLocale
+	}
+
+	market := strings.TrimSpace(r.URL.Query().Get("market"))
+	if market == "" {
+		if reqLocale == "fa" {
+			market = "ir"
+		} else {
+			market = "global"
+		}
+	}
+
+	offers, err := h.offerRepo.ListCatalogOffers(r.Context(), reqLocale, market)
+	if err != nil {
+		h.logger.Error("failed to list catalog offers", "locale", reqLocale, "error", err)
+		sendJSONError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to retrieve catalog offers")
+		return
+	}
+
+	sendJSONResponse(w, http.StatusOK, map[string]interface{}{
+		"locale": reqLocale,
+		"market": market,
+		"offers": offers,
+	})
+}

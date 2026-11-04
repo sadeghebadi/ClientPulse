@@ -750,6 +750,59 @@ export const translations = {
     accessDeniedDesc: "Platform administrator privileges are required to access this area. Organization Owner/Admin roles do not confer platform access.",
     returnToDashboard: "Return to Dashboard",
     immutablePlanNotice: "Published plans are immutable. Modifying this plan will create a new draft version without disrupting existing assigned subscriptions.",
+
+    // TASK-009.3 Platform Admin Redesign & Locale-Aware Catalogs
+    platformCommercial: "Commercial Architecture",
+    subscriptionCatalogs: "Subscription Catalogs",
+    localizationSettings: "Languages & Localization",
+    platformSettings: "Platform Settings",
+    allCatalogs: "All Catalogs",
+    englishCatalog: "English Catalog",
+    persianCatalog: "Persian Catalog",
+    sharedEntitlements: "Shared Entitlements",
+    localizedOffers: "Localized Offers",
+    englishOffer: "English Offer",
+    persianOffer: "Persian Offer",
+    displayDenomination: "Display Denomination",
+    toman: "Toman",
+    rial: "Rial",
+    usd: "USD ($)",
+    conversionRatio: "Rial Conversion Ratio",
+    canonicalStoredAmount: "Exact Stored Amount (IRR)",
+    tomanConversionNote: "1 Toman = 10 IRR Rials",
+    publishedOffers: "Published Offers",
+    recentSignups: "Recent Signups",
+    recentActivity: "Latest Administrative Activity",
+    localeDistribution: "Subscription Breakdown by Locale",
+    planDistribution: "Subscription Breakdown by Plan",
+    recentSecurityEvents: "Security Events",
+    supportedLanguages: "Supported Languages",
+    enabledLanguages: "Enabled Languages",
+    defaultLanguage: "Default Language",
+    enableLanguage: "Enable",
+    disableLanguage: "Disable",
+    cannotDisableDefault: "The default language cannot be disabled without first selecting another default.",
+    cannotDisableLastLanguage: "At least one language must remain enabled on the platform.",
+    languageDisabledNotice: "This language is currently disabled platform-wide.",
+    dateFormatPreview: "Date & Number Format Preview",
+    platformStatusOperational: "All Platform Services Operational",
+    createOffer: "Add Localized Offer",
+    editOffer: "Edit Localized Offer",
+    publishOffer: "Publish Offer",
+    offerVersion: "Offer Version",
+    targetMarket: "Target Market",
+    draftOffersNotice: "Draft offers awaiting publication are hidden from public catalogs until published.",
+    exactStoredPrice: "Stored Canonical Price",
+    displayPrice: "Customer Facing Price",
+    previewPricing: "Formatted Customer Display",
+    unassignedBadge: "Unassigned",
+    saveSettings: "Save Settings",
+    settingsSaved: "Platform settings updated successfully.",
+    activeSubscriptionsByPlan: "Active Subscriptions by Plan",
+    activeSubscriptionsByLocale: "Active Subscriptions by Locale",
+    viewCatalog: "View Catalog",
+    configureOffer: "Configure Offer",
+    noOffersConfigured: "No localized offers created yet for this plan.",
   },
   fa: {
     brandName: "کلاینت‌پالس",
@@ -1496,8 +1549,69 @@ export const translations = {
     accessDeniedDesc: "برای دسترسی به این بخش به مجوز مدیر کل پلتفرم نیاز است. نقش‌های مالک یا مدیر سازمان دسترسی به این بخش ایجاد نمی‌کنند.",
     returnToDashboard: "بازگشت به پیشخوان",
     immutablePlanNotice: "طرح‌های منتشرشده تغییرناپذیر هستند. ویرایش این طرح منجر به ساخت یک پیش‌نویس نسخه جدید شده و اشتراک‌های فعال فعلی بدون اختلال ادامه می‌یابند.",
+
+    // TASK-009.3 Platform Admin Redesign & Locale-Aware Catalogs
+    platformCommercial: "معماری تجاری و مالی",
+    subscriptionCatalogs: "کاتالوگ‌های اشتراک",
+    localizationSettings: "بومی‌سازی و زبان‌ها",
+    platformSettings: "تنظیمات پلتفرم",
+    allCatalogs: "همه کاتالوگ‌ها",
+    englishCatalog: "کاتالوگ انگلیسی",
+    persianCatalog: "کاتالوگ فارسی",
+    sharedEntitlements: "سهمیه‌ها و محدودیت‌های پایه",
+    localizedOffers: "پیشنهادهای محلی و قیمت‌گذاری",
+    englishOffer: "پیشنهاد انگلیسی",
+    persianOffer: "پیشنهاد فارسی",
+    displayDenomination: "واحد نمایشی ارز",
+    toman: "تومان",
+    rial: "ریال",
+    usd: "دلار ($)",
+    conversionRatio: "ضریب تبدیل به ریال",
+    canonicalStoredAmount: "مبلغ دقیق ریالی ذخیره‌شده",
+    tomanConversionNote: "۱ تومان = ۱۰ ریال",
+    publishedOffers: "پیشنهادهای منتشرشده",
+    recentSignups: "ثبت‌نام‌های اخیر",
+    recentActivity: "آخرین فعالیت‌های مدیریتی",
+    localeDistribution: "توزیع اشتراک‌ها بر اساس زبان",
+    planDistribution: "توزیع اشتراک‌ها بر اساس طرح",
+    recentSecurityEvents: "رویدادهای امنیتی",
+    supportedLanguages: "زبان‌های پشتیبانی‌شده",
+    enabledLanguages: "زبان‌های فعال",
+    defaultLanguage: "زبان پیش‌فرض",
+    enableLanguage: "فعال‌سازی",
+    disableLanguage: "غیرفعال‌سازی",
+    cannotDisableDefault: "زبان پیش‌فرض پلتفرم نمی‌تواند بدون انتخاب یک زبان دیگر غیرفعال شود.",
+    cannotDisableLastLanguage: "حداقل یک زبان باید همواره در سیستم فعال باقی بماند.",
+    languageDisabledNotice: "این زبان در حال حاضر به صورت سراسری غیرفعال شده است.",
+    dateFormatPreview: "پیش‌نمایش فرمت اعداد و تاریخ",
+    platformStatusOperational: "کلیه زیرساخت‌ها و خدمات عملیاتی هستند",
+    createOffer: "افزودن پیشنهاد بومی",
+    editOffer: "ویرایش پیشنهاد بومی",
+    publishOffer: "انتشار پیشنهاد",
+    offerVersion: "نسخه پیشنهاد",
+    targetMarket: "بازار هدف",
+    draftOffersNotice: "پیشنهادهای پیش‌نویس تا زمان انتشار در کاتالوگ عمومی نمایش داده نمی‌شوند.",
+    exactStoredPrice: "مبلغ پایه ذخیره‌شده در سیستم",
+    displayPrice: "قیمت نمایشی به مشتری",
+    previewPricing: "پیش‌نمایش قیمت نهایی مشتری",
+    unassignedBadge: "بدون طرح",
+    saveSettings: "ذخیره تنظیمات",
+    settingsSaved: "تنظیمات زبان و پلتفرم با موفقیت به‌روزرسانی شد.",
+    activeSubscriptionsByPlan: "اشتراک‌های فعال بر مبنای طرح",
+    activeSubscriptionsByLocale: "اشتراک‌های فعال بر مبنای زبان",
+    viewCatalog: "مشاهده کاتالوگ",
+    configureOffer: "پیکربندی پیشنهاد",
+    noOffersConfigured: "هنوز پیشنهادی برای این طرح تعریف نشده است.",
   },
 };
+
+export function formatPersianNumber(n: number | string): string {
+  const persianDigits = ["۰", "۱", "۲", "۳", "۴", "۵", "۶", "۷", "۸", "۹"];
+  return n
+    .toString()
+    .replace(/\B(?=(\d{3})+(?!\d))/g, "٬")
+    .replace(/\d/g, (d) => persianDigits[parseInt(d, 10)] || d);
+}
 
 interface I18nContextType {
   locale: Locale;
@@ -1505,6 +1619,11 @@ interface I18nContextType {
   toggleLocale: () => void;
   t: (typeof translations)["en"];
   isRTL: boolean;
+  enabledLocales: string[];
+  defaultLocale: string;
+  isLocaleEnabled: (l: string) => boolean;
+  formatNumber: (n: number | string) => string;
+  formatMoney: (amount: number, currency: string, denomination?: string) => string;
 }
 
 const I18nContext = createContext<I18nContextType | null>(null);
@@ -1538,29 +1657,105 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
     getServerLocaleSnapshot
   );
 
-  const changeLocale = (newLocale: Locale) => {
+  const [enabledLocales, setEnabledLocales] = React.useState<string[]>(["en", "fa"]);
+  const [defaultLocale, setDefaultLocale] = React.useState<string>("en");
+
+  const changeLocale = React.useCallback((newLocale: Locale) => {
     if (typeof window !== "undefined") {
       localStorage.setItem("clientpulse_locale", newLocale);
       document.documentElement.lang = newLocale;
       document.documentElement.dir = newLocale === "fa" ? "rtl" : "ltr";
       window.dispatchEvent(new Event("clientpulse:locale_changed"));
     }
-  };
+  }, []);
+
+  // Fetch centralized public localization settings
+  React.useEffect(() => {
+    let active = true;
+    async function loadLocalization() {
+      try {
+        const apiBase =
+          process.env.NEXT_PUBLIC_API_BASE_URL ||
+          process.env.NEXT_PUBLIC_API_URL ||
+          "http://localhost:8080";
+        const res = await fetch(`${apiBase}/api/v1/public/localization`, { cache: "no-store" });
+        if (res.ok) {
+          const data = await res.json();
+          if (active && data.enabled_locales && Array.isArray(data.enabled_locales)) {
+            setEnabledLocales(data.enabled_locales);
+            const def = data.default_locale || "en";
+            setDefaultLocale(def);
+
+            // Graceful fallback: If current saved locale is disabled, revert to default
+            const saved = localStorage.getItem("clientpulse_locale") as Locale;
+            if (saved && !data.enabled_locales.includes(saved)) {
+              changeLocale(def as Locale);
+            }
+          }
+        }
+      } catch {
+        // Network offline or build phase, fallback to initial state
+      }
+    }
+
+    loadLocalization();
+    const handleSettingsUpdated = () => {
+      loadLocalization();
+    };
+    window.addEventListener("clientpulse:localization_settings_updated", handleSettingsUpdated);
+    return () => {
+      active = false;
+      window.removeEventListener("clientpulse:localization_settings_updated", handleSettingsUpdated);
+    };
+  }, [changeLocale]);
 
   const toggleLocale = () => {
-    changeLocale(locale === "en" ? "fa" : "en");
+    // Only toggle if both en and fa are enabled
+    if (enabledLocales.includes("en") && enabledLocales.includes("fa")) {
+      changeLocale(locale === "en" ? "fa" : "en");
+    }
   };
 
+  const isLocaleEnabled = (l: string) => enabledLocales.includes(l);
+
   const isRTL = locale === "fa";
+
+  const formatNumber = (n: number | string): string => {
+    if (isRTL) {
+      return formatPersianNumber(n);
+    }
+    const num = typeof n === "number" ? n : Number(n) || 0;
+    return new Intl.NumberFormat("en-US").format(num);
+  };
+
+  const formatMoney = (amount: number, currency: string, denomination?: string): string => {
+    const denom = (denomination || "").toLowerCase();
+    if (denom === "toman" || (currency === "IRR" && denom !== "rial")) {
+      return `${formatPersianNumber(amount)} تومان`;
+    }
+    if (currency === "USD") {
+      return `$${new Intl.NumberFormat("en-US").format(amount)}`;
+    }
+    return `${amount} ${currency}`;
+  };
 
   return (
     <I18nContext.Provider
       value={{
         locale,
-        setLocale: changeLocale,
+        setLocale: (l: Locale) => {
+          if (enabledLocales.includes(l)) {
+            changeLocale(l);
+          }
+        },
         toggleLocale,
         t: translations[locale],
         isRTL,
+        enabledLocales,
+        defaultLocale,
+        isLocaleEnabled,
+        formatNumber,
+        formatMoney,
       }}
     >
       <div

@@ -53,7 +53,8 @@ interface NavGroup {
 export function AppLayout({ children }: AppLayoutProps) {
   const pathname = usePathname();
   const { user, activeOrg, role, memberships, switchOrganization, logout, loading, isPlatformAdmin } = useAuth();
-  const { t, locale, toggleLocale, isRTL } = useI18n();
+  const { t, locale, toggleLocale, isRTL, enabledLocales } = useI18n();
+  const canToggleLanguage = enabledLocales ? enabledLocales.includes("en") && enabledLocales.includes("fa") : true;
 
   // Mobile drawer state
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
@@ -264,6 +265,12 @@ export function AppLayout({ children }: AppLayoutProps) {
                 isActive: (p: string) => p === "/platform-admin/subscriptions" || p.startsWith("/platform-admin/subscriptions/"),
               },
               {
+                label: t.localizationSettings,
+                href: "/platform-admin/settings/localization",
+                icon: Languages,
+                isActive: (p: string) => p === "/platform-admin/settings/localization",
+              },
+              {
                 label: t.platformAuditLogs,
                 href: "/platform-admin/audit-logs",
                 icon: FileText,
@@ -277,6 +284,7 @@ export function AppLayout({ children }: AppLayoutProps) {
 
   // Helper to determine active breadcrumb label for the top header
   const getPageContextLabel = (): string => {
+    if (pathname.startsWith("/platform-admin/settings/localization")) return t.localizationSettings;
     if (pathname.startsWith("/platform-admin/users")) return t.platformUsers;
     if (pathname.startsWith("/platform-admin/organizations")) return t.platformOrgs;
     if (pathname.startsWith("/platform-admin/plans")) return t.platformPlans;
@@ -323,15 +331,22 @@ export function AppLayout({ children }: AppLayoutProps) {
 
             <div className="flex items-center gap-2 sm:gap-3">
               {/* Language Switcher */}
-              <button
-                type="button"
-                onClick={toggleLocale}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg shadow-2xs transition-colors"
-                title="Toggle Language / تغییر زبان"
-              >
-                <Languages className="w-3.5 h-3.5 text-slate-500" />
-                <span>{locale === "en" ? "فارسی" : "English"}</span>
-              </button>
+              {canToggleLanguage ? (
+                <button
+                  type="button"
+                  onClick={toggleLocale}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg shadow-2xs transition-colors"
+                  title="Toggle Language / تغییر زبان"
+                >
+                  <Languages className="w-3.5 h-3.5 text-slate-500" />
+                  <span>{locale === "en" ? "فارسی" : "English"}</span>
+                </button>
+              ) : (
+                <div className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-slate-500 bg-slate-100 rounded-lg border border-slate-200">
+                  <Languages className="w-3.5 h-3.5 text-slate-400" />
+                  <span>{locale === "en" ? "EN" : "فا"}</span>
+                </div>
+              )}
 
               <Link
                 href="/login"
@@ -614,15 +629,22 @@ export function AppLayout({ children }: AppLayoutProps) {
               )}
 
               {/* Language Switcher */}
-              <button
-                type="button"
-                onClick={toggleLocale}
-                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold text-slate-700 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-lg transition-colors shadow-2xs"
-                title="Toggle Language / تغییر زبان"
-              >
-                <Languages className="w-3.5 h-3.5 text-slate-500" />
-                <span className="hidden sm:inline">{locale === "en" ? "فارسی" : "English"}</span>
-              </button>
+              {canToggleLanguage ? (
+                <button
+                  type="button"
+                  onClick={toggleLocale}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold text-slate-700 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-lg transition-colors shadow-2xs"
+                  title="Toggle Language / تغییر زبان"
+                >
+                  <Languages className="w-3.5 h-3.5 text-slate-500" />
+                  <span className="hidden sm:inline">{locale === "en" ? "فارسی" : "English"}</span>
+                </button>
+              ) : (
+                <div className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-slate-500 bg-slate-100 rounded-lg border border-slate-200">
+                  <Languages className="w-3.5 h-3.5 text-slate-400" />
+                  <span>{locale === "en" ? "EN" : "فا"}</span>
+                </div>
+              )}
 
               {/* User Account Menu Dropdown */}
               {user && (

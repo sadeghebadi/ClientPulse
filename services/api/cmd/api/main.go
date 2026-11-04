@@ -145,6 +145,8 @@ func main() {
 		platformAdminRepo := repository.NewPlatformAdminRepository(db.Pool)
 		planRepo := repository.NewPlanRepository(db.Pool)
 		subscriptionRepo := repository.NewSubscriptionRepository(db.Pool)
+		localizationRepo := repository.NewLocalizationRepository(db.Pool)
+		offerRepo := repository.NewOfferRepository(db.Pool)
 		entitlementSvc := entitlement.NewService(db.Pool, subscriptionRepo)
 
 		authService := service.NewAuthService(userRepo, sessionRepo, orgRepo, tokenRepo, auditRepo, mailer, cfg).WithPlatformAdminRepo(platformAdminRepo)
@@ -161,7 +163,7 @@ func main() {
 		deps.BrandingHdr = server.NewBrandingHandler(brandingRepo, st, log).WithEntitlements(entitlementSvc)
 		deps.ReportHdr = server.NewReportHandler(reportRepo, brandingRepo, eventRepo, st, pdfGen, log)
 		deps.NotificationHdr = server.NewNotificationHandler(notifRepo, telegramUpdateHdr, telegramSender, emailClient, cfg, log)
-		deps.PlatformAdminHdr = server.NewPlatformAdminHandler(platformAdminRepo, planRepo, subscriptionRepo, log)
+		deps.PlatformAdminHdr = server.NewPlatformAdminHandler(platformAdminRepo, planRepo, subscriptionRepo, localizationRepo, offerRepo, log)
 		deps.AuthMiddleware = server.NewAuthMiddleware(sessionRepo, userRepo, cfg).WithPlatformAdminRepo(platformAdminRepo)
 		deps.TenantMiddleware = server.NewTenantMiddleware(orgRepo, sessionRepo)
 	}

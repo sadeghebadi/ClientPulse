@@ -74,25 +74,34 @@ type SubscriptionPlanVersion struct {
 
 // OrganizationSubscription represents a tenant's subscription to an exact plan version.
 type OrganizationSubscription struct {
-	ID                 string     `json:"id"`
-	OrganizationID     string     `json:"organization_id"`
-	OrganizationName   string     `json:"organization_name,omitempty"`
-	PlanVersionID      string     `json:"plan_version_id"`
-	PlanID             string     `json:"plan_id,omitempty"`
-	PlanName           string     `json:"plan_name,omitempty"`
-	PlanSlug           string     `json:"plan_slug,omitempty"`
-	PlanVersion        int        `json:"plan_version,omitempty"`
-	Status             string     `json:"status"` // 'active', 'suspended', 'canceled', 'expired'
-	StartedAt          time.Time  `json:"started_at"`
-	EndsAt             *time.Time `json:"ends_at,omitempty"`
-	AssignedBy         *string    `json:"assigned_by,omitempty"`
-	AdministrativeNote string     `json:"administrative_note"`
-	CreatedAt          time.Time  `json:"created_at"`
-	UpdatedAt          time.Time  `json:"updated_at"`
-	PriceAmount        *int64     `json:"price_amount,omitempty"`
-	Currency           *string    `json:"currency,omitempty"`
-	BillingInterval    *string    `json:"billing_interval,omitempty"`
-	Limits             PlanLimits `json:"limits"`
+	ID                  string     `json:"id"`
+	OrganizationID      string     `json:"organization_id"`
+	OrganizationName    string     `json:"organization_name,omitempty"`
+	PlanVersionID       string     `json:"plan_version_id"`
+	PlanID              string     `json:"plan_id,omitempty"`
+	PlanName            string     `json:"plan_name,omitempty"`
+	PlanSlug            string     `json:"plan_slug,omitempty"`
+	PlanVersion         int        `json:"plan_version,omitempty"`
+	OfferVersionID      *string    `json:"offer_version_id,omitempty"`
+	OfferName           *string    `json:"offer_name,omitempty"`
+	OfferLocale         *string    `json:"offer_locale,omitempty"`
+	OfferMarket         *string    `json:"offer_market,omitempty"`
+	OfferVersion        *int       `json:"offer_version,omitempty"`
+	DisplayDenomination *string    `json:"display_denomination,omitempty"`
+	DenominationRatio   *int64     `json:"denomination_ratio,omitempty"`
+	DisplayPrice        *int64     `json:"display_price,omitempty"`
+	FormattedPrice      *string    `json:"formatted_price,omitempty"`
+	Status              string     `json:"status"` // 'active', 'suspended', 'canceled', 'expired'
+	StartedAt           time.Time  `json:"started_at"`
+	EndsAt              *time.Time `json:"ends_at,omitempty"`
+	AssignedBy          *string    `json:"assigned_by,omitempty"`
+	AdministrativeNote  string     `json:"administrative_note"`
+	CreatedAt           time.Time  `json:"created_at"`
+	UpdatedAt           time.Time  `json:"updated_at"`
+	PriceAmount         *int64     `json:"price_amount,omitempty"`
+	Currency            *string    `json:"currency,omitempty"`
+	BillingInterval     *string    `json:"billing_interval,omitempty"`
+	Limits              PlanLimits `json:"limits"`
 }
 
 // PlatformOverviewStats represents platform-wide aggregated counters.
@@ -106,6 +115,7 @@ type PlatformOverviewStats struct {
 	PublishedPlans          int64 `json:"published_plans"`
 	ActiveSubscriptions     int64 `json:"active_subscriptions"`
 	UnassignedOrganizations int64 `json:"unassigned_organizations"`
+	PublishedOffers         int64 `json:"published_offers"`
 }
 
 // PlatformUserItem represents a user in the Platform Admin user list.

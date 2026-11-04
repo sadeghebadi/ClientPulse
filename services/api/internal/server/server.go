@@ -100,6 +100,12 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 		mux.HandleFunc("GET /health/scheduler", s.deps.HealthHdr.Scheduler)
 	}
 
+	// 1b. Public Localization & Catalog endpoints
+	if s.deps.PlatformAdminHdr != nil {
+		mux.HandleFunc("GET /api/v1/public/localization", s.deps.PlatformAdminHdr.GetPublicLocalization)
+		mux.HandleFunc("GET /api/v1/public/catalog", s.deps.PlatformAdminHdr.GetPublicCatalog)
+	}
+
 	// 2. Base info endpoint
 	mux.HandleFunc("GET /api/v1/info", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -347,6 +353,19 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 		mux.Handle("POST /api/v1/platform-admin/subscriptions/{id}/suspend", platformAdminMutation(s.deps.PlatformAdminHdr.SuspendSubscription))
 		mux.Handle("POST /api/v1/platform-admin/subscriptions/{id}/reactivate", platformAdminMutation(s.deps.PlatformAdminHdr.ReactivateSubscription))
 		mux.Handle("POST /api/v1/platform-admin/subscriptions/{id}/cancel", platformAdminMutation(s.deps.PlatformAdminHdr.CancelSubscription))
+
+		// Localization & Centralized Language Management
+		mux.Handle("GET /api/v1/platform-admin/settings/localization", platformAdminScoped(s.deps.PlatformAdminHdr.GetLocalizationSettings))
+		mux.Handle("PUT /api/v1/platform-admin/settings/localization", platformAdminMutation(s.deps.PlatformAdminHdr.UpdateLocalizationSettings))
+
+		// Localized Subscription Catalogs & Offers
+		mux.Handle("GET /api/v1/platform-admin/catalogs", platformAdminScoped(s.deps.PlatformAdminHdr.ListAllCatalogs))
+		mux.Handle("GET /api/v1/platform-admin/plans/{id}/offers", platformAdminScoped(s.deps.PlatformAdminHdr.ListPlanOffers))
+		mux.Handle("POST /api/v1/platform-admin/plans/{id}/offers", platformAdminMutation(s.deps.PlatformAdminHdr.CreatePlanOffer))
+		mux.Handle("GET /api/v1/platform-admin/offers/{id}", platformAdminScoped(s.deps.PlatformAdminHdr.GetOffer))
+		mux.Handle("PUT /api/v1/platform-admin/offers/{id}", platformAdminMutation(s.deps.PlatformAdminHdr.UpdateOffer))
+		mux.Handle("POST /api/v1/platform-admin/offers/{id}/publish", platformAdminMutation(s.deps.PlatformAdminHdr.PublishOffer))
+		mux.Handle("POST /api/v1/platform-admin/offers/{id}/archive", platformAdminMutation(s.deps.PlatformAdminHdr.ArchiveOffer))
 
 		// Audit Logs
 		mux.Handle("GET /api/v1/platform-admin/audit-logs", platformAdminScoped(s.deps.PlatformAdminHdr.ListAuditLogs))
