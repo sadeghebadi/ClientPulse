@@ -1620,6 +1620,7 @@ interface I18nContextType {
   setLocale: (l: Locale) => void;
   setLanguage: (l: Locale) => void;
   toggleLocale: () => void;
+  canToggleLanguage: boolean;
   t: (typeof translations)["en"];
   isRTL: boolean;
   enabledLocales: string[];
@@ -1673,6 +1674,14 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
+  // Ensure HTML tag attributes reflect active locale immediately
+  React.useEffect(() => {
+    if (typeof document !== "undefined") {
+      document.documentElement.lang = locale;
+      document.documentElement.dir = locale === "fa" ? "rtl" : "ltr";
+    }
+  }, [locale]);
+
   // Fetch centralized public localization settings
   React.useEffect(() => {
     let active = true;
@@ -1690,9 +1699,11 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
             const def = data.default_locale || "en";
             setDefaultLocale(def);
 
-            // Graceful fallback: If current saved locale is disabled, revert to default
+            // Graceful fallback: If current saved locale or active locale is disabled, revert to default
             const saved = localStorage.getItem("clientpulse_locale") as Locale;
             if (saved && !data.enabled_locales.includes(saved)) {
+              changeLocale(def as Locale);
+            } else if (!data.enabled_locales.includes(locale)) {
               changeLocale(def as Locale);
             }
           }
@@ -1711,11 +1722,13 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
       active = false;
       window.removeEventListener("clientpulse:localization_settings_updated", handleSettingsUpdated);
     };
-  }, [changeLocale]);
+  }, [changeLocale, locale]);
+
+  const canToggleLanguage = enabledLocales.includes("en") && enabledLocales.includes("fa");
 
   const toggleLocale = () => {
     // Only toggle if both en and fa are enabled
-    if (enabledLocales.includes("en") && enabledLocales.includes("fa")) {
+    if (canToggleLanguage) {
       changeLocale(locale === "en" ? "fa" : "en");
     }
   };
@@ -1759,6 +1772,7 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
           }
         },
         toggleLocale,
+        canToggleLanguage,
         t: translations[locale],
         isRTL,
         enabledLocales,

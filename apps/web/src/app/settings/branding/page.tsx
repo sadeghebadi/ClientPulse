@@ -36,7 +36,7 @@ interface Branding {
 
 export default function BrandingSettingsPage() {
   const { role, activeOrg } = useAuth();
-  const { t } = useI18n();
+  const { t, isLocaleEnabled } = useI18n();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [branding, setBranding] = useState<Branding>({
@@ -414,8 +414,8 @@ export default function BrandingSettingsPage() {
                   onChange={(e) => setBranding({ ...branding, default_report_locale: e.target.value })}
                   className="w-full border border-slate-300 rounded-lg p-2 text-sm bg-white"
                 >
-                  <option value="en">English (LTR)</option>
-                  <option value="fa">فارسی (Persian RTL)</option>
+                  {isLocaleEnabled("en") && <option value="en">English (LTR)</option>}
+                  {isLocaleEnabled("fa") && <option value="fa">فارسی (Persian RTL)</option>}
                 </select>
               </div>
 

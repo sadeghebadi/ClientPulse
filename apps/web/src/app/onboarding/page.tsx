@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { AppLayout } from "@/components/AppLayout";
 import { useAuth } from "@/lib/auth-context";
@@ -13,12 +13,18 @@ import { ErrorState } from "@/components/ui/ErrorState";
 export default function OnboardingPage() {
   const router = useRouter();
   const { refreshUser } = useAuth();
-  const { t, isRTL } = useI18n();
+  const { t, isRTL, isLocaleEnabled, defaultLocale } = useI18n();
 
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
-  const [locale, setLocale] = useState("en");
+  const [locale, setLocale] = useState(defaultLocale || "en");
   const [timezone, setTimezone] = useState("UTC");
+
+  useEffect(() => {
+    if (defaultLocale && !isLocaleEnabled(locale)) {
+      setLocale(defaultLocale);
+    }
+  }, [defaultLocale, isLocaleEnabled, locale]);
   const [error, setError] = useState<any>(null);
   const [loading, setLoading] = useState(false);
 
@@ -112,8 +118,8 @@ export default function OnboardingPage() {
                   onChange={(e) => setLocale(e.target.value)}
                   className="w-full px-4 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
                 >
-                  <option value="en">English (LTR)</option>
-                  <option value="fa">فارسی (RTL)</option>
+                  {isLocaleEnabled("en") && <option value="en">English (LTR)</option>}
+                  {isLocaleEnabled("fa") && <option value="fa">فارسی (RTL)</option>}
                 </select>
               </div>
 

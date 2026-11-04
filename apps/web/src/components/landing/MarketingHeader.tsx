@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Activity, Languages, LogIn, UserPlus, Menu, X, ArrowRight, ArrowLeft, LayoutDashboard } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
 import { useAuth } from "@/lib/auth-context";
+import { LanguageSelector } from "@/components/LanguageSelector";
 
 export function MarketingHeader() {
   const { t, locale, toggleLocale, isRTL } = useI18n();
@@ -93,16 +94,7 @@ export function MarketingHeader() {
         {/* Action Controls & Language Switcher */}
         <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
           {/* Language Switcher */}
-          <button
-            type="button"
-            onClick={toggleLocale}
-            className="inline-flex items-center gap-1 px-2 sm:px-3 py-1.5 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg shadow-2xs transition-colors shrink-0"
-            title="Toggle Language / تغییر زبان"
-          >
-            <Languages className="w-3.5 h-3.5 text-slate-500 shrink-0" />
-            <span className="hidden sm:inline">{locale === "en" ? "فارسی" : "English"}</span>
-            <span className="sm:hidden text-[11px] font-bold">{locale === "en" ? "FA" : "EN"}</span>
-          </button>
+          <LanguageSelector />
 
           {/* Conditional Auth CTAs */}
           {!loading && user ? (

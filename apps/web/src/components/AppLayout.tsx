@@ -33,6 +33,7 @@ import {
 import { useAuth } from "@/lib/auth-context";
 import { useI18n } from "@/lib/i18n";
 import { Badge } from "./ui/Badge";
+import { LanguageSelector } from "@/components/LanguageSelector";
 
 interface AppLayoutProps {
   children: React.ReactNode;
@@ -331,22 +332,7 @@ export function AppLayout({ children }: AppLayoutProps) {
 
             <div className="flex items-center gap-2 sm:gap-3">
               {/* Language Switcher */}
-              {canToggleLanguage ? (
-                <button
-                  type="button"
-                  onClick={toggleLocale}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg shadow-2xs transition-colors"
-                  title="Toggle Language / تغییر زبان"
-                >
-                  <Languages className="w-3.5 h-3.5 text-slate-500" />
-                  <span>{locale === "en" ? "فارسی" : "English"}</span>
-                </button>
-              ) : (
-                <div className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-slate-500 bg-slate-100 rounded-lg border border-slate-200">
-                  <Languages className="w-3.5 h-3.5 text-slate-400" />
-                  <span>{locale === "en" ? "EN" : "فا"}</span>
-                </div>
-              )}
+              <LanguageSelector />
 
               <Link
                 href="/login"
@@ -629,22 +615,7 @@ export function AppLayout({ children }: AppLayoutProps) {
               )}
 
               {/* Language Switcher */}
-              {canToggleLanguage ? (
-                <button
-                  type="button"
-                  onClick={toggleLocale}
-                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold text-slate-700 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-lg transition-colors shadow-2xs"
-                  title="Toggle Language / تغییر زبان"
-                >
-                  <Languages className="w-3.5 h-3.5 text-slate-500" />
-                  <span className="hidden sm:inline">{locale === "en" ? "فارسی" : "English"}</span>
-                </button>
-              ) : (
-                <div className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-slate-500 bg-slate-100 rounded-lg border border-slate-200">
-                  <Languages className="w-3.5 h-3.5 text-slate-400" />
-                  <span>{locale === "en" ? "EN" : "فا"}</span>
-                </div>
-              )}
+              <LanguageSelector />
 
               {/* User Account Menu Dropdown */}
               {user && (

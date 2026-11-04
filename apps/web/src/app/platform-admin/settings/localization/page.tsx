@@ -6,37 +6,41 @@ import {
   Globe,
   CheckCircle2,
   AlertTriangle,
-  ShieldAlert,
-  ArrowRight,
-  ArrowLeft,
   Sparkles,
   Info,
   RefreshCw,
   Sliders,
-  Radio,
-  Clock,
   Languages,
+  Check,
+  Star,
+  Loader2,
 } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { useI18n, Language } from "@/lib/i18n";
 import { Button } from "@/components/ui/Button";
 import { LoadingSkeleton } from "@/components/ui/LoadingSkeleton";
-import { ErrorState } from "@/components/ui/ErrorState";
 
 interface LocalizationSettings {
-  id: number;
   enabled_locales: string[];
   default_locale: string;
-  updated_at: string;
+  supported_locales?: Array<{
+    code: string;
+    label: string;
+    native_label: string;
+    dir: string;
+    enabled: boolean;
+    is_default: boolean;
+  }>;
+  updated_at?: string;
 }
 
 interface LocaleDefinition {
-  code: string;
+  code: "en" | "fa";
   name: string;
   nativeName: string;
   direction: "ltr" | "rtl";
   currencyDefault: string;
-  samplePrice: number;
+  samplePrice: string;
   sampleDate: string;
   description: string;
 }
@@ -45,34 +49,35 @@ const SUPPORTED_LOCALES: LocaleDefinition[] = [
   {
     code: "en",
     name: "English",
-    nativeName: "English (US / Global)",
+    nativeName: "English",
     direction: "ltr",
     currencyDefault: "USD ($)",
-    samplePrice: 2900, // $29.00
+    samplePrice: "$29.00 / month",
     sampleDate: "November 4, 2026",
-    description: "Default international locale with Left-to-Right layout, USD currency, and Western Arabic numerals.",
+    description: "Default international locale with Left-to-Right layout, Inter typography, and USD pricing.",
   },
   {
     code: "fa",
-    nativeName: "فارسی (ایران)",
     name: "Persian",
+    nativeName: "فارسی",
     direction: "rtl",
     currencyDefault: "IRR (Toman / تومان)",
-    samplePrice: 290000, // 290,000 Toman
+    samplePrice: "۲۹۰٬۰۰۰ تومان / ماه",
     sampleDate: "۱۴ آبان ۱۴۰۵",
-    description: "Iranian market locale with Right-to-Left layout, Vazirmatn typography, Toman denomination, and Persian numerals.",
+    description: "Iranian market locale with Right-to-Left layout, Vazirmatn typography, and Toman pricing.",
   },
 ];
 
 export default function PlatformAdminLocalizationSettingsPage() {
-  const { t, isRTL, setLanguage, language } = useI18n();
+  const { isRTL, setLanguage, language } = useI18n();
   const [settings, setSettings] = useState<LocalizationSettings | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [loadingLocale, setLoadingLocale] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
-  // Staged form state
+  // Staged / live configuration state
   const [enabledLocales, setEnabledLocales] = useState<string[]>(["en", "fa"]);
   const [defaultLocale, setDefaultLocale] = useState<string>("en");
   const [auditReason, setAuditReason] = useState<string>("");
@@ -81,13 +86,14 @@ export default function PlatformAdminLocalizationSettingsPage() {
     try {
       setLoading(true);
       setError(null);
-      const res = await apiFetch<{ settings: LocalizationSettings }>(
+      const res = await apiFetch<LocalizationSettings | { settings: LocalizationSettings }>(
         "/api/v1/platform-admin/settings/localization"
       );
-      if (res && res.settings) {
-        setSettings(res.settings);
-        setEnabledLocales(res.settings.enabled_locales || ["en"]);
-        setDefaultLocale(res.settings.default_locale || "en");
+      const data = ("settings" in res && res.settings) ? res.settings : (res as LocalizationSettings);
+      if (data && data.enabled_locales) {
+        setSettings(data);
+        setEnabledLocales(data.enabled_locales);
+        setDefaultLocale(data.default_locale || "en");
       }
     } catch (err: unknown) {
       const e = err as Error;
@@ -101,92 +107,128 @@ export default function PlatformAdminLocalizationSettingsPage() {
     fetchSettings();
   }, []);
 
-  const handleToggleLocale = (code: string) => {
-    const isCurrentlyEnabled = enabledLocales.includes(code);
-
-    if (isCurrentlyEnabled) {
-      // Trying to disable
-      if (enabledLocales.length <= 1) {
-        setError("At least one language must remain enabled on the platform.");
-        return;
-      }
-      if (defaultLocale === code) {
-        setError("You cannot disable the current default platform language. Set another language as default first.");
-        return;
-      }
-      setError(null);
-      setEnabledLocales((prev) => prev.filter((c) => c !== code));
-    } else {
-      // Enabling
-      setError(null);
-      setEnabledLocales((prev) => [...prev, code]);
-    }
-  };
-
-  const handleSetDefault = (code: string) => {
-    if (!enabledLocales.includes(code)) {
-      // Auto-enable if setting as default
-      setEnabledLocales((prev) => [...prev, code]);
-    }
-    setDefaultLocale(code);
-    setError(null);
-  };
-
-  const handleSave = async (e: React.FormEvent) => {
-    e.preventDefault();
-
-    if (enabledLocales.length === 0) {
-      setError("At least one language must be enabled.");
+  // Atomic configuration updater
+  const executeUpdate = async (
+    newEnabled: string[],
+    newDefault: string,
+    actionDesc: string,
+    triggerLocale: string
+  ) => {
+    // Invariants validation
+    if (newEnabled.length === 0) {
+      setError("At least one language must remain enabled on the platform.");
       return;
     }
-    if (!enabledLocales.includes(defaultLocale)) {
-      setError("The default language must be one of the enabled languages.");
+    if (!newEnabled.includes(newDefault)) {
+      setError("The default platform language must be one of the enabled languages.");
       return;
     }
 
     try {
       setSaving(true);
+      setLoadingLocale(triggerLocale);
       setError(null);
       setSuccessMessage(null);
 
-      const res = await apiFetch<{ settings: LocalizationSettings }>(
+      const res = await apiFetch<LocalizationSettings | { settings: LocalizationSettings }>(
         "/api/v1/platform-admin/settings/localization",
         {
           method: "PUT",
           body: JSON.stringify({
-            enabled_locales: enabledLocales,
-            default_locale: defaultLocale,
-            reason: auditReason.trim() || undefined,
+            enabled_locales: newEnabled,
+            default_locale: newDefault,
+            reason: auditReason.trim() || actionDesc,
           }),
         }
       );
 
-      if (res && res.settings) {
-        setSettings(res.settings);
-        setEnabledLocales(res.settings.enabled_locales);
-        setDefaultLocale(res.settings.default_locale);
-        setAuditReason("");
-        setSuccessMessage("Global localization settings have been saved and public caches invalidated.");
+      const updated = ("settings" in res && res.settings) ? res.settings : (res as LocalizationSettings);
+      setSettings(updated);
+      setEnabledLocales(updated.enabled_locales);
+      setDefaultLocale(updated.default_locale);
+      setAuditReason("");
+      setSuccessMessage(actionDesc + " successfully.");
 
-        // If current language was disabled, fallback to default
-        if (!res.settings.enabled_locales.includes(language)) {
-          setLanguage(res.settings.default_locale as Language);
-        }
+      // Invalidate frontend caches and notify all application language selectors
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new Event("clientpulse:localization_settings_updated"));
+      }
+
+      // If current administrator language was disabled, gracefully fallback without logging out
+      if (!updated.enabled_locales.includes(language)) {
+        setLanguage(updated.default_locale as Language);
       }
     } catch (err: unknown) {
       const e = err as Error;
       setError(e.message || "Failed to update localization settings.");
+      // Rollback UI state to current known server settings
+      if (settings) {
+        setEnabledLocales(settings.enabled_locales);
+        setDefaultLocale(settings.default_locale);
+      }
     } finally {
       setSaving(false);
+      setLoadingLocale(null);
     }
   };
 
-  const hasUnsavedChanges =
-    settings &&
-    (JSON.stringify(settings.enabled_locales.slice().sort()) !==
-      JSON.stringify(enabledLocales.slice().sort()) ||
-      settings.default_locale !== defaultLocale ||
-      auditReason.length > 0);
+  // Toggle enable/disable for a specific locale
+  const handleToggleLocale = (code: string) => {
+    const isCurrentlyEnabled = enabledLocales.includes(code);
+
+    if (isCurrentlyEnabled) {
+      // Attempting to disable
+      if (enabledLocales.length <= 1) {
+        setError("At least one language must remain enabled on the platform.");
+        return;
+      }
+
+      // If disabling the current default language:
+      // Require selection of the other language as the new default and update atomically
+      if (defaultLocale === code) {
+        const otherCode = code === "en" ? "fa" : "en";
+        executeUpdate(
+          [otherCode],
+          otherCode,
+          `Disabled ${code === "en" ? "English" : "Persian"} and switched default to ${otherCode === "en" ? "English" : "Persian"}`,
+          code
+        );
+        return;
+      }
+
+      // Disabling non-default language
+      const newEnabled = enabledLocales.filter((c) => c !== code);
+      executeUpdate(
+        newEnabled,
+        defaultLocale,
+        `Disabled ${code === "en" ? "English" : "Persian"}`,
+        code
+      );
+    } else {
+      // Enabling language
+      const newEnabled = [...enabledLocales, code];
+      executeUpdate(
+        newEnabled,
+        defaultLocale,
+        `Enabled ${code === "en" ? "English" : "Persian"}`,
+        code
+      );
+    }
+  };
+
+  // Change default platform fallback
+  const handleSetDefault = (code: string) => {
+    if (defaultLocale === code) return;
+
+    // If language is currently disabled, enable it atomically when setting as default
+    const newEnabled = enabledLocales.includes(code) ? enabledLocales : [...enabledLocales, code];
+    executeUpdate(
+      newEnabled,
+      code,
+      `Set ${code === "en" ? "English" : "Persian"} as default platform language`,
+      code
+    );
+  };
 
   return (
     <div className="space-y-6">
@@ -203,11 +245,11 @@ export default function PlatformAdminLocalizationSettingsPage() {
             <span className="text-slate-800 font-semibold">Localization</span>
           </div>
           <h1 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight flex items-center gap-2">
-            <Globe className="w-6 h-6 text-emerald-600" />
-            <span>Centralized Language & Market Activation</span>
+            <Globe className="w-6 h-6 text-emerald-600 shrink-0" />
+            <span>Persian & English Language Activation</span>
           </h1>
           <p className="text-xs sm:text-sm text-slate-500 mt-1">
-            Activate or deactivate platform-wide languages, define the fallback default, and preview formatting.
+            Activate or deactivate English and Persian system-wide, manage fallback defaults, and control language visibility.
           </p>
         </div>
 
@@ -218,6 +260,7 @@ export default function PlatformAdminLocalizationSettingsPage() {
             onClick={fetchSettings}
             disabled={loading || saving}
             className="gap-1.5"
+            data-testid="reload-localization-btn"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
             <span>Reload</span>
@@ -225,12 +268,15 @@ export default function PlatformAdminLocalizationSettingsPage() {
         </div>
       </div>
 
-      {/* Notifications */}
+      {/* Success Notification Banner */}
       {successMessage && (
-        <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs flex items-center justify-between shadow-sm animate-in fade-in">
-          <div className="flex items-center gap-2">
+        <div
+          data-testid="localization-success-alert"
+          className="p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs flex items-center justify-between shadow-sm animate-in fade-in"
+        >
+          <div className="flex items-center gap-2.5">
             <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-            <span className="font-medium">{successMessage}</span>
+            <span className="font-semibold">{successMessage}</span>
           </div>
           <button
             onClick={() => setSuccessMessage(null)}
@@ -241,11 +287,15 @@ export default function PlatformAdminLocalizationSettingsPage() {
         </div>
       )}
 
+      {/* Error Notification Banner */}
       {error && (
-        <div className="p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-900 text-xs flex items-center justify-between shadow-sm animate-in fade-in">
-          <div className="flex items-center gap-2">
+        <div
+          data-testid="localization-error-alert"
+          className="p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-900 text-xs flex items-center justify-between shadow-sm animate-in fade-in"
+        >
+          <div className="flex items-center gap-2.5">
             <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
-            <span className="font-medium">{error}</span>
+            <span className="font-semibold">{error}</span>
           </div>
           <button
             onClick={() => setError(null)}
@@ -258,11 +308,11 @@ export default function PlatformAdminLocalizationSettingsPage() {
 
       {loading ? (
         <div className="space-y-4">
-          <LoadingSkeleton className="h-44 w-full rounded-2xl" />
-          <LoadingSkeleton className="h-64 w-full rounded-2xl" />
+          <LoadingSkeleton className="h-28 w-full rounded-2xl" />
+          <LoadingSkeleton className="h-80 w-full rounded-2xl" />
         </div>
       ) : (
-        <form onSubmit={handleSave} className="space-y-6">
+        <div className="space-y-6">
           {/* Quick Metrics Bar */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-sm flex items-center justify-between">
@@ -271,7 +321,7 @@ export default function PlatformAdminLocalizationSettingsPage() {
                   Enabled Languages
                 </p>
                 <p className="text-xl font-black text-slate-900 mt-0.5">
-                  {enabledLocales.length} of {SUPPORTED_LOCALES.length}
+                  {enabledLocales.length} of 2
                 </p>
               </div>
               <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center font-bold">
@@ -282,9 +332,9 @@ export default function PlatformAdminLocalizationSettingsPage() {
             <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-sm flex items-center justify-between">
               <div>
                 <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
-                  Default Fallback
+                  Default Platform Fallback
                 </p>
-                <p className="text-xl font-black text-slate-900 mt-0.5 uppercase">
+                <p className="text-xl font-black text-slate-900 mt-0.5">
                   {defaultLocale === "en" ? "English (en)" : "فارسی (fa)"}
                 </p>
               </div>
@@ -300,7 +350,7 @@ export default function PlatformAdminLocalizationSettingsPage() {
                 </p>
                 <p className="text-sm font-bold text-emerald-600 mt-1 flex items-center gap-1.5">
                   <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                  Source of Truth: Postgres
+                  PostgreSQL Singleton (Live)
                 </p>
               </div>
               <div className="w-10 h-10 rounded-xl bg-slate-50 text-slate-500 flex items-center justify-center font-bold">
@@ -309,54 +359,69 @@ export default function PlatformAdminLocalizationSettingsPage() {
             </div>
           </div>
 
-          {/* Language Cards */}
+          {/* Exactly Two Built-in Language Cards */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {SUPPORTED_LOCALES.map((locale) => {
               const isEnabled = enabledLocales.includes(locale.code);
               const isDefault = defaultLocale === locale.code;
               const isOnlyEnabled = isEnabled && enabledLocales.length === 1;
+              const isOperating = saving && loadingLocale === locale.code;
 
               return (
                 <div
                   key={locale.code}
+                  data-testid={`language-card-${locale.code}`}
                   className={`bg-white rounded-2xl border transition-all duration-200 p-6 flex flex-col justify-between shadow-sm relative overflow-hidden ${
                     isEnabled
                       ? isDefault
-                        ? "border-emerald-500 ring-2 ring-emerald-500/20"
+                        ? "border-emerald-500 ring-2 ring-emerald-500/20 shadow-md"
                         : "border-slate-300"
-                      : "border-slate-200 bg-slate-50/50 opacity-80"
+                      : "border-slate-200 bg-slate-50/70 opacity-85"
                   }`}
                 >
+                  {/* Default Language Badge */}
                   {isDefault && (
-                    <div className="absolute top-0 right-0 bg-emerald-600 text-white text-[10px] font-black uppercase tracking-wider px-3 py-1 rounded-bl-xl shadow-xs">
-                      Platform Default
+                    <div className="absolute top-0 right-0 bg-emerald-600 text-white text-[10px] font-black uppercase tracking-wider px-3.5 py-1 rounded-bl-xl shadow-xs flex items-center gap-1">
+                      <Star className="w-3 h-3 fill-white" />
+                      <span>Platform Default</span>
                     </div>
                   )}
 
                   <div>
-                    <div className="flex items-center justify-between gap-3 mb-3">
-                      <div className="flex items-center gap-2.5">
-                        <span className="text-xs font-mono font-bold bg-slate-100 text-slate-700 px-2.5 py-1 rounded-lg border border-slate-200 uppercase">
+                    {/* Header: Code & Native Name */}
+                    <div className="flex items-center justify-between gap-3 mb-4">
+                      <div className="flex items-center gap-3">
+                        <span className="text-xs font-mono font-black bg-slate-100 text-slate-800 px-3 py-1.5 rounded-lg border border-slate-200 uppercase">
                           {locale.code}
                         </span>
                         <div>
-                          <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                          <h2 className="text-lg font-black text-slate-900 flex items-center gap-2">
                             <span>{locale.name}</span>
-                            <span className="text-xs font-normal text-slate-500">
+                            <span className="text-sm font-semibold text-slate-500">
                               ({locale.nativeName})
                             </span>
-                          </h3>
+                          </h2>
+                          <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
+                            Direction: {locale.direction.toUpperCase()}
+                          </span>
                         </div>
                       </div>
 
+                      {/* Status Pill */}
                       <div>
                         {isEnabled ? (
-                          <span className="inline-flex items-center gap-1 bg-emerald-50 text-emerald-700 border border-emerald-200 px-2.5 py-1 rounded-full text-xs font-semibold">
+                          <span
+                            data-testid={`status-badge-${locale.code}-active`}
+                            className="inline-flex items-center gap-1 bg-emerald-50 text-emerald-700 border border-emerald-200 px-3 py-1 rounded-full text-xs font-bold"
+                          >
                             <CheckCircle2 className="w-3.5 h-3.5" />
                             <span>Active</span>
                           </span>
                         ) : (
-                          <span className="inline-flex items-center gap-1 bg-slate-100 text-slate-500 border border-slate-200 px-2.5 py-1 rounded-full text-xs font-semibold">
+                          <span
+                            data-testid={`status-badge-${locale.code}-disabled`}
+                            className="inline-flex items-center gap-1 bg-slate-100 text-slate-500 border border-slate-200 px-3 py-1 rounded-full text-xs font-bold"
+                          >
                             <span>Disabled</span>
                           </span>
                         )}
@@ -367,7 +432,7 @@ export default function PlatformAdminLocalizationSettingsPage() {
                       {locale.description}
                     </p>
 
-                    {/* Live Preview Box */}
+                    {/* Live Regional Formatting Preview */}
                     <div className="bg-slate-50 rounded-xl p-4 border border-slate-200/80 mb-5 space-y-2.5">
                       <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1">
                         <Sparkles className="w-3 h-3 text-slate-400" />
@@ -377,7 +442,7 @@ export default function PlatformAdminLocalizationSettingsPage() {
                       <div className="grid grid-cols-2 gap-3 text-xs">
                         <div>
                           <span className="text-slate-400 text-[11px] block">Direction:</span>
-                          <span className="font-semibold text-slate-800 uppercase font-mono">
+                          <span className="font-bold text-slate-800 uppercase font-mono">
                             {locale.direction}
                           </span>
                         </div>
@@ -390,9 +455,7 @@ export default function PlatformAdminLocalizationSettingsPage() {
                         <div>
                           <span className="text-slate-400 text-[11px] block">Sample Price:</span>
                           <span className="font-mono font-bold text-slate-900">
-                            {locale.code === "fa"
-                              ? "۲۹۰٬۰۰۰ تومان / ماه"
-                              : "$29.00 / month"}
+                            {locale.samplePrice}
                           </span>
                         </div>
                         <div>
@@ -405,45 +468,89 @@ export default function PlatformAdminLocalizationSettingsPage() {
                     </div>
                   </div>
 
-                  {/* Operational Controls for this Locale */}
-                  <div className="pt-4 border-t border-slate-100 space-y-3">
+                  {/* Operational Controls */}
+                  <div className="pt-4 border-t border-slate-100 space-y-3.5">
+                    {/* Toggle Switch */}
                     <div className="flex items-center justify-between gap-3">
-                      <label className="text-xs font-semibold text-slate-700 flex items-center gap-2 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={isEnabled}
-                          disabled={isOnlyEnabled || (isDefault && isEnabled)}
-                          onChange={() => handleToggleLocale(locale.code)}
-                          className="w-4 h-4 rounded text-emerald-600 focus:ring-emerald-500 border-slate-300 disabled:opacity-50"
-                        />
-                        <span>Enable {locale.name} across platform</span>
-                      </label>
-
-                      {isOnlyEnabled && (
-                        <span className="text-[10px] font-medium text-amber-600 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
-                          Last active language
+                      <div>
+                        <span className="text-xs font-bold text-slate-800 block">
+                          Language Activation Switch
                         </span>
-                      )}
+                        <span className="text-[11px] text-slate-500">
+                          {isEnabled
+                            ? `Visible across all website language selectors.`
+                            : `Hidden from all public and authenticated selectors.`}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        {isOnlyEnabled && (
+                          <span className="text-[10px] font-bold text-amber-700 bg-amber-50 px-2.5 py-1 rounded-md border border-amber-200">
+                            Final Active Language
+                          </span>
+                        )}
+
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-checked={isEnabled}
+                          disabled={saving || isOnlyEnabled}
+                          onClick={() => handleToggleLocale(locale.code)}
+                          data-testid={`switch-${locale.code}`}
+                          className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 ${
+                            isEnabled ? "bg-emerald-600" : "bg-slate-300"
+                          }`}
+                        >
+                          <span className="sr-only">Toggle {locale.name}</span>
+                          <span
+                            aria-hidden="true"
+                            className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-md ring-0 transition duration-200 ease-in-out flex items-center justify-center ${
+                              isEnabled ? "translate-x-5" : "translate-x-0"
+                            }`}
+                          >
+                            {isOperating && (
+                              <Loader2 className="w-3 h-3 text-emerald-600 animate-spin" />
+                            )}
+                          </span>
+                        </button>
+                      </div>
                     </div>
 
-                    <div className="flex items-center justify-between gap-3">
-                      <label className="text-xs font-semibold text-slate-700 flex items-center gap-2 cursor-pointer">
-                        <input
-                          type="radio"
-                          name="default_locale_selector"
-                          value={locale.code}
-                          checked={isDefault}
-                          onChange={() => handleSetDefault(locale.code)}
-                          className="w-4 h-4 text-emerald-600 focus:ring-emerald-500 border-slate-300"
-                        />
-                        <span>Set as Default Platform Fallback</span>
-                      </label>
-
-                      {isDefault && (
-                        <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
-                          Current Default
+                    {/* Default Language Selector Button / Indicator */}
+                    <div className="flex items-center justify-between gap-3 pt-2 border-t border-slate-100/70">
+                      <div>
+                        <span className="text-xs font-bold text-slate-800 block">
+                          Platform Fallback Default
                         </span>
-                      )}
+                        <span className="text-[11px] text-slate-500">
+                          Applied when a user&apos;s language is unassigned or disabled.
+                        </span>
+                      </div>
+
+                      <div>
+                        {isDefault ? (
+                          <div
+                            data-testid={`default-indicator-${locale.code}`}
+                            className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200 text-xs font-bold"
+                          >
+                            <Check className="w-3.5 h-3.5 text-emerald-600" />
+                            <span>Current Default</span>
+                          </div>
+                        ) : (
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            size="sm"
+                            disabled={saving}
+                            loading={isOperating}
+                            onClick={() => handleSetDefault(locale.code)}
+                            data-testid={`set-default-btn-${locale.code}`}
+                            className="text-xs font-semibold text-slate-700 hover:text-slate-900 border-slate-200"
+                          >
+                            Set as Default
+                          </Button>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -451,89 +558,49 @@ export default function PlatformAdminLocalizationSettingsPage() {
             })}
           </div>
 
-          {/* Fallback & Behavior Notice */}
-          <div className="bg-slate-50 border border-slate-200 rounded-2xl p-5 text-xs text-slate-600 space-y-2">
+          {/* Operational Invariants & Behavior Guide */}
+          <div className="bg-slate-50 border border-slate-200 rounded-2xl p-5 text-xs text-slate-600 space-y-2.5">
             <div className="flex items-center gap-2 text-slate-900 font-bold text-sm">
-              <Info className="w-4 h-4 text-blue-600" />
-              <span>Locale Behavior Invariants</span>
+              <Info className="w-4 h-4 text-blue-600 shrink-0" />
+              <span>Language Activation Behavioral Invariants</span>
             </div>
-            <ul className="list-disc pl-5 space-y-1 leading-relaxed text-slate-600">
+            <ul className="list-disc pl-5 space-y-1.5 leading-relaxed text-slate-600">
               <li>
-                <strong>Disabled Languages:</strong> Immediately hidden from public language switchers, user profiles, and signup views.
+                <strong>Single Active Language (Scenario D):</strong> When only one language is enabled, the language switcher button or dropdown disappears completely from all site navigation, login, and application views to prevent redundant single-option controls.
               </li>
               <li>
-                <strong>Graceful Fallback:</strong> Any authenticated or guest user with a disabled saved language automatically falls back to <code className="text-slate-800 bg-slate-200 px-1 py-0.5 rounded">{defaultLocale}</code> without session termination.
+                <strong>Automatic Locale Fallback (Scenario B &amp; C):</strong> Any visitor or authenticated user whose saved language is disabled automatically falls back to <code className="text-slate-800 bg-slate-200 font-bold px-1 py-0.5 rounded">{defaultLocale}</code>, updating <code className="text-slate-800 bg-slate-200 font-bold px-1 py-0.5 rounded">localStorage</code> and document direction (<code className="text-slate-800 bg-slate-200 font-bold px-1 py-0.5 rounded">dir</code>) without terminating active sessions.
               </li>
               <li>
-                <strong>Public Localization API:</strong> The endpoint <code className="text-slate-800 bg-slate-200 px-1 py-0.5 rounded">GET /api/v1/public/localization</code> delivers cached public status and invalidates immediately upon saving.
+                <strong>Platform Admin Accessibility:</strong> Disabling the language currently used by an administrator seamlessly transitions the admin interface to English while maintaining access to <code className="text-slate-800 bg-slate-200 font-bold px-1 py-0.5 rounded">/platform-admin</code> and enabling future re-activation.
+              </li>
+              <li>
+                <strong>Atomic Default Management:</strong> Disabling the platform default language atomically designates the remaining active language as the new default fallback.
               </li>
             </ul>
           </div>
 
-          {/* Audit Reason & Submit Action */}
-          <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm space-y-4">
+          {/* Audit Log Rationale Section */}
+          <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm space-y-3">
             <div>
               <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1">
-                Audit Log Reason (Optional)
+                Custom Audit Log Reason (Optional)
               </label>
               <input
                 type="text"
                 value={auditReason}
                 onChange={(e) => setAuditReason(e.target.value)}
-                placeholder="e.g. Enabling Persian language and Iranian market pricing for Q4 rollout"
+                placeholder="e.g. Disabling Persian temporarily for system maintenance or rollout"
                 className="w-full text-xs px-3.5 py-2.5 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 bg-white"
+                data-testid="localization-audit-reason-input"
               />
               <p className="text-[11px] text-slate-400 mt-1">
-                This rationale will be recorded in the immutable platform administrator audit trail.
+                Recorded in the immutable platform administrator audit trail with actor identity and timestamp.
               </p>
             </div>
-
-            <div className="flex items-center justify-between pt-2 border-t border-slate-100">
-              <div className="text-xs text-slate-500">
-                {hasUnsavedChanges ? (
-                  <span className="text-amber-600 font-medium flex items-center gap-1.5">
-                    <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
-                    Unsaved localization changes detected.
-                  </span>
-                ) : (
-                  <span>Settings are synchronized with the database.</span>
-                )}
-              </div>
-
-              <div className="flex items-center gap-3">
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => {
-                    if (settings) {
-                      setEnabledLocales(settings.enabled_locales);
-                      setDefaultLocale(settings.default_locale);
-                      setAuditReason("");
-                      setError(null);
-                    }
-                  }}
-                  disabled={!hasUnsavedChanges || saving}
-                >
-                  Discard
-                </Button>
-                <Button
-                  type="submit"
-                  variant="primary"
-                  size="sm"
-                  loading={saving}
-                  disabled={saving || !hasUnsavedChanges}
-                  className="gap-1.5"
-                >
-                  <CheckCircle2 className="w-4 h-4" />
-                  <span>Save Configuration</span>
-                </Button>
-              </div>
-            </div>
           </div>
-        </form>
+        </div>
       )}
     </div>
   );
 }
-

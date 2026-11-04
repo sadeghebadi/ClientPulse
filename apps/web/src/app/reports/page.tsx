@@ -59,7 +59,7 @@ interface ClientOption {
 export default function ReportsPage() {
   const router = useRouter();
   const { activeOrg, role } = useAuth();
-  const { t, isRTL, locale } = useI18n();
+  const { t, isRTL, locale, isLocaleEnabled, defaultLocale } = useI18n();
 
   const [reports, setReports] = useState<ReportItem[]>([]);
   const [clients, setClients] = useState<ClientOption[]>([]);
@@ -686,8 +686,8 @@ export default function ReportsPage() {
                       }}
                       className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
                     >
-                      <option value="en">{t.englishLtr}</option>
-                      <option value="fa">{t.persianRtl}</option>
+                      {isLocaleEnabled("en") && <option value="en">{t.englishLtr}</option>}
+                      {isLocaleEnabled("fa") && <option value="fa">{t.persianRtl}</option>}
                     </select>
                   </div>
                   <div>
