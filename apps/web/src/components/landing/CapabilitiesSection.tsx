@@ -10,11 +10,9 @@ import {
   FileText,
   ShieldCheck,
   CheckCircle2,
-  Lock,
-  ArrowRight,
-  ArrowLeft,
 } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
+import { TiltCard } from "./motion/TiltCard";
 
 export function CapabilitiesSection() {
   const { t, isRTL } = useI18n();
@@ -23,7 +21,7 @@ export function CapabilitiesSection() {
     {
       id: "monitoring",
       icon: Activity,
-      color: "text-blue-600 bg-blue-50 border-blue-200",
+      color: "text-blue-400 bg-blue-950/60 border-blue-800/80",
       title: t.landingCap1Title,
       description: t.landingCap1Desc,
       highlights: [
@@ -35,7 +33,7 @@ export function CapabilitiesSection() {
     {
       id: "heartbeats",
       icon: Radio,
-      color: "text-purple-600 bg-purple-50 border-purple-200",
+      color: "text-purple-400 bg-purple-950/60 border-purple-800/80",
       title: t.landingCap2Title,
       description: t.landingCap2Desc,
       highlights: [
@@ -47,7 +45,7 @@ export function CapabilitiesSection() {
     {
       id: "incidents",
       icon: AlertTriangle,
-      color: "text-rose-600 bg-rose-50 border-rose-200",
+      color: "text-rose-400 bg-rose-950/60 border-rose-800/80",
       title: t.landingCap3Title,
       description: t.landingCap3Desc,
       highlights: [
@@ -59,7 +57,7 @@ export function CapabilitiesSection() {
     {
       id: "clients",
       icon: Users,
-      color: "text-indigo-600 bg-indigo-50 border-indigo-200",
+      color: "text-indigo-400 bg-indigo-950/60 border-indigo-800/80",
       title: t.landingCap4Title,
       description: t.landingCap4Desc,
       highlights: [
@@ -71,7 +69,7 @@ export function CapabilitiesSection() {
     {
       id: "maintenance",
       icon: Wrench,
-      color: "text-amber-600 bg-amber-50 border-amber-200",
+      color: "text-amber-400 bg-amber-950/60 border-amber-800/80",
       title: t.landingCap5Title,
       description: t.landingCap5Desc,
       highlights: [
@@ -83,7 +81,7 @@ export function CapabilitiesSection() {
     {
       id: "workspace",
       icon: FileText,
-      color: "text-emerald-600 bg-emerald-50 border-emerald-200",
+      color: "text-emerald-400 bg-emerald-950/60 border-emerald-800/80",
       title: t.landingCap6Title,
       description: t.landingCap6Desc,
       highlights: [
@@ -95,56 +93,59 @@ export function CapabilitiesSection() {
   ];
 
   return (
-    <section id="features" className="py-16 sm:py-24 bg-white border-b border-slate-200/80 scroll-mt-20">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+    <section id="features" className="py-20 sm:py-28 bg-[#090d18] text-slate-100 border-b border-slate-800 scroll-mt-20 relative overflow-hidden">
+      {/* Background ambient lighting */}
+      <div className="absolute top-1/3 left-10 w-72 h-72 bg-blue-600/5 rounded-full blur-[90px] pointer-events-none" />
+      <div className="absolute bottom-10 right-10 w-72 h-72 bg-violet-600/5 rounded-full blur-[90px] pointer-events-none" />
+
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10">
         {/* Section Header */}
-        <div className="max-w-3xl mx-auto text-center space-y-3 sm:space-y-4 mb-12 sm:mb-16">
-          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold text-blue-700 bg-blue-50 border border-blue-200/60">
-            <ShieldCheck className="w-3.5 h-3.5 text-blue-600" />
+        <div className="max-w-3xl mx-auto text-center space-y-4 mb-12 sm:mb-16">
+          <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-semibold text-blue-400 bg-blue-950/60 border border-blue-800/60 shadow-lg shadow-blue-950/30">
+            <ShieldCheck className="w-3.5 h-3.5 text-blue-400" />
             <span>{isRTL ? "قابلیت‌های پیاده‌سازی‌شده و فعال" : "Core Implemented Capabilities"}</span>
           </div>
 
-          <h2 className="text-2xl sm:text-4xl font-extrabold text-slate-900 tracking-tight">
+          <h2 className="text-3xl sm:text-5xl font-black text-white tracking-tight">
             {t.landingCapabilitiesTitle}
           </h2>
 
-          <p className="text-sm sm:text-base text-slate-600 leading-relaxed font-normal">
+          <p className="text-base sm:text-lg text-slate-400 leading-relaxed font-normal">
             {t.landingCapabilitiesSubtitle}
           </p>
         </div>
 
-        {/* 6 Capabilities Cards Grid */}
+        {/* 6 Capabilities Cards Grid with 3D Tilt */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 sm:gap-8">
           {capabilities.map((cap) => {
             const Icon = cap.icon;
             return (
-              <div
-                key={cap.id}
-                className="group relative bg-white rounded-2xl border border-slate-200/80 p-6 sm:p-7 shadow-2xs hover:shadow-lg hover:border-blue-300 transition-all flex flex-col justify-between"
-              >
-                <div className="space-y-4">
-                  <div className={`w-12 h-12 rounded-xl flex items-center justify-center border shadow-xs ${cap.color}`}>
-                    <Icon className="w-6 h-6" />
+              <TiltCard key={cap.id} maxTilt={5} sheen={true} className="h-full">
+                <div className="h-full group relative bg-[#0c1222]/90 rounded-2xl border border-slate-800/90 p-6 sm:p-7 shadow-xl hover:border-slate-700 hover:shadow-2xl transition-all flex flex-col justify-between">
+                  <div className="space-y-4">
+                    <div className={`w-12 h-12 rounded-xl flex items-center justify-center border shadow-md ${cap.color}`}>
+                      <Icon className="w-6 h-6" />
+                    </div>
+
+                    <h3 className="text-lg font-bold text-white tracking-tight group-hover:text-blue-400 transition-colors">
+                      {cap.title}
+                    </h3>
+
+                    <p className="text-xs sm:text-sm text-slate-400 leading-relaxed font-normal">
+                      {cap.description}
+                    </p>
                   </div>
 
-                  <h3 className="text-lg font-bold text-slate-900 tracking-tight group-hover:text-blue-600 transition-colors">
-                    {cap.title}
-                  </h3>
-
-                  <p className="text-xs sm:text-sm text-slate-600 leading-relaxed font-normal">
-                    {cap.description}
-                  </p>
+                  <div className="pt-6 mt-6 border-t border-slate-800 space-y-2.5">
+                    {cap.highlights.map((hl, idx) => (
+                      <div key={idx} className="flex items-start gap-2.5 text-xs text-slate-300">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" />
+                        <span className="leading-tight">{hl}</span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
-
-                <div className="pt-6 mt-6 border-t border-slate-100 space-y-2">
-                  {cap.highlights.map((hl, idx) => (
-                    <div key={idx} className="flex items-start gap-2 text-xs text-slate-700">
-                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0 mt-0.5" />
-                      <span className="leading-tight">{hl}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
+              </TiltCard>
             );
           })}
         </div>
@@ -152,4 +153,3 @@ export function CapabilitiesSection() {
     </section>
   );
 }
-

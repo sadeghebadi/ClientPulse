@@ -1,8 +1,9 @@
 "use client";
 
 import React from "react";
-import { FolderKanban, Eye, Cpu, CheckSquare, ArrowUpRight } from "lucide-react";
+import { FolderKanban, Eye, Cpu, CheckSquare } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
+import { TiltCard } from "./motion/TiltCard";
 
 export function AgencyValueSection() {
   const { t, isRTL } = useI18n();
@@ -39,49 +40,48 @@ export function AgencyValueSection() {
   ];
 
   return (
-    <section id="value" className="py-16 sm:py-24 bg-white border-b border-slate-200/80 scroll-mt-20">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+    <section id="value" className="py-20 sm:py-28 bg-[#090d18] text-slate-100 border-b border-slate-800 scroll-mt-20 relative overflow-hidden">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10">
         {/* Section Header */}
-        <div className="max-w-3xl mx-auto text-center space-y-3 sm:space-y-4 mb-12 sm:mb-16">
-          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold text-indigo-700 bg-indigo-50 border border-indigo-200/70">
+        <div className="max-w-3xl mx-auto text-center space-y-4 mb-12 sm:mb-16">
+          <div className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold text-indigo-400 bg-indigo-950/60 border border-indigo-800/60 shadow-lg shadow-indigo-950/30">
             <span>{isRTL ? "مزایای اختصاصی برای وب‌آژانس‌ها" : "Agency Value Proposition"}</span>
           </div>
 
-          <h2 className="text-2xl sm:text-4xl font-extrabold text-slate-900 tracking-tight">
+          <h2 className="text-3xl sm:text-5xl font-black text-white tracking-tight">
             {t.landingValueTitle}
           </h2>
 
-          <p className="text-sm sm:text-base text-slate-600 leading-relaxed font-normal">
+          <p className="text-base sm:text-lg text-slate-400 leading-relaxed font-normal">
             {t.landingValueSubtitle}
           </p>
         </div>
 
-        {/* 2x2 Clean Value Grid */}
+        {/* 2x2 Clean Value Grid with 3D Tilt */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 sm:gap-8">
           {values.map((v) => {
             const Icon = v.icon;
             return (
-              <div
-                key={v.id}
-                className="bg-slate-50 rounded-2xl border border-slate-200/80 p-6 sm:p-8 hover:bg-white hover:border-blue-300 hover:shadow-md transition-all space-y-4"
-              >
-                <div className="flex items-center justify-between">
-                  <div className="w-11 h-11 rounded-xl bg-white border border-slate-200 text-blue-600 flex items-center justify-center shadow-2xs">
-                    <Icon className="w-5 h-5" />
+              <TiltCard key={v.id} maxTilt={4} sheen={true} className="h-full">
+                <div className="h-full bg-[#0c1222] rounded-2xl border border-slate-800 p-6 sm:p-8 hover:border-slate-700 transition-all space-y-4 shadow-xl">
+                  <div className="flex items-center justify-between">
+                    <div className="w-11 h-11 rounded-xl bg-blue-950/80 border border-blue-800/60 text-blue-400 flex items-center justify-center shadow-md">
+                      <Icon className="w-5 h-5" />
+                    </div>
+                    <span className="text-[11px] font-bold text-slate-400 bg-slate-900 px-3 py-1 rounded-lg border border-slate-800">
+                      {v.tag}
+                    </span>
                   </div>
-                  <span className="text-[11px] font-bold text-slate-500 bg-white px-2.5 py-1 rounded-md border border-slate-200">
-                    {v.tag}
-                  </span>
+
+                  <h3 className="text-lg font-bold text-white tracking-tight">
+                    {v.title}
+                  </h3>
+
+                  <p className="text-xs sm:text-sm text-slate-400 leading-relaxed font-normal">
+                    {v.description}
+                  </p>
                 </div>
-
-                <h3 className="text-lg font-bold text-slate-900 tracking-tight">
-                  {v.title}
-                </h3>
-
-                <p className="text-xs sm:text-sm text-slate-600 leading-relaxed font-normal">
-                  {v.description}
-                </p>
-              </div>
+              </TiltCard>
             );
           })}
         </div>
@@ -89,4 +89,3 @@ export function AgencyValueSection() {
     </section>
   );
 }
-
