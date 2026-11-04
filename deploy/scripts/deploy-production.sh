@@ -132,10 +132,10 @@ if ! docker image inspect "${POSTGRES_IMAGE}" > /dev/null 2>&1; then
 fi
 
 echo "4. Exporting runtime images to compressed archive..."
-# Use pigz if available, otherwise gzip (maximum compression)
-COMPRESS_CMD="gzip -9 -c"
+# Use pigz if available, otherwise gzip
+COMPRESS_CMD="gzip -c"
 if command -v pigz >/dev/null 2>&1; then
-    COMPRESS_CMD="pigz -9"
+    COMPRESS_CMD="pigz -1"
 fi
 
 docker save "${API_IMAGE}" "${WORKER_IMAGE}" "${WEB_IMAGE}" "${POSTGRES_IMAGE}" | ${COMPRESS_CMD} > "${ARCHIVE_PATH}"

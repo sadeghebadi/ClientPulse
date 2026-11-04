@@ -9,11 +9,10 @@ RUN npm ci
 COPY apps/web/ ./
 ARG NEXT_PUBLIC_API_BASE_URL=http://localhost:8080
 ENV NEXT_PUBLIC_API_BASE_URL=${NEXT_PUBLIC_API_BASE_URL}
-RUN npm run build && \
-    rm -rf /app/.next/standalone/node_modules/@img/*-linux-x64
+RUN npm run build
 
 # Production Runner
-FROM alpine:3.24.3 AS runner
+FROM node:24.22.2-alpine3.24 AS runner
 
 WORKDIR /app
 
@@ -21,12 +20,8 @@ ENV NODE_ENV=production
 ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
 
-RUN apk add --no-cache libstdc++ && \
-    addgroup --system --gid 1001 nodejs && \
+RUN addgroup --system --gid 1001 nodejs && \
     adduser --system --uid 1001 nextjs
-
-# Copy Node.js binary from builder
-COPY --from=builder /usr/local/bin/node /usr/local/bin/node
 
 # Copy standalone output from builder
 COPY --from=builder /app/public ./public
