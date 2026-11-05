@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useRef, useCallback } from "react";
+import React, { useEffect, useRef } from "react";
 import * as THREE from "three";
 
 interface CinematicStoryCanvasProps {
@@ -9,30 +9,22 @@ interface CinematicStoryCanvasProps {
   isRTL?: boolean;
 }
 
-interface NodeDef {
+interface RegionalSpire {
   id: string;
   name: string;
-  type: "core" | "target" | "api" | "worker" | "edge";
+  region: string;
   pos: [number, number, number];
   isTarget?: boolean;
+  color: number;
 }
 
-const NODES_DATA: NodeDef[] = [
-  // Primary target node that degrades and suffers total outage
-  { id: "storefront", name: "storefront.production", type: "target", pos: [4.2, 0.6, -1.2], isTarget: true },
-
-  // Edge & API nodes surrounding the space
-  { id: "api-gw", name: "api.gateway.primary", type: "api", pos: [-3.8, 2.2, -0.5] },
-  { id: "auth-svc", name: "auth.identity.service", type: "api", pos: [-2.4, -2.0, 1.8] },
-  { id: "cdn-fra", name: "cdn.edge.frankfurt", type: "edge", pos: [2.8, 3.2, 2.2] },
-  { id: "cdn-teh", name: "cdn.edge.tehran", type: "edge", pos: [5.6, -1.8, 1.5] },
-  { id: "db-rep", name: "db.primary.replica", type: "worker", pos: [-5.2, -0.8, -2.5] },
-  { id: "queue-wrk", name: "queue.dispatcher.cron", type: "worker", pos: [-1.5, 3.4, -3.2] },
-  { id: "cache-rd", name: "redis.cache.cluster", type: "worker", pos: [1.8, -3.0, -1.8] },
-  { id: "dns-edge", name: "dns.edge.global", type: "edge", pos: [6.0, 2.0, -3.0] },
-  { id: "pay-hook", name: "webhook.stripe.rx", type: "api", pos: [3.4, -2.4, 3.2] },
-  { id: "probe-us", name: "probe.us-east.edge", type: "edge", pos: [-6.2, 1.4, 2.5] },
-  { id: "probe-sg", name: "probe.singapore.edge", type: "edge", pos: [-3.2, -3.2, -2.8] },
+const REGIONAL_SPIRES: RegionalSpire[] = [
+  { id: "target-store", name: "storefront.production", region: "EU-Central (Primary)", pos: [4.2, 0.6, -1.2], isTarget: true, color: 0x10b981 },
+  { id: "spire-us", name: "api.gateway.us-east", region: "US-East (Virginia)", pos: [-3.8, 1.8, -0.5], color: 0x38bdf8 },
+  { id: "spire-ap", name: "probe.singapore.edge", region: "AP-East (Singapore)", pos: [-2.4, -1.5, 2.2], color: 0x06b6d4 },
+  { id: "spire-me", name: "edge.tehran.core", region: "ME-Central (Tehran)", pos: [5.2, -1.4, 2.0], color: 0x34d399 },
+  { id: "spire-fra", name: "cdn.edge.frankfurt", region: "EU-West (Frankfurt)", pos: [2.5, 2.8, 1.8], color: 0x38bdf8 },
+  { id: "spire-tok", name: "probe.tokyo.edge", region: "AP-Northeast (Tokyo)", pos: [-4.6, 0.4, -2.8], color: 0x818cf8 },
 ];
 
 export function CinematicStoryCanvas({ progress, activeScene, isRTL = false }: CinematicStoryCanvasProps) {
@@ -44,7 +36,6 @@ export function CinematicStoryCanvas({ progress, activeScene, isRTL = false }: C
     dispose: () => void;
   } | null>(null);
 
-  // Keep ref values up to date without triggering useEffect restarts
   useEffect(() => {
     progressRef.current = progress;
     activeSceneRef.current = activeScene;
@@ -59,20 +50,20 @@ export function CinematicStoryCanvas({ progress, activeScene, isRTL = false }: C
 
     let animId: number;
     let isVisible = true;
-    let clock = new THREE.Clock();
+    const clock = new THREE.Clock();
 
     const width = container.clientWidth || window.innerWidth;
     const height = container.clientHeight || window.innerHeight;
 
-    // 1. Scene & Fog Setup
+    // 1. SCENE GRAPH & ATMOSPHERIC FOG
     const scene = new THREE.Scene();
-    scene.fog = new THREE.FogExp2(0x050811, 0.022);
+    scene.fog = new THREE.FogExp2(0x03050c, 0.022);
 
-    // 2. Camera Setup
-    const camera = new THREE.PerspectiveCamera(48, width / height, 0.1, 100);
-    camera.position.set(0, 3.5, 24);
+    // 2. CAMERA SETUP
+    const camera = new THREE.PerspectiveCamera(48, width / height, 0.1, 120);
+    camera.position.set(0, 3.5, 26);
 
-    // 3. Renderer Setup
+    // 3. WEBGL RENDERER
     const renderer = new THREE.WebGLRenderer({
       antialias: true,
       alpha: true,
@@ -80,332 +71,352 @@ export function CinematicStoryCanvas({ progress, activeScene, isRTL = false }: C
     });
     renderer.setSize(width, height);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-    renderer.setClearColor(0x050811, 1);
+    renderer.setClearColor(0x03050c, 1);
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.15;
     container.appendChild(renderer.domElement);
 
-    // 4. Lighting System
-    const ambientLight = new THREE.AmbientLight(0x1e293b, 1.2);
+    // 4. LIGHTING ECOSYSTEM
+    const ambientLight = new THREE.AmbientLight(0x0f172a, 1.2);
     scene.add(ambientLight);
 
-    const dirLight = new THREE.DirectionalLight(0x38bdf8, 1.5);
-    dirLight.position.set(5, 10, 7);
-    scene.add(dirLight);
+    const keyDirectional = new THREE.DirectionalLight(0x38bdf8, 1.8);
+    keyDirectional.position.set(8, 14, 10);
+    scene.add(keyDirectional);
 
-    // Dynamic point light at target node (storefront.production)
-    const targetPointLight = new THREE.PointLight(0x06b6d4, 3.0, 20);
-    targetPointLight.position.set(4.2, 0.6, -1.2);
-    scene.add(targetPointLight);
+    // Dynamic Central Reactor Core Light
+    const reactorLight = new THREE.PointLight(0x10b981, 4.5, 30);
+    reactorLight.position.set(0, 0.5, 0);
+    scene.add(reactorLight);
 
-    // Core point light
-    const corePointLight = new THREE.PointLight(0x3b82f6, 4.0, 25);
-    corePointLight.position.set(0, 0, 0);
-    scene.add(corePointLight);
+    // Target Node Spotlight / PointLight
+    const targetLight = new THREE.PointLight(0x10b981, 3.2, 18);
+    targetLight.position.set(4.2, 0.6, -1.2);
+    scene.add(targetLight);
 
-    // 5. Ambient Starfield Particles
-    const starCount = 600;
-    const starGeo = new THREE.BufferGeometry();
-    const starPositions = new Float32Array(starCount * 3);
-    for (let i = 0; i < starCount * 3; i += 3) {
-      starPositions[i] = (Math.random() - 0.5) * 60;
-      starPositions[i + 1] = (Math.random() - 0.5) * 45;
-      starPositions[i + 2] = (Math.random() - 0.5) * 50;
-    }
-    starGeo.setAttribute("position", new THREE.BufferAttribute(starPositions, 3));
-    const starMat = new THREE.PointsMaterial({
-      color: 0x94a3b8,
-      size: 0.08,
-      transparent: true,
-      opacity: 0.5,
+    // Emergency Outage Strobe Light (disabled until Scene 04)
+    const emergencyStrobeLight = new THREE.PointLight(0xef4444, 0, 40);
+    emergencyStrobeLight.position.set(3.5, 2.5, 0);
+    scene.add(emergencyStrobeLight);
+
+    // 5. CYBERNETIC PERSPECTIVE GRID FLOOR
+    const gridHelper = new THREE.GridHelper(70, 70, 0x0ea5e9, 0x1e293b);
+    gridHelper.position.y = -3.2;
+    (gridHelper.material as THREE.Material).transparent = true;
+    (gridHelper.material as THREE.Material).opacity = 0.35;
+    scene.add(gridHelper);
+
+    // Additional glowing runway lines along Z-axis
+    const runwayGeo = new THREE.BufferGeometry();
+    const runwayPositions = new Float32Array([
+      -3, -3.18, -35,   -3, -3.18, 35,
+       3, -3.18, -35,    3, -3.18, 35,
+      -8, -3.18, -35,   -8, -3.18, 35,
+       8, -3.18, -35,    8, -3.18, 35,
+    ]);
+    runwayGeo.setAttribute("position", new THREE.BufferAttribute(runwayPositions, 3));
+    const runwayMat = new THREE.LineBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.5 });
+    const runwayLines = new THREE.LineSegments(runwayGeo, runwayMat);
+    scene.add(runwayLines);
+
+    // 6. PERIMETER STRUCTURAL MONOLITH COLUMNS
+    const columnsGroup = new THREE.Group();
+    scene.add(columnsGroup);
+    const colGeo = new THREE.BoxGeometry(1.2, 16, 1.2);
+    const colMat = new THREE.MeshStandardMaterial({
+      color: 0x090d16,
+      roughness: 0.25,
+      metalness: 0.85,
     });
-    const starField = new THREE.Points(starGeo, starMat);
-    scene.add(starField);
+    const colGlowMat = new THREE.MeshBasicMaterial({ color: 0x0284c7, transparent: true, opacity: 0.6 });
 
-    // 6. Central Monitoring Engine Core (at 0, 0, 0)
-    const coreGroup = new THREE.Group();
-    scene.add(coreGroup);
+    const columnCoords: [number, number][] = [
+      [-12, -20], [-12, -8], [-12, 6], [-12, 20],
+      [ 12, -20], [ 12, -8], [ 12, 6], [ 12, 20],
+    ];
 
-    // Outer Geodesic Icosahedron
-    const coreOuterGeo = new THREE.IcosahedronGeometry(2.5, 2);
-    const coreOuterMat = new THREE.MeshBasicMaterial({
-      color: 0x3b82f6,
+    columnCoords.forEach(([x, z]) => {
+      const colMesh = new THREE.Mesh(colGeo, colMat);
+      colMesh.position.set(x, 4.0, z);
+      columnsGroup.add(colMesh);
+
+      // Vertical neon indicator strip
+      const stripGeo = new THREE.BoxGeometry(0.08, 15.5, 0.08);
+      const stripMesh = new THREE.Mesh(stripGeo, colGlowMat);
+      stripMesh.position.set(x > 0 ? x - 0.62 : x + 0.62, 4.0, z);
+      columnsGroup.add(stripMesh);
+    });
+
+    // 7. KINETIC MONOLITH ARMOR GATES (SCENE 00 / 01 HULL BREACH)
+    const gatesGroup = new THREE.Group();
+    gatesGroup.position.set(0, 1.5, 18);
+    scene.add(gatesGroup);
+
+    const gatePlateGeo = new THREE.BoxGeometry(8.5, 14, 0.6);
+    const gatePlateMat = new THREE.MeshStandardMaterial({
+      color: 0x070a12,
+      roughness: 0.2,
+      metalness: 0.9,
+    });
+    const gateBevelMat = new THREE.MeshBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.8 });
+
+    // Left Armor Plate
+    const leftPlate = new THREE.Mesh(gatePlateGeo, gatePlateMat);
+    leftPlate.position.set(-4.3, 0, 0);
+    gatesGroup.add(leftPlate);
+    const leftBevel = new THREE.Mesh(new THREE.BoxGeometry(0.12, 13.8, 0.65), gateBevelMat);
+    leftBevel.position.set(-0.05, 0, 0);
+    leftPlate.add(leftBevel);
+
+    // Right Armor Plate
+    const rightPlate = new THREE.Mesh(gatePlateGeo, gatePlateMat);
+    rightPlate.position.set(4.3, 0, 0);
+    gatesGroup.add(rightPlate);
+    const rightBevel = new THREE.Mesh(new THREE.BoxGeometry(0.12, 13.8, 0.65), gateBevelMat);
+    rightBevel.position.set(0.05, 0, 0);
+    rightPlate.add(rightBevel);
+
+    // 8. CENTRAL RELIABILITY REACTOR CORE (at 0, 0.5, 0)
+    const reactorGroup = new THREE.Group();
+    reactorGroup.position.set(0, 0.5, 0);
+    scene.add(reactorGroup);
+
+    // Cylindrical Magnetic Stator Cage
+    const cageGeo = new THREE.CylinderGeometry(3.0, 3.0, 2.4, 16, 1, true);
+    const cageMat = new THREE.MeshBasicMaterial({
+      color: 0x1e293b,
       wireframe: true,
       transparent: true,
-      opacity: 0.4,
+      opacity: 0.45,
     });
-    const coreOuterMesh = new THREE.Mesh(coreOuterGeo, coreOuterMat);
-    coreGroup.add(coreOuterMesh);
+    const cageMesh = new THREE.Mesh(cageGeo, cageMat);
+    reactorGroup.add(cageMesh);
 
-    // Middle Crystalline Octahedron
-    const coreMidGeo = new THREE.OctahedronGeometry(1.6, 1);
-    const coreMidMat = new THREE.MeshBasicMaterial({
-      color: 0x06b6d4,
-      wireframe: true,
-      transparent: true,
-      opacity: 0.6,
-    });
-    const coreMidMesh = new THREE.Mesh(coreMidGeo, coreMidMat);
-    coreGroup.add(coreMidMesh);
-
-    // Inner Glowing Core Sphere
-    const coreInnerGeo = new THREE.SphereGeometry(0.9, 24, 24);
-    const coreInnerMat = new THREE.MeshBasicMaterial({
-      color: 0x60a5fa,
-      transparent: true,
-      opacity: 0.9,
-    });
-    const coreInnerMesh = new THREE.Mesh(coreInnerGeo, coreInnerMat);
-    coreGroup.add(coreInnerMesh);
-
-    // Triple Gimbal Rings
-    const ringMat1 = new THREE.MeshBasicMaterial({ color: 0x818cf8, transparent: true, opacity: 0.45 });
-    const ringMat2 = new THREE.MeshBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.4 });
-    const ringMat3 = new THREE.MeshBasicMaterial({ color: 0x34d399, transparent: true, opacity: 0.35 });
-
-    const ring1 = new THREE.Mesh(new THREE.TorusGeometry(3.6, 0.03, 16, 90), ringMat1);
+    // Rotating Gimbal Rings
+    const ring1 = new THREE.Mesh(
+      new THREE.TorusGeometry(3.8, 0.04, 16, 80),
+      new THREE.MeshBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.6 })
+    );
     ring1.rotation.x = Math.PI / 3;
-    ring1.rotation.y = Math.PI / 7;
-    coreGroup.add(ring1);
+    reactorGroup.add(ring1);
 
-    const ring2 = new THREE.Mesh(new THREE.TorusGeometry(4.3, 0.03, 16, 90), ringMat2);
-    ring2.rotation.x = -Math.PI / 4;
+    const ring2 = new THREE.Mesh(
+      new THREE.TorusGeometry(4.6, 0.035, 16, 80),
+      new THREE.MeshBasicMaterial({ color: 0x10b981, transparent: true, opacity: 0.5 })
+    );
+    ring2.rotation.y = Math.PI / 4;
     ring2.rotation.z = Math.PI / 6;
-    coreGroup.add(ring2);
+    reactorGroup.add(ring2);
 
-    const ring3 = new THREE.Mesh(new THREE.TorusGeometry(5.0, 0.025, 16, 90), ringMat3);
-    ring3.rotation.y = Math.PI / 3;
-    coreGroup.add(ring3);
+    // Glowing Inner Plasma Core
+    const plasmaCoreGeo = new THREE.IcosahedronGeometry(1.2, 2);
+    const plasmaCoreMat = new THREE.MeshBasicMaterial({
+      color: 0x34d399,
+      wireframe: true,
+      transparent: true,
+      opacity: 0.85,
+    });
+    const plasmaCoreMesh = new THREE.Mesh(plasmaCoreGeo, plasmaCoreMat);
+    reactorGroup.add(plasmaCoreMesh);
 
-    // 7. Network Nodes Assembly
-    const nodesGroup = new THREE.Group();
-    scene.add(nodesGroup);
+    // 9. REGIONAL PROBE SPIRES & BEACONS
+    const spiresGroup = new THREE.Group();
+    scene.add(spiresGroup);
 
-    interface BuiltNode {
-      def: NodeDef;
-      mesh: THREE.Mesh;
-      halo: THREE.Mesh;
-      meshMat: THREE.MeshBasicMaterial;
+    interface BuiltSpire {
+      def: RegionalSpire;
+      group: THREE.Group;
+      beaconMesh: THREE.Mesh;
+      haloMesh: THREE.Mesh;
+      pedestalMesh: THREE.Mesh;
+      beaconMat: THREE.MeshBasicMaterial;
       haloMat: THREE.MeshBasicMaterial;
-      posVec: THREE.Vector3;
     }
 
-    const builtNodes: BuiltNode[] = [];
-    let targetNodeObj: BuiltNode | null = null;
+    const builtSpires: BuiltSpire[] = [];
+    let targetSpireObj: BuiltSpire | null = null;
 
-    NODES_DATA.forEach((def) => {
-      const posVec = new THREE.Vector3(...def.pos);
+    REGIONAL_SPIRES.forEach((def) => {
+      const spireGrp = new THREE.Group();
+      spireGrp.position.set(...def.pos);
+      spiresGroup.add(spireGrp);
 
-      let baseColor = 0x10b981; // emerald default
-      if (def.type === "api") baseColor = 0x38bdf8; // sky
-      if (def.type === "worker") baseColor = 0xa855f7; // purple
-      if (def.type === "edge") baseColor = 0x06b6d4; // cyan
-      if (def.isTarget) baseColor = 0x10b981; // starts healthy
+      // Pedestal base
+      const pedGeo = new THREE.CylinderGeometry(0.35, 0.55, 1.2, 12);
+      const pedMat = new THREE.MeshStandardMaterial({
+        color: 0x0f172a,
+        roughness: 0.3,
+        metalness: 0.8,
+      });
+      const pedestalMesh = new THREE.Mesh(pedGeo, pedMat);
+      pedestalMesh.position.y = -0.6;
+      spireGrp.add(pedestalMesh);
 
-      const nodeRadius = def.isTarget ? 0.52 : 0.35;
-      const nodeGeo = new THREE.SphereGeometry(nodeRadius, 20, 20);
-      const meshMat = new THREE.MeshBasicMaterial({
-        color: baseColor,
+      // Glowing Beacon Top
+      const beaconRadius = def.isTarget ? 0.55 : 0.38;
+      const beaconGeo = new THREE.OctahedronGeometry(beaconRadius, 0);
+      const beaconMat = new THREE.MeshBasicMaterial({
+        color: def.color,
         transparent: true,
         opacity: 0.95,
       });
-      const nodeMesh = new THREE.Mesh(nodeGeo, meshMat);
-      nodeMesh.position.copy(posVec);
-      nodesGroup.add(nodeMesh);
+      const beaconMesh = new THREE.Mesh(beaconGeo, beaconMat);
+      spireGrp.add(beaconMesh);
 
-      const haloGeo = new THREE.RingGeometry(nodeRadius + 0.12, nodeRadius + 0.22, 28);
+      // Pulsing Halo Ring
+      const haloGeo = new THREE.RingGeometry(beaconRadius + 0.15, beaconRadius + 0.28, 32);
       const haloMat = new THREE.MeshBasicMaterial({
-        color: baseColor,
+        color: def.color,
         transparent: true,
         opacity: 0.5,
         side: THREE.DoubleSide,
       });
       const haloMesh = new THREE.Mesh(haloGeo, haloMat);
-      haloMesh.position.copy(posVec);
-      nodesGroup.add(haloMesh);
+      spireGrp.add(haloMesh);
 
-      const builtNode = { def, mesh: nodeMesh, halo: haloMesh, meshMat, haloMat, posVec };
-      builtNodes.push(builtNode);
+      const built = { def, group: spireGrp, beaconMesh, haloMesh, pedestalMesh, beaconMat, haloMat };
+      builtSpires.push(built);
 
-      if (def.isTarget) {
-        targetNodeObj = builtNode;
-      }
+      if (def.isTarget) targetSpireObj = built;
     });
 
-    // 8. Connection Splines & Travelling Light Packets
-    const splinesGroup = new THREE.Group();
-    scene.add(splinesGroup);
+    // 10. LASER-OPTIC WAVEGUIDES & PACKET STREAMS
+    const waveguidesGroup = new THREE.Group();
+    scene.add(waveguidesGroup);
 
-    interface SplineConnection {
-      node: BuiltNode;
+    interface WaveguideConn {
+      spire: BuiltSpire;
       curve: THREE.CatmullRomCurve3;
       lineMesh: THREE.Line;
       lineMat: THREE.LineBasicMaterial;
-      pointsCount: number;
       defaultPoints: THREE.Vector3[];
-      isTargetConnection: boolean;
       packetMesh: THREE.Mesh;
       packetOffset: number;
       packetSpeed: number;
     }
 
-    const splineConnections: SplineConnection[] = [];
+    const waveguides: WaveguideConn[] = [];
+    let targetWaveguide: WaveguideConn | null = null;
 
-    // The primary target spline connecting Core to Target Node has a special severed geometry
-    let targetSplinePartA: THREE.Line | null = null;
-    let targetSplinePartB: THREE.Line | null = null;
-    let targetSplineMat: THREE.LineBasicMaterial | null = null;
-
-    builtNodes.forEach((node, idx) => {
-      const isTarget = !!node.def.isTarget;
-      const midPoint = new THREE.Vector3(
-        node.posVec.x * 0.5 + (idx % 2 === 0 ? 0.7 : -0.7),
-        node.posVec.y * 0.5 + 0.5,
-        node.posVec.z * 0.5 + (idx % 3 === 0 ? 0.4 : -0.4)
-      );
+    builtSpires.forEach((spire, idx) => {
+      const isTarget = !!spire.def.isTarget;
+      const midX = spire.def.pos[0] * 0.5 + (idx % 2 === 0 ? 0.6 : -0.6);
+      const midY = spire.def.pos[1] * 0.5 + 0.4;
+      const midZ = spire.def.pos[2] * 0.5 + (idx % 3 === 0 ? 0.5 : -0.5);
 
       const curve = new THREE.CatmullRomCurve3([
-        new THREE.Vector3(0, 0, 0),
-        midPoint,
-        node.posVec,
+        new THREE.Vector3(0, 0.5, 0),
+        new THREE.Vector3(midX, midY, midZ),
+        new THREE.Vector3(...spire.def.pos),
       ]);
 
-      const points = curve.getPoints(40);
+      const points = curve.getPoints(50);
       const lineGeo = new THREE.BufferGeometry().setFromPoints(points);
       const lineMat = new THREE.LineBasicMaterial({
-        color: isTarget ? 0x10b981 : 0x06b6d4,
+        color: isTarget ? 0x10b981 : 0x0ea5e9,
         transparent: true,
-        opacity: isTarget ? 0.85 : 0.35,
+        opacity: isTarget ? 0.9 : 0.4,
       });
       const lineMesh = new THREE.Line(lineGeo, lineMat);
-      splinesGroup.add(lineMesh);
+      waveguidesGroup.add(lineMesh);
 
-      // Light packet traveling along spline
-      const packetGeo = new THREE.SphereGeometry(isTarget ? 0.16 : 0.1, 10, 10);
-      const packetMat = new THREE.MeshBasicMaterial({
-        color: 0xffffff,
-        transparent: true,
-        opacity: 0.95,
-      });
+      // Light packet
+      const packetGeo = new THREE.SphereGeometry(isTarget ? 0.16 : 0.1, 12, 12);
+      const packetMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.95 });
       const packetMesh = new THREE.Mesh(packetGeo, packetMat);
-      splinesGroup.add(packetMesh);
+      waveguidesGroup.add(packetMesh);
 
-      splineConnections.push({
-        node,
+      const wg = {
+        spire,
         curve,
         lineMesh,
         lineMat,
-        pointsCount: 40,
         defaultPoints: points,
-        isTargetConnection: isTarget,
         packetMesh,
-        packetOffset: (idx / builtNodes.length),
-        packetSpeed: 0.0035 + (idx % 3) * 0.0015,
-      });
+        packetOffset: idx / builtSpires.length,
+        packetSpeed: 0.004 + (idx % 3) * 0.002,
+      };
 
-      if (isTarget) {
-        targetSplineMat = lineMat;
-      }
+      waveguides.push(wg);
+      if (isTarget) targetWaveguide = wg;
     });
 
-    // 9. Severed Spline Spark Fragments (Scene 04 Outage Visuals)
-    const sparksCount = 60;
+    // 11. OUTAGE CATASTROPHE & SEVERED ARC SPARK BURST
+    const sparksCount = 80;
     const sparksGeo = new THREE.BufferGeometry();
     const sparksPositions = new Float32Array(sparksCount * 3);
     const sparksVelocities = new Float32Array(sparksCount * 3);
-    const sparksBasePos = new THREE.Vector3(2.1, 0.55, -0.6); // midpoint of target spline
+    const sparksOrigin = new THREE.Vector3(2.1, 0.55, -0.6); // midpoint of target waveguide
 
     for (let i = 0; i < sparksCount; i++) {
-      sparksPositions[i * 3] = sparksBasePos.x;
-      sparksPositions[i * 3 + 1] = sparksBasePos.y;
-      sparksPositions[i * 3 + 2] = sparksBasePos.z;
+      sparksPositions[i * 3] = sparksOrigin.x;
+      sparksPositions[i * 3 + 1] = sparksOrigin.y;
+      sparksPositions[i * 3 + 2] = sparksOrigin.z;
 
-      // Random burst velocity
       const theta = Math.random() * Math.PI * 2;
       const phi = Math.random() * Math.PI;
-      const speed = 0.8 + Math.random() * 2.2;
+      const speed = 1.0 + Math.random() * 3.0;
       sparksVelocities[i * 3] = Math.sin(phi) * Math.cos(theta) * speed;
       sparksVelocities[i * 3 + 1] = Math.cos(phi) * speed;
       sparksVelocities[i * 3 + 2] = Math.sin(phi) * Math.sin(theta) * speed;
     }
     sparksGeo.setAttribute("position", new THREE.BufferAttribute(sparksPositions, 3));
     const sparksMat = new THREE.PointsMaterial({
-      color: 0xff3b30,
-      size: 0.14,
+      color: 0xff2222,
+      size: 0.18,
       transparent: true,
       opacity: 0,
     });
-    const sparksField = new THREE.Points(sparksGeo, sparksMat);
-    scene.add(sparksField);
+    const sparksMesh = new THREE.Points(sparksGeo, sparksMat);
+    scene.add(sparksMesh);
 
-    // 10. Outage Shockwave System (Scene 04 Visual Centerpiece)
+    // 12. DUAL-RING OUTAGE SHOCKWAVE SYSTEM
     const shockwaveGroup = new THREE.Group();
     shockwaveGroup.position.set(4.2, 0.6, -1.2);
     scene.add(shockwaveGroup);
 
-    // Primary Shockwave Ring
-    const shockwaveGeo1 = new THREE.RingGeometry(0.1, 0.28, 64);
-    const shockwaveMat1 = new THREE.MeshBasicMaterial({
-      color: 0xef4444,
-      transparent: true,
-      opacity: 0,
-      side: THREE.DoubleSide,
-    });
-    const shockwaveMesh1 = new THREE.Mesh(shockwaveGeo1, shockwaveMat1);
+    const shockwaveMat1 = new THREE.MeshBasicMaterial({ color: 0xef4444, transparent: true, opacity: 0, side: THREE.DoubleSide });
+    const shockwaveMesh1 = new THREE.Mesh(new THREE.RingGeometry(0.2, 0.45, 64), shockwaveMat1);
     shockwaveGroup.add(shockwaveMesh1);
 
-    // Secondary Shockwave Halo Ring
-    const shockwaveGeo2 = new THREE.RingGeometry(0.32, 0.42, 64);
-    const shockwaveMat2 = new THREE.MeshBasicMaterial({
-      color: 0xf87171,
-      transparent: true,
-      opacity: 0,
-      side: THREE.DoubleSide,
-    });
-    const shockwaveMesh2 = new THREE.Mesh(shockwaveGeo2, shockwaveMat2);
+    const shockwaveMat2 = new THREE.MeshBasicMaterial({ color: 0xf87171, transparent: true, opacity: 0, side: THREE.DoubleSide });
+    const shockwaveMesh2 = new THREE.Mesh(new THREE.RingGeometry(0.5, 0.65, 64), shockwaveMat2);
     shockwaveGroup.add(shockwaveMesh2);
 
-    // 11. Restorative Wave (Scene 06 Visual Conclusion)
-    const recoveryWaveGeo = new THREE.RingGeometry(0.1, 0.4, 64);
-    const recoveryWaveMat = new THREE.MeshBasicMaterial({
-      color: 0x10b981,
-      transparent: true,
-      opacity: 0,
-      side: THREE.DoubleSide,
-    });
-    const recoveryWaveMesh = new THREE.Mesh(recoveryWaveGeo, recoveryWaveMat);
+    // 13. RESTORATIVE RECOVERY HARMONIC WAVE
+    const recoveryWaveMat = new THREE.MeshBasicMaterial({ color: 0x10b981, transparent: true, opacity: 0, side: THREE.DoubleSide });
+    const recoveryWaveMesh = new THREE.Mesh(new THREE.RingGeometry(0.2, 0.5, 64), recoveryWaveMat);
     recoveryWaveMesh.position.set(4.2, 0.6, -1.2);
     scene.add(recoveryWaveMesh);
 
-    // 12. Camera Path Spline: 6 Choreographed Narrative Waypoints
-    // Waypoint indices:
-    // 0: Scene 01 Connected (wide establishing view)
-    // 1: Scene 02 Active Probing (dolly forward tracking data streams)
-    // 2: Scene 03 Degradation (approaching failing region, amber tilt)
-    // 3: Scene 04 Outage (close dramatic orbit around failed node)
-    // 4: Scene 05 Incident Awareness (tactical pull-back isometric angle)
-    // 5: Scene 06 Recovery (soaring through restored network into next section)
+    // 14. CHOREOGRAPHED 3D CAMERA WAYPOINTS (7 DISTINCT PERSPECTIVES)
     const cameraWaypoints = [
-      { pos: new THREE.Vector3(0, 2.5, 22), lookAt: new THREE.Vector3(0, 0, 0) },
-      { pos: new THREE.Vector3(2.0, 1.4, 15), lookAt: new THREE.Vector3(2.5, 0.4, 0) },
-      { pos: new THREE.Vector3(3.6, 1.8, 8.5), lookAt: new THREE.Vector3(4.2, 0.6, -1.2) },
-      { pos: new THREE.Vector3(4.8, 0.4, 4.2), lookAt: new THREE.Vector3(4.2, 0.6, -1.2) },
-      { pos: new THREE.Vector3(1.2, 5.8, 14.5), lookAt: new THREE.Vector3(3.0, 0.2, -0.8) },
-      { pos: new THREE.Vector3(0, 1.2, 16), lookAt: new THREE.Vector3(0, 0.2, 0) },
+      // 0: Monolith Gateway Exterior (Hero view)
+      { pos: new THREE.Vector3(0, 3.2, 26), lookAt: new THREE.Vector3(0, 1.2, 0), fov: 48 },
+      // 1: Supersonic descent through opening armor gates
+      { pos: new THREE.Vector3(1.6, 2.0, 14), lookAt: new THREE.Vector3(0, 0.5, 0), fov: 44 },
+      // 2: Orbiting low-angle sweep across regional probe spires
+      { pos: new THREE.Vector3(3.2, 1.2, 8.5), lookAt: new THREE.Vector3(3.6, 0.5, 0), fov: 40 },
+      // 3: Approaching failing target node (warning phase)
+      { pos: new THREE.Vector3(4.0, 1.0, 4.8), lookAt: new THREE.Vector3(4.2, 0.6, -1.2), fov: 38 },
+      // 4: Dramatic close orbit around severed node (outage rupture)
+      { pos: new THREE.Vector3(4.8, 0.4, 3.2), lookAt: new THREE.Vector3(4.2, 0.6, -1.2), fov: 42 },
+      // 5: Elevated tactical isometric vantage point
+      { pos: new THREE.Vector3(1.5, 6.2, 12.0), lookAt: new THREE.Vector3(2.5, 0.2, -0.5), fov: 45 },
+      // 6: Majestic rising pull-back into restored equilibrium
+      { pos: new THREE.Vector3(0, 2.8, 17.0), lookAt: new THREE.Vector3(0, 0.5, 0), fov: 52 },
     ];
 
-    // Helper: interpolate between two Vector3s
     const currentCamPos = new THREE.Vector3();
     const currentLookAt = new THREE.Vector3();
+    let shakeIntensity = 0;
 
-    function updateCameraFromProgress(p: number) {
-      // p is [0, 1]
-      // Map to 5 segments across the 6 waypoints
+    function updateCameraSpline(p: number) {
       const segments = cameraWaypoints.length - 1;
-      const scaledP = p * segments;
+      const scaledP = Math.max(0, Math.min(1, p)) * segments;
       const segIndex = Math.min(Math.floor(scaledP), segments - 1);
       const segFraction = scaledP - segIndex;
-
-      // Smooth step easing
-      const t = segFraction * segFraction * (3 - 2 * segFraction);
+      const t = segFraction * segFraction * (3 - 2 * segFraction); // cubic ease
 
       const wpStart = cameraWaypoints[segIndex];
       const wpEnd = cameraWaypoints[segIndex + 1];
@@ -413,62 +424,54 @@ export function CinematicStoryCanvas({ progress, activeScene, isRTL = false }: C
       currentCamPos.lerpVectors(wpStart.pos, wpEnd.pos, t);
       currentLookAt.lerpVectors(wpStart.lookAt, wpEnd.lookAt, t);
 
+      // Apply seismic shake during outage (Scene 04)
+      if (shakeIntensity > 0) {
+        const time = clock.getElapsedTime();
+        currentCamPos.x += Math.sin(time * 50) * shakeIntensity;
+        currentCamPos.y += Math.cos(time * 42) * shakeIntensity;
+      }
+
       camera.position.copy(currentCamPos);
       camera.lookAt(currentLookAt);
+
+      const targetFov = wpStart.fov + (wpEnd.fov - wpStart.fov) * t;
+      if (Math.abs(camera.fov - targetFov) > 0.1) {
+        camera.fov = targetFov;
+        camera.updateProjectionMatrix();
+      }
     }
 
-    // Function to update Three.js 3D elements based on scrubbed scroll progress
+    // 15. SCRUBBED SCENE UPDATE FUNCTION
     function updateProgress(p: number, sceneIdx: number) {
-      updateCameraFromProgress(p);
+      // -----------------------------------------------------------------------
+      // MONOLITH ARMOR GATES: Slide open between p = 0.00 and 0.25
+      // -----------------------------------------------------------------------
+      const gateOpenProgress = Math.min(1.0, Math.max(0, (p - 0.02) / 0.20));
+      leftPlate.position.x = -4.3 - gateOpenProgress * 9.0;
+      rightPlate.position.x = 4.3 + gateOpenProgress * 9.0;
 
-      // =========================================================================
-      // SCENE 01: CONNECTED (p ~ 0.00 to 0.16)
-      // Pristine emerald & cyan harmony, core activates
-      // =========================================================================
-      if (p < 0.16) {
-        const subP = p / 0.16;
-        ambientLight.color.setHex(0x1e293b);
-        ambientLight.intensity = 1.0 + subP * 0.4;
-        corePointLight.color.setHex(0x3b82f6);
-        targetPointLight.color.setHex(0x10b981);
-        targetPointLight.intensity = 2.0;
-
-        if (targetNodeObj) {
-          targetNodeObj.meshMat.color.setHex(0x10b981);
-          targetNodeObj.haloMat.color.setHex(0x10b981);
-          targetNodeObj.haloMat.opacity = 0.5;
-        }
-
-        if (targetSplineMat) {
-          targetSplineMat.color.setHex(0x10b981);
-          targetSplineMat.opacity = 0.85;
-        }
-
-        shockwaveMat1.opacity = 0;
-        shockwaveMat2.opacity = 0;
-        sparksMat.opacity = 0;
-        recoveryWaveMat.opacity = 0;
-      }
-
-      // =========================================================================
-      // SCENE 02: ACTIVE TELEMETRY (p ~ 0.16 to 0.35)
-      // Fast probe pulses, cyan data streams, network in high activity
-      // =========================================================================
-      else if (p >= 0.16 && p < 0.35) {
-        const subP = (p - 0.16) / 0.19;
+      // -----------------------------------------------------------------------
+      // SCENE 01: MONOLITH HULL BREACH & CONNECTED BASELINE (p < 0.18)
+      // -----------------------------------------------------------------------
+      if (p < 0.18) {
+        shakeIntensity = 0;
+        emergencyStrobeLight.intensity = 0;
         ambientLight.color.setHex(0x0f172a);
-        targetPointLight.color.setHex(0x06b6d4);
-        targetPointLight.intensity = 2.5 + Math.sin(subP * Math.PI) * 1.5;
+        ambientLight.intensity = 1.2;
+        reactorLight.color.setHex(0x10b981);
+        reactorLight.intensity = 4.5;
+        targetLight.color.setHex(0x10b981);
+        targetLight.intensity = 3.2;
 
-        if (targetNodeObj) {
-          targetNodeObj.meshMat.color.setHex(0x06b6d4);
-          targetNodeObj.haloMat.color.setHex(0x06b6d4);
-          targetNodeObj.haloMat.opacity = 0.6 + Math.sin(subP * 8) * 0.2;
+        if (targetSpireObj) {
+          targetSpireObj.beaconMat.color.setHex(0x10b981);
+          targetSpireObj.haloMat.color.setHex(0x10b981);
+          targetSpireObj.haloMat.opacity = 0.5;
         }
 
-        if (targetSplineMat) {
-          targetSplineMat.color.setHex(0x06b6d4);
-          targetSplineMat.opacity = 0.9;
+        if (targetWaveguide) {
+          targetWaveguide.lineMat.color.setHex(0x10b981);
+          targetWaveguide.lineMat.opacity = 0.9;
         }
 
         shockwaveMat1.opacity = 0;
@@ -477,38 +480,66 @@ export function CinematicStoryCanvas({ progress, activeScene, isRTL = false }: C
         recoveryWaveMat.opacity = 0;
       }
 
-      // =========================================================================
-      // SCENE 03: DEGRADATION (p ~ 0.35 to 0.52)
-      // Amber warning lights, jittering spline vertices, packet instability
-      // =========================================================================
-      else if (p >= 0.35 && p < 0.52) {
-        const subP = (p - 0.35) / 0.17;
-        ambientLight.color.setHex(0x291807);
-        targetPointLight.color.setHex(0xf59e0b);
-        targetPointLight.intensity = 3.5 + Math.sin(subP * 12) * 2.0;
+      // -----------------------------------------------------------------------
+      // SCENE 02: ACTIVE TELEMETRY & EDGE PROBING (0.18 <= p < 0.38)
+      // -----------------------------------------------------------------------
+      else if (p >= 0.18 && p < 0.38) {
+        const subP = (p - 0.18) / 0.20;
+        shakeIntensity = 0;
+        emergencyStrobeLight.intensity = 0;
+        ambientLight.color.setHex(0x0a1628);
+        ambientLight.intensity = 1.3;
+        targetLight.color.setHex(0x06b6d4);
+        targetLight.intensity = 3.5 + Math.sin(subP * Math.PI) * 1.5;
 
-        if (targetNodeObj) {
-          targetNodeObj.meshMat.color.setHex(0xf59e0b);
-          targetNodeObj.haloMat.color.setHex(0xf59e0b);
-          targetNodeObj.haloMat.opacity = 0.7 + Math.sin(subP * 15) * 0.25;
+        if (targetSpireObj) {
+          targetSpireObj.beaconMat.color.setHex(0x06b6d4);
+          targetSpireObj.haloMat.color.setHex(0x06b6d4);
+          targetSpireObj.haloMat.opacity = 0.65;
         }
 
-        if (targetSplineMat) {
-          targetSplineMat.color.setHex(0xf59e0b);
-          targetSplineMat.opacity = 0.95;
+        if (targetWaveguide) {
+          targetWaveguide.lineMat.color.setHex(0x06b6d4);
+          targetWaveguide.lineMat.opacity = 0.95;
         }
 
-        // Add dynamic high-frequency jitter to target spline points
-        const targetConn = splineConnections.find((c) => c.isTargetConnection);
-        if (targetConn) {
-          const posAttr = targetConn.lineMesh.geometry.attributes.position;
+        shockwaveMat1.opacity = 0;
+        shockwaveMat2.opacity = 0;
+        sparksMat.opacity = 0;
+        recoveryWaveMat.opacity = 0;
+      }
+
+      // -----------------------------------------------------------------------
+      // SCENE 03: DEGRADATION & LATENCY ANOMALY (0.38 <= p < 0.50)
+      // -----------------------------------------------------------------------
+      else if (p >= 0.38 && p < 0.50) {
+        const subP = (p - 0.38) / 0.12;
+        shakeIntensity = subP * 0.05;
+        emergencyStrobeLight.intensity = 0;
+        ambientLight.color.setHex(0x241405);
+        ambientLight.intensity = 1.2;
+        targetLight.color.setHex(0xf59e0b);
+        targetLight.intensity = 4.5 + Math.sin(subP * 15) * 2.0;
+
+        if (targetSpireObj) {
+          targetSpireObj.beaconMat.color.setHex(0xf59e0b);
+          targetSpireObj.haloMat.color.setHex(0xf59e0b);
+          targetSpireObj.haloMat.opacity = 0.75 + Math.sin(subP * 18) * 0.2;
+        }
+
+        if (targetWaveguide) {
+          targetWaveguide.lineMat.color.setHex(0xf59e0b);
+          targetWaveguide.lineMat.opacity = 1.0;
+
+          // Vertex Jitter on target waveguide
+          const posAttr = targetWaveguide.lineMesh.geometry.attributes.position;
           const posArr = posAttr.array as Float32Array;
-          for (let i = 0; i < targetConn.pointsCount; i++) {
-            const defPt = targetConn.defaultPoints[i];
-            const jitterFactor = Math.sin(i * 0.8 + subP * 20) * subP * 0.28;
-            posArr[i * 3] = defPt.x + jitterFactor;
-            posArr[i * 3 + 1] = defPt.y + (Math.cos(i + subP * 15) * subP * 0.2);
-            posArr[i * 3 + 2] = defPt.z + jitterFactor * 0.5;
+          for (let i = 0; i < 51; i++) {
+            const defPt = targetWaveguide.defaultPoints[i];
+            const jitter = Math.sin(i * 1.2 + subP * 30) * subP * 0.32;
+            posArr[i * 3] = defPt.x + jitter;
+            posArr[i * 3 + 1] = defPt.y + (Math.cos(i + subP * 25) * subP * 0.25);
+            posArr[i * 3 + 2] = defPt.z + jitter * 0.6;
           }
           posAttr.needsUpdate = true;
         }
@@ -519,34 +550,45 @@ export function CinematicStoryCanvas({ progress, activeScene, isRTL = false }: C
         recoveryWaveMat.opacity = 0;
       }
 
-      // =========================================================================
-      // SCENE 04: TOTAL OUTAGE (p ~ 0.52 to 0.68)
-      // Severed connection! Visible expanding shockwave! Red warning beacon!
-      // =========================================================================
-      else if (p >= 0.52 && p < 0.68) {
-        const subP = (p - 0.52) / 0.16;
-        ambientLight.color.setHex(0x380b0b);
-        ambientLight.intensity = 1.4;
-        targetPointLight.color.setHex(0xef4444);
-        targetPointLight.intensity = 7.0 + Math.sin(subP * 16) * 3.0; // pulsing strobe
+      // -----------------------------------------------------------------------
+      // SCENE 04: CATASTROPHIC RUPTURE & TOTAL OUTAGE (0.50 <= p < 0.68)
+      // Unexpected blackout at p=0.50, then violent crimson strobe & arc blast
+      // -----------------------------------------------------------------------
+      else if (p >= 0.50 && p < 0.68) {
+        const subP = (p - 0.50) / 0.18;
 
-        if (targetNodeObj) {
-          targetNodeObj.meshMat.color.setHex(0xef4444);
-          targetNodeObj.haloMat.color.setHex(0xff3b30);
-          targetNodeObj.haloMat.opacity = 0.9;
+        // Blackout moment between 0.50 and 0.52
+        if (subP < 0.12) {
+          ambientLight.intensity = 0.05;
+          reactorLight.intensity = 0.2;
+          targetLight.intensity = 0.1;
+          emergencyStrobeLight.intensity = 0;
+          shakeIntensity = 0.02;
+        } else {
+          // Violent emergency strobe
+          shakeIntensity = Math.max(0, 0.24 - subP * 0.15);
+          ambientLight.color.setHex(0x380606);
+          ambientLight.intensity = 1.5;
+          emergencyStrobeLight.intensity = 12.0 + Math.sin(subP * 25) * 4.0;
+          targetLight.color.setHex(0xef4444);
+          targetLight.intensity = 8.0 + Math.sin(subP * 20) * 4.0;
         }
 
-        // Physically sever the target spline: hide line or collapse its midpoint
-        const targetConn = splineConnections.find((c) => c.isTargetConnection);
-        if (targetConn) {
-          const posAttr = targetConn.lineMesh.geometry.attributes.position;
+        if (targetSpireObj) {
+          targetSpireObj.beaconMat.color.setHex(0xef4444);
+          targetSpireObj.haloMat.color.setHex(0xff2222);
+          targetSpireObj.haloMat.opacity = 0.95;
+        }
+
+        // Physically sever waveguide into two disjoint recoiling stubs
+        if (targetWaveguide) {
+          const posAttr = targetWaveguide.lineMesh.geometry.attributes.position;
           const posArr = posAttr.array as Float32Array;
-          const midIdx = Math.floor(targetConn.pointsCount / 2);
-          for (let i = 0; i < targetConn.pointsCount; i++) {
-            const defPt = targetConn.defaultPoints[i];
-            // Split line into two disjoint stubs with a wide empty gulf in the middle
-            if (i >= midIdx - 8 && i <= midIdx + 8) {
-              posArr[i * 3] = NaN; // creates a visible gap in WebGL line rendering
+          const midIdx = 25;
+          for (let i = 0; i < 51; i++) {
+            const defPt = targetWaveguide.defaultPoints[i];
+            if (i >= midIdx - 9 && i <= midIdx + 9) {
+              posArr[i * 3] = NaN;
               posArr[i * 3 + 1] = NaN;
               posArr[i * 3 + 2] = NaN;
             } else {
@@ -556,53 +598,52 @@ export function CinematicStoryCanvas({ progress, activeScene, isRTL = false }: C
             }
           }
           posAttr.needsUpdate = true;
-          targetConn.lineMat.color.setHex(0xef4444);
-          targetConn.lineMat.opacity = 0.7;
+          targetWaveguide.lineMat.color.setHex(0xef4444);
+          targetWaveguide.lineMat.opacity = 0.8;
         }
 
-        // Propagate expanding shockwave ring
-        const shockwaveScale = 0.5 + subP * 14.0;
-        shockwaveGroup.scale.set(shockwaveScale, shockwaveScale, shockwaveScale);
+        // Expand Shockwave
+        const shockScale = 0.5 + subP * 18.0;
+        shockwaveGroup.scale.set(shockScale, shockScale, shockScale);
         shockwaveMesh1.lookAt(camera.position);
         shockwaveMesh2.lookAt(camera.position);
-        shockwaveMat1.opacity = Math.max(0, 0.9 - subP * 0.9);
-        shockwaveMat2.opacity = Math.max(0, 0.7 - subP * 0.7);
+        shockwaveMat1.opacity = Math.max(0, 0.95 - subP * 0.95);
+        shockwaveMat2.opacity = Math.max(0, 0.75 - subP * 0.75);
 
-        // Scatter severed sparks outwards
+        // Disperse Sparks
         sparksMat.opacity = Math.max(0, 1.0 - subP * 0.85);
         const sparksPosAttr = sparksGeo.attributes.position;
         const sparksPosArr = sparksPosAttr.array as Float32Array;
         for (let i = 0; i < sparksCount; i++) {
-          sparksPosArr[i * 3] = sparksBasePos.x + sparksVelocities[i * 3] * subP * 3.5;
-          sparksPosArr[i * 3 + 1] = sparksBasePos.y + sparksVelocities[i * 3 + 1] * subP * 3.5;
-          sparksPosArr[i * 3 + 2] = sparksBasePos.z + sparksVelocities[i * 3 + 2] * subP * 3.5;
+          sparksPosArr[i * 3] = sparksOrigin.x + sparksVelocities[i * 3] * subP * 4.2;
+          sparksPosArr[i * 3 + 1] = sparksOrigin.y + sparksVelocities[i * 3 + 1] * subP * 4.2;
+          sparksPosArr[i * 3 + 2] = sparksOrigin.z + sparksVelocities[i * 3 + 2] * subP * 4.2;
         }
         sparksPosAttr.needsUpdate = true;
 
         recoveryWaveMat.opacity = 0;
       }
 
-      // =========================================================================
-      // SCENE 05: INCIDENT AWARENESS (p ~ 0.68 to 0.84)
-      // Tactical isometric view, violet tactical grid, stable incident state
-      // =========================================================================
+      // -----------------------------------------------------------------------
+      // SCENE 05: AUTONOMOUS INCIDENT COMMAND & TRIAGE (0.68 <= p < 0.84)
+      // -----------------------------------------------------------------------
       else if (p >= 0.68 && p < 0.84) {
-        const subP = (p - 0.68) / 0.16;
-        ambientLight.color.setHex(0x1e1536);
-        targetPointLight.color.setHex(0x8b5cf6);
-        targetPointLight.intensity = 4.0;
+        shakeIntensity = 0;
+        emergencyStrobeLight.intensity = 0;
+        ambientLight.color.setHex(0x1a1033);
+        ambientLight.intensity = 1.3;
+        targetLight.color.setHex(0x8b5cf6);
+        targetLight.intensity = 4.5;
 
-        if (targetNodeObj) {
-          targetNodeObj.meshMat.color.setHex(0x8b5cf6);
-          targetNodeObj.haloMat.color.setHex(0x8b5cf6);
-          targetNodeObj.haloMat.opacity = 0.75;
+        if (targetSpireObj) {
+          targetSpireObj.beaconMat.color.setHex(0x8b5cf6);
+          targetSpireObj.haloMat.color.setHex(0x8b5cf6);
+          targetSpireObj.haloMat.opacity = 0.8;
         }
 
-        // Spline is ready to recover
-        const targetConn = splineConnections.find((c) => c.isTargetConnection);
-        if (targetConn) {
-          targetConn.lineMat.color.setHex(0x8b5cf6);
-          targetConn.lineMat.opacity = 0.5;
+        if (targetWaveguide) {
+          targetWaveguide.lineMat.color.setHex(0x8b5cf6);
+          targetWaveguide.lineMat.opacity = 0.5;
         }
 
         shockwaveMat1.opacity = 0;
@@ -611,95 +652,94 @@ export function CinematicStoryCanvas({ progress, activeScene, isRTL = false }: C
         recoveryWaveMat.opacity = 0;
       }
 
-      // =========================================================================
-      // SCENE 06: RECOVERY & RESOLUTION (p ~ 0.84 to 1.00)
-      // Restorative wave sweeps, severed connection re-knits into emerald
-      // =========================================================================
+      // -----------------------------------------------------------------------
+      // SCENE 06: RESTORATION, RE-KNITTING & EQUILIBRIUM (0.84 <= p <= 1.00)
+      // -----------------------------------------------------------------------
       else {
         const subP = (p - 0.84) / 0.16;
+        shakeIntensity = 0;
+        emergencyStrobeLight.intensity = 0;
         ambientLight.color.setHex(0x06281e);
-        ambientLight.intensity = 1.3;
-        targetPointLight.color.setHex(0x10b981);
-        targetPointLight.intensity = 3.5 + (1 - subP) * 3.0;
+        ambientLight.intensity = 1.4;
+        reactorLight.color.setHex(0x10b981);
+        reactorLight.intensity = 5.0;
+        targetLight.color.setHex(0x10b981);
+        targetLight.intensity = 4.0;
 
-        if (targetNodeObj) {
-          targetNodeObj.meshMat.color.setHex(0x10b981);
-          targetNodeObj.haloMat.color.setHex(0x34d399);
-          targetNodeObj.haloMat.opacity = 0.8;
+        if (targetSpireObj) {
+          targetSpireObj.beaconMat.color.setHex(0x10b981);
+          targetSpireObj.haloMat.color.setHex(0x34d399);
+          targetSpireObj.haloMat.opacity = 0.85;
         }
 
-        // Reconnect and restore target spline fully
-        const targetConn = splineConnections.find((c) => c.isTargetConnection);
-        if (targetConn) {
-          const posAttr = targetConn.lineMesh.geometry.attributes.position;
+        // Reconnect and restore target waveguide completely
+        if (targetWaveguide) {
+          const posAttr = targetWaveguide.lineMesh.geometry.attributes.position;
           const posArr = posAttr.array as Float32Array;
-          for (let i = 0; i < targetConn.pointsCount; i++) {
-            const defPt = targetConn.defaultPoints[i];
+          for (let i = 0; i < 51; i++) {
+            const defPt = targetWaveguide.defaultPoints[i];
             posArr[i * 3] = defPt.x;
             posArr[i * 3 + 1] = defPt.y;
             posArr[i * 3 + 2] = defPt.z;
           }
           posAttr.needsUpdate = true;
-          targetConn.lineMat.color.setHex(0x10b981);
-          targetConn.lineMat.opacity = 0.9;
+          targetWaveguide.lineMat.color.setHex(0x10b981);
+          targetWaveguide.lineMat.opacity = 0.95;
         }
 
-        // Restorative Wave Expansion
-        const recScale = 0.5 + subP * 12.0;
+        // Expanding restorative wave
+        const recScale = 0.5 + subP * 16.0;
         recoveryWaveMesh.scale.set(recScale, recScale, recScale);
         recoveryWaveMesh.lookAt(camera.position);
-        recoveryWaveMat.opacity = Math.max(0, 0.85 - subP * 0.85);
+        recoveryWaveMat.opacity = Math.max(0, 0.9 - subP * 0.9);
 
         shockwaveMat1.opacity = 0;
         shockwaveMat2.opacity = 0;
         sparksMat.opacity = 0;
       }
+
+      // Update camera along 3D CatmullRom trajectory
+      updateCameraSpline(p);
     }
 
-    // 13. High-Performance Render Loop
+    // 16. HIGH-PERFORMANCE ANIMATION LOOP
     function animate() {
       animId = requestAnimationFrame(animate);
       if (!isVisible) return;
 
-      const delta = clock.getDelta();
       const time = clock.getElapsedTime();
 
-      // Slow idle rotation of core gimbal rings
-      coreOuterMesh.rotation.y += 0.003;
-      coreOuterMesh.rotation.x += 0.002;
-      coreMidMesh.rotation.y -= 0.004;
-      coreMidMesh.rotation.z += 0.003;
+      // Reactor ring rotations
+      ring1.rotation.z += 0.007;
+      ring2.rotation.y -= 0.006;
+      plasmaCoreMesh.rotation.y += 0.005;
+      plasmaCoreMesh.rotation.x -= 0.003;
 
-      ring1.rotation.z += 0.006;
-      ring2.rotation.y -= 0.005;
-      ring3.rotation.x += 0.004;
-
-      // Node subtle breathing and halo camera alignment
-      builtNodes.forEach((node) => {
-        node.halo.lookAt(camera.position);
+      // Align spire halos with camera
+      builtSpires.forEach((spire) => {
+        spire.haloMesh.lookAt(camera.position);
       });
 
-      // Animate packet movements along curves
-      splineConnections.forEach((conn) => {
-        // If outage active, stop packets on target connection
-        if (conn.isTargetConnection && progressRef.current >= 0.52 && progressRef.current < 0.84) {
+      // Animate packet movements along waveguides
+      waveguides.forEach((conn) => {
+        if (conn.spire.def.isTarget && progressRef.current >= 0.50 && progressRef.current < 0.84) {
           conn.packetMesh.visible = false;
         } else {
           conn.packetMesh.visible = true;
           conn.packetOffset = (conn.packetOffset + conn.packetSpeed) % 1.0;
-          const point = conn.curve.getPointAt(conn.packetOffset);
-          conn.packetMesh.position.copy(point);
+          const pt = conn.curve.getPointAt(conn.packetOffset);
+          conn.packetMesh.position.copy(pt);
         }
       });
 
       renderer.render(scene, camera);
     }
 
-    // Initial position
+    // Initial render call
     updateProgress(progressRef.current, activeSceneRef.current);
     animate();
 
-    // 14. Responsive Resize Observer
+    // 17. RESIZE LISTENER
     const handleResize = () => {
       if (!container) return;
       const w = container.clientWidth || window.innerWidth;
@@ -708,20 +748,20 @@ export function CinematicStoryCanvas({ progress, activeScene, isRTL = false }: C
       camera.updateProjectionMatrix();
       renderer.setSize(w, h);
     };
-
     window.addEventListener("resize", handleResize);
 
-    // 15. Intersection Observer to Pause Render Loop when Offscreen
+    // 18. INTERSECTION OBSERVER FOR OFFSCREEN PAUSING
     const observer = new IntersectionObserver(
       (entries) => {
-        entries.forEach((entry) => {
-          isVisible = entry.isIntersecting;
+        entries.forEach((e) => {
+          isVisible = e.isIntersecting;
         });
       },
       { threshold: 0.05 }
     );
     observer.observe(container);
 
+    // 19. STRICT GPU CLEANUP DISPOSAL
     sceneElementsRef.current = {
       updateProgress,
       dispose: () => {
@@ -729,44 +769,52 @@ export function CinematicStoryCanvas({ progress, activeScene, isRTL = false }: C
         window.removeEventListener("resize", handleResize);
         observer.disconnect();
 
-        // Strict GPU disposal
         renderer.dispose();
         if (renderer.domElement.parentElement) {
           renderer.domElement.parentElement.removeChild(renderer.domElement);
         }
 
-        coreOuterGeo.dispose();
-        coreOuterMat.dispose();
-        coreMidGeo.dispose();
-        coreMidMat.dispose();
-        coreInnerGeo.dispose();
-        coreInnerMat.dispose();
-        ringMat1.dispose();
-        ringMat2.dispose();
-        ringMat3.dispose();
-        starGeo.dispose();
-        starMat.dispose();
-        shockwaveGeo1.dispose();
-        shockwaveMat1.dispose();
-        shockwaveGeo2.dispose();
-        shockwaveMat2.dispose();
-        recoveryWaveGeo.dispose();
-        recoveryWaveMat.dispose();
+        gridHelper.geometry.dispose();
+        (gridHelper.material as THREE.Material).dispose();
+        runwayGeo.dispose();
+        runwayMat.dispose();
+        colGeo.dispose();
+        colMat.dispose();
+        colGlowMat.dispose();
+        gatePlateGeo.dispose();
+        gatePlateMat.dispose();
+        gateBevelMat.dispose();
+        cageGeo.dispose();
+        cageMat.dispose();
+        ring1.geometry.dispose();
+        (ring1.material as THREE.Material).dispose();
+        ring2.geometry.dispose();
+        (ring2.material as THREE.Material).dispose();
+        plasmaCoreGeo.dispose();
+        plasmaCoreMat.dispose();
         sparksGeo.dispose();
         sparksMat.dispose();
+        shockwaveMesh1.geometry.dispose();
+        shockwaveMat1.dispose();
+        shockwaveMesh2.geometry.dispose();
+        shockwaveMat2.dispose();
+        recoveryWaveMesh.geometry.dispose();
+        recoveryWaveMat.dispose();
 
-        builtNodes.forEach((n) => {
-          n.mesh.geometry.dispose();
-          n.meshMat.dispose();
-          n.halo.geometry.dispose();
-          n.haloMat.dispose();
+        builtSpires.forEach((s) => {
+          s.pedestalMesh.geometry.dispose();
+          (s.pedestalMesh.material as THREE.Material).dispose();
+          s.beaconMesh.geometry.dispose();
+          s.beaconMat.dispose();
+          s.haloMesh.geometry.dispose();
+          s.haloMat.dispose();
         });
 
-        splineConnections.forEach((s) => {
-          s.lineMesh.geometry.dispose();
-          s.lineMat.dispose();
-          s.packetMesh.geometry.dispose();
-          (s.packetMesh.material as THREE.Material).dispose();
+        waveguides.forEach((w) => {
+          w.lineMesh.geometry.dispose();
+          w.lineMat.dispose();
+          w.packetMesh.geometry.dispose();
+          (w.packetMesh.material as THREE.Material).dispose();
         });
       },
     };
@@ -786,4 +834,3 @@ export function CinematicStoryCanvas({ progress, activeScene, isRTL = false }: C
     />
   );
 }
-

@@ -145,3 +145,4 @@ func TestNewSMTPMailer_ConstructsClient(t *testing.T) {
 		t.Fatal("expected non-nil client")
 	}
 }
+
