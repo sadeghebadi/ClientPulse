@@ -1,0 +1,413 @@
+{
+  "cdpMetrics": [
+    {
+      "name": "Timestamp",
+      "value": 3068.784288
+    },
+    {
+      "name": "AudioHandlers",
+      "value": 0
+    },
+    {
+      "name": "AudioWorkletProcessors",
+      "value": 0
+    },
+    {
+      "name": "Documents",
+      "value": 1
+    },
+    {
+      "name": "Frames",
+      "value": 1
+    },
+    {
+      "name": "JSEventListeners",
+      "value": 424
+    },
+    {
+      "name": "LayoutObjects",
+      "value": 1227
+    },
+    {
+      "name": "MediaKeySessions",
+      "value": 0
+    },
+    {
+      "name": "MediaKeys",
+      "value": 0
+    },
+    {
+      "name": "Nodes",
+      "value": 3193
+    },
+    {
+      "name": "Resources",
+      "value": 26
+    },
+    {
+      "name": "ContextLifecycleStateObservers",
+      "value": 24
+    },
+    {
+      "name": "V8PerContextDatas",
+      "value": 2
+    },
+    {
+      "name": "WorkerGlobalScopes",
+      "value": 0
+    },
+    {
+      "name": "UACSSResources",
+      "value": 0
+    },
+    {
+      "name": "RTCPeerConnections",
+      "value": 0
+    },
+    {
+      "name": "ResourceFetchers",
+      "value": 1
+    },
+    {
+      "name": "AdSubframes",
+      "value": 0
+    },
+    {
+      "name": "DetachedScriptStates",
+      "value": 0
+    },
+    {
+      "name": "ArrayBufferContents",
+      "value": 377
+    },
+    {
+      "name": "LayoutCount",
+      "value": 125
+    },
+    {
+      "name": "RecalcStyleCount",
+      "value": 1443
+    },
+    {
+      "name": "LayoutDuration",
+      "value": 0.078143
+    },
+    {
+      "name": "RecalcStyleDuration",
+      "value": 0.456902
+    },
+    {
+      "name": "DevToolsCommandDuration",
+      "value": 0.336809
+    },
+    {
+      "name": "ScriptDuration",
+      "value": 1.457588
+    },
+    {
+      "name": "V8CompileDuration",
+      "value": 0.000431
+    },
+    {
+      "name": "TaskDuration",
+      "value": 3.861968
+    },
+    {
+      "name": "TaskOtherDuration",
+      "value": 1.532095
+    },
+    {
+      "name": "ThreadTime",
+      "value": 3.217548
+    },
+    {
+      "name": "ProcessTime",
+      "value": 5.06
+    },
+    {
+      "name": "JSHeapUsedSize",
+      "value": 10552920
+    },
+    {
+      "name": "JSHeapTotalSize",
+      "value": 19922944
+    },
+    {
+      "name": "FirstMeaningfulPaint",
+      "value": 3044.238087
+    },
+    {
+      "name": "DomContentLoaded",
+      "value": 3043.966392
+    },
+    {
+      "name": "NavigationStart",
+      "value": 3043.824773
+    }
+  ],
+  "browserPerf": {
+    "canvases": [
+      {
+        "id": "",
+        "width": 1214,
+        "height": 720,
+        "contextType": "webgl2",
+        "debugInfo": {
+          "vendor": "Google Inc. (NVIDIA Corporation)",
+          "renderer": "ANGLE (NVIDIA Corporation, NVIDIA GeForce GTX 1080/PCIe/SSE2, OpenGL 4.5.0)",
+          "version": "WebGL 2.0 (OpenGL ES 3.0 Chromium)",
+          "shadingLanguageVersion": "WebGL GLSL ES 3.00 (OpenGL ES GLSL ES 3.0 Chromium)"
+        }
+      },
+      {
+        "id": "",
+        "width": 1440,
+        "height": 900,
+        "contextType": "webgl2",
+        "debugInfo": {
+          "vendor": "Google Inc. (NVIDIA Corporation)",
+          "renderer": "ANGLE (NVIDIA Corporation, NVIDIA GeForce GTX 1080/PCIe/SSE2, OpenGL 4.5.0)",
+          "version": "WebGL 2.0 (OpenGL ES 3.0 Chromium)",
+          "shadingLanguageVersion": "WebGL GLSL ES 3.00 (OpenGL ES GLSL ES 3.0 Chromium)"
+        }
+      }
+    ],
+    "perfData": {
+      "longTasks": [
+        {
+          "name": "self",
+          "startTime": 191.59999999962747,
+          "duration": 56,
+          "attribution": "[{\"name\":\"unknown\",\"entryType\":\"taskattribution\",\"startTime\":0,\"duration\":0,\"navigationId\":1631,\"containerType\":\"window\",\"containerSrc\":\"\",\"containerId\":\"\",\"containerName\":\"\"}]"
+        },
+        {
+          "name": "self",
+          "startTime": 462.5,
+          "duration": 500,
+          "attribution": "[{\"name\":\"unknown\",\"entryType\":\"taskattribution\",\"startTime\":0,\"duration\":0,\"navigationId\":1631,\"containerType\":\"window\",\"containerSrc\":\"\",\"containerId\":\"\",\"containerName\":\"\"}]"
+        }
+      ],
+      "fpsSamples": [
+        {
+          "time": 970,
+          "fps": 9
+        },
+        {
+          "time": 1487,
+          "fps": 39
+        },
+        {
+          "time": 2003,
+          "fps": 60
+        },
+        {
+          "time": 2503,
+          "fps": 60
+        },
+        {
+          "time": 3003,
+          "fps": 60
+        },
+        {
+          "time": 3520,
+          "fps": 60
+        },
+        {
+          "time": 4037,
+          "fps": 60
+        },
+        {
+          "time": 4537,
+          "fps": 60
+        },
+        {
+          "time": 5037,
+          "fps": 60
+        },
+        {
+          "time": 5537,
+          "fps": 60
+        },
+        {
+          "time": 6037,
+          "fps": 60
+        },
+        {
+          "time": 6537,
+          "fps": 60
+        },
+        {
+          "time": 7053,
+          "fps": 60
+        },
+        {
+          "time": 7570,
+          "fps": 60
+        },
+        {
+          "time": 8087,
+          "fps": 60
+        },
+        {
+          "time": 8603,
+          "fps": 60
+        },
+        {
+          "time": 9103,
+          "fps": 60
+        },
+        {
+          "time": 9603,
+          "fps": 60
+        },
+        {
+          "time": 10103,
+          "fps": 60
+        },
+        {
+          "time": 10603,
+          "fps": 60
+        },
+        {
+          "time": 11103,
+          "fps": 60
+        },
+        {
+          "time": 11620,
+          "fps": 60
+        },
+        {
+          "time": 12120,
+          "fps": 60
+        },
+        {
+          "time": 12636,
+          "fps": 60
+        },
+        {
+          "time": 13136,
+          "fps": 60
+        },
+        {
+          "time": 13653,
+          "fps": 60
+        },
+        {
+          "time": 14153,
+          "fps": 60
+        },
+        {
+          "time": 14653,
+          "fps": 60
+        },
+        {
+          "time": 15170,
+          "fps": 60
+        },
+        {
+          "time": 15670,
+          "fps": 60
+        },
+        {
+          "time": 16170,
+          "fps": 60
+        },
+        {
+          "time": 16686,
+          "fps": 60
+        },
+        {
+          "time": 17186,
+          "fps": 60
+        },
+        {
+          "time": 17686,
+          "fps": 60
+        },
+        {
+          "time": 18203,
+          "fps": 60
+        },
+        {
+          "time": 18703,
+          "fps": 60
+        },
+        {
+          "time": 19203,
+          "fps": 60
+        },
+        {
+          "time": 19703,
+          "fps": 60
+        },
+        {
+          "time": 20203,
+          "fps": 60
+        },
+        {
+          "time": 20719,
+          "fps": 60
+        },
+        {
+          "time": 21219,
+          "fps": 60
+        },
+        {
+          "time": 21736,
+          "fps": 60
+        },
+        {
+          "time": 22236,
+          "fps": 60
+        },
+        {
+          "time": 22736,
+          "fps": 60
+        },
+        {
+          "time": 23236,
+          "fps": 60
+        },
+        {
+          "time": 23736,
+          "fps": 60
+        },
+        {
+          "time": 24253,
+          "fps": 60
+        },
+        {
+          "time": 24753,
+          "fps": 60
+        }
+      ],
+      "webglDetails": {}
+    },
+    "timing": {
+      "domContentLoaded": 141,
+      "load": 341
+    }
+  },
+  "consoleLogs": [
+    {
+      "type": "error",
+      "text": "Failed to load resource: the server responded with a status of 404 (Not Found)"
+    },
+    {
+      "type": "error",
+      "text": "Failed to load resource: the server responded with a status of 401 (Unauthorized)"
+    },
+    {
+      "type": "warning",
+      "text": "THREE.Clock: This module has been deprecated. Please use THREE.Timer instead."
+    },
+    {
+      "type": "warning",
+      "text": "THREE.Clock: This module has been deprecated. Please use THREE.Timer instead."
+    }
+  ],
+  "errors": [
+    "Failed to load resource: the server responded with a status of 404 (Not Found)",
+    "Failed to load resource: the server responded with a status of 401 (Unauthorized)"
+  ]
+}
