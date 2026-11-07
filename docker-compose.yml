@@ -28,6 +28,9 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
     environment:
       APP_ENV: ${APP_ENV:-development}
       APP_BASE_URL: ${APP_BASE_URL:-http://localhost:3000}
@@ -75,6 +78,9 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
     environment:
       APP_ENV: ${APP_ENV:-development}
       DATABASE_URL: postgres://clientpulse_worker:clientpulse_worker_dev_password@postgres:5432/${POSTGRES_DB:-clientpulse}?sslmode=disable

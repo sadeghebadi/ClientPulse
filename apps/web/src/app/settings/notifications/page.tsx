@@ -465,21 +465,19 @@ export default function NotificationSettingsPage() {
             <div className="flex items-center gap-2">
               <button
                 onClick={() => setActiveTab("destinations")}
-                className={`px-3.5 py-1.5 text-xs sm:text-sm font-semibold rounded-xl transition-all ${
-                  activeTab === "destinations"
+                className={`px-3.5 py-1.5 text-xs sm:text-sm font-semibold rounded-xl transition-all ${activeTab === "destinations"
                     ? "bg-blue-600 text-white shadow-xs"
                     : "bg-white text-slate-700 hover:bg-slate-100 border border-slate-200"
-                }`}
+                  }`}
               >
                 {t.telegramDestinations} & {t.emailDestinations}
               </button>
               <button
                 onClick={() => setActiveTab("history")}
-                className={`px-3.5 py-1.5 text-xs sm:text-sm font-semibold rounded-xl transition-all ${
-                  activeTab === "history"
+                className={`px-3.5 py-1.5 text-xs sm:text-sm font-semibold rounded-xl transition-all ${activeTab === "history"
                     ? "bg-blue-600 text-white shadow-xs"
                     : "bg-white text-slate-700 hover:bg-slate-100 border border-slate-200"
-                }`}
+                  }`}
               >
                 {t.deliveryHistory}
               </button>
@@ -487,31 +485,13 @@ export default function NotificationSettingsPage() {
           }
         />
 
-        {/* Deferred Integration Status Banner (TASK-012 Notice) */}
-        <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-700 flex items-start gap-3">
-          <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
-          <div className="space-y-1">
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="font-bold text-slate-900">{t.productionDeferredNotice || "Notice: Production delivery via SMTP and Telegram is deferred for TASK-012."}</span>
-              <Badge variant="outline" className="text-[10px] font-mono">
-                TASK-012
-              </Badge>
-            </div>
-            <p className="text-slate-600 text-[11px] sm:text-xs leading-relaxed">
-              {isRTL
-                ? "پیکربندی کانال‌ها، آزمون اتصال و مدیریت اشتراک رویدادها در این بخش به طور کامل فعال است. ارسال واقعی پیام‌ها به شبکه‌های خارجی به صورت عمدی تا فاز بعدی غیرفعال نگه داشته شده است."
-                : "Destination management, token verification, and event subscription toggles are fully operational. External live message forwarding is intentionally deferred until production transports are activated."
-              }
-            </p>
-          </div>
-        </div>
 
         {/* Global Feedback Alert */}
         {message && (
           <div
             className={`p-4 rounded-lg flex items-center justify-between text-sm ${message.type === "success"
-                ? "bg-emerald-50 text-emerald-800 border border-emerald-200"
-                : "bg-rose-50 text-rose-800 border border-rose-200"
+              ? "bg-emerald-50 text-emerald-800 border border-emerald-200"
+              : "bg-rose-50 text-rose-800 border border-rose-200"
               }`}
           >
             <div className="flex items-center gap-2">
@@ -665,8 +645,8 @@ export default function NotificationSettingsPage() {
                             <button
                               onClick={() => handleToggleEnabled(d)}
                               className={`px-3 py-1.5 rounded text-xs font-medium border transition-colors ${d.is_enabled
-                                  ? "bg-slate-100 text-slate-700 hover:bg-slate-200 border-slate-300"
-                                  : "bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border-emerald-300"
+                                ? "bg-slate-100 text-slate-700 hover:bg-slate-200 border-slate-300"
+                                : "bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border-emerald-300"
                                 }`}
                             >
                               {d.is_enabled ? t.disabled : t.enabled}
@@ -817,8 +797,8 @@ export default function NotificationSettingsPage() {
                             <button
                               onClick={() => handleToggleEnabled(d)}
                               className={`px-3 py-1.5 rounded text-xs font-medium border transition-colors ${d.is_enabled
-                                  ? "bg-slate-100 text-slate-700 hover:bg-slate-200 border-slate-300"
-                                  : "bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border-emerald-300"
+                                ? "bg-slate-100 text-slate-700 hover:bg-slate-200 border-slate-300"
+                                : "bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border-emerald-300"
                                 }`}
                             >
                               {d.is_enabled ? t.disabled : t.enabled}
